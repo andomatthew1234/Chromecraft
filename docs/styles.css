@@ -1246,6 +1246,141 @@ h1 {
   width: 34px;
 }
 
+.hyperdrive-feature {
+  background: #050509;
+  color: #f7f7f3;
+  min-height: 155vh;
+  position: relative;
+}
+
+.hyperdrive-stage {
+  align-items: center;
+  display: grid;
+  height: 100vh;
+  isolation: isolate;
+  justify-items: center;
+  overflow: hidden;
+  position: sticky;
+  top: 0;
+}
+
+.hyperdrive-field {
+  height: 100%;
+  inset: 0;
+  opacity: 0.92;
+  position: absolute;
+  width: 100%;
+  z-index: -1;
+}
+
+.hyperdrive-content {
+  max-width: 900px;
+  opacity: 0;
+  padding: 56px 32px;
+  text-align: center;
+  transform: translateY(28px) scale(0.96);
+  transition:
+    opacity 900ms ease,
+    transform 1100ms cubic-bezier(0.2, 0.78, 0.22, 1);
+}
+
+.hyperdrive-stage.is-engaged .hyperdrive-content {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.hyperdrive-content .section-kicker {
+  color: #73e0d0;
+  margin-bottom: 18px;
+}
+
+.hyperdrive-content h2 {
+  color: #fff;
+  font-size: 104px;
+  font-weight: 500;
+  line-height: 1;
+  margin: 0;
+  text-shadow: 0 2px 28px rgba(0, 0, 0, 0.9);
+}
+
+.hyperdrive-summary {
+  color: #f2f3ef;
+  font-size: 20px;
+  line-height: 1.7;
+  margin: 34px auto 0;
+  max-width: 830px;
+  text-shadow: 0 2px 20px #050509;
+}
+
+.hyperdrive-privacy {
+  color: #aeb9bc;
+  font-family: "DM Mono", monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 18px auto 0;
+  text-transform: uppercase;
+}
+
+.hyperdrive-path {
+  align-items: center;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.26);
+  border-top: 1px solid rgba(255, 255, 255, 0.26);
+  display: grid;
+  gap: 16px;
+  grid-template-columns: auto minmax(32px, 1fr) auto minmax(32px, 1fr) auto;
+  margin: 46px auto 0;
+  max-width: 760px;
+  padding: 17px 0;
+}
+
+.hyperdrive-path span {
+  align-items: center;
+  color: #dce3e3;
+  display: flex;
+  font-family: "DM Mono", monospace;
+  font-size: 11px;
+  gap: 8px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.hyperdrive-path i {
+  background: #73e0d0;
+  border-radius: 50%;
+  box-shadow: 0 0 16px rgba(115, 224, 208, 0.8);
+  height: 7px;
+  width: 7px;
+}
+
+.hyperdrive-path b {
+  background: rgba(255, 255, 255, 0.4);
+  height: 1px;
+  overflow: hidden;
+  position: relative;
+}
+
+.hyperdrive-path b::after {
+  animation: hyperdrive-signal 1.35s linear infinite;
+  background: #ff947a;
+  box-shadow: 0 0 12px rgba(255, 148, 122, 0.9);
+  content: "";
+  height: 1px;
+  left: -35%;
+  position: absolute;
+  top: 0;
+  width: 35%;
+}
+
+.hyperdrive-path b:nth-of-type(2)::after {
+  animation-delay: 480ms;
+}
+
+@keyframes hyperdrive-signal {
+  to {
+    left: 110%;
+  }
+}
+
 .silence-feature {
   background: #f3f3f1;
   color: #161616;
@@ -1696,6 +1831,52 @@ h1 {
     grid-column: 2;
   }
 
+  .hyperdrive-feature {
+    min-height: 135svh;
+  }
+
+  .hyperdrive-stage {
+    height: 100svh;
+  }
+
+  .hyperdrive-content {
+    padding: 44px 22px;
+  }
+
+  .hyperdrive-content h2 {
+    font-size: 62px;
+  }
+
+  .hyperdrive-summary {
+    font-size: 15px;
+    line-height: 1.65;
+    margin-top: 26px;
+  }
+
+  .hyperdrive-privacy {
+    font-size: 9px;
+  }
+
+  .hyperdrive-path {
+    gap: 10px;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    margin-top: 34px;
+    padding: 14px 0;
+    width: 100%;
+  }
+
+  .hyperdrive-path span {
+    flex-direction: column;
+    font-size: 8px;
+    line-height: 1.35;
+    text-align: center;
+    white-space: normal;
+  }
+
+  .hyperdrive-path b {
+    display: none;
+  }
+
   .silence-feature {
     min-height: 165vh;
   }
@@ -1800,6 +1981,7 @@ h1 {
   .ring-two,
   .material-loader,
   .queue-pulse,
+  .hyperdrive-path b::after,
   .silence-word,
   .email-notification,
   .scroll-cue span {
@@ -1813,6 +1995,16 @@ h1 {
   .silence-switch-row > .material-symbols-rounded,
   .silence-reveal {
     transition: none !important;
+  }
+
+  .hyperdrive-content {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+
+  .hyperdrive-field {
+    opacity: 0.58;
   }
 
   .button {

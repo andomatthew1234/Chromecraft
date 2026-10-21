@@ -247,6 +247,124 @@ materialChip?.addEventListener("click", () => {
   materialChip.classList.toggle("is-selected", !isSelected);
 });
 
+const hyperdriveStage = document.querySelector(".hyperdrive-stage");
+const hyperdriveCanvas = document.querySelector(".hyperdrive-field");
+const hyperdriveContext = hyperdriveCanvas?.getContext("2d");
+const hyperdriveTones = [
+  "255, 255, 255",
+  "115, 224, 208",
+  "191, 210, 255",
+  "255, 148, 122",
+];
+let hyperdriveWidth = 0;
+let hyperdriveHeight = 0;
+let hyperdriveRatio = 1;
+let hyperdriveFrame;
+let hyperdriveLastTime = 0;
+let hyperdriveVisible = false;
+let hyperdriveStars = [];
+
+function createHyperdriveStar(initial = true) {
+  return {
+    angle: Math.random() * Math.PI * 2,
+    depth: initial ? Math.random() : 0.015 + Math.random() * 0.025,
+    speed: 0.7 + Math.random() * 0.75,
+    tone: hyperdriveTones[Math.floor(Math.random() * hyperdriveTones.length)],
+  };
+}
+
+function resizeHyperdrive() {
+  if (!hyperdriveCanvas || !hyperdriveContext) return;
+  const bounds = hyperdriveCanvas.getBoundingClientRect();
+  hyperdriveWidth = bounds.width;
+  hyperdriveHeight = bounds.height;
+  hyperdriveRatio = Math.min(
+    window.devicePixelRatio || 1,
+    hyperdriveWidth < 721 ? 1.5 : 1.75,
+  );
+  hyperdriveCanvas.width = Math.round(hyperdriveWidth * hyperdriveRatio);
+  hyperdriveCanvas.height = Math.round(hyperdriveHeight * hyperdriveRatio);
+  hyperdriveContext.setTransform(hyperdriveRatio, 0, 0, hyperdriveRatio, 0, 0);
+  const starCount = hyperdriveWidth < 721 ? 92 : 180;
+  hyperdriveStars = Array.from({ length: starCount }, () =>
+    createHyperdriveStar(true),
+  );
+  renderHyperdrive(0, true);
+}
+
+function renderHyperdrive(time, staticFrame = false) {
+  hyperdriveFrame = undefined;
+  if (!hyperdriveContext || !hyperdriveWidth || !hyperdriveHeight) return;
+
+  const delta = hyperdriveLastTime
+    ? Math.min(40, Math.max(0, time - hyperdriveLastTime))
+    : 16;
+  hyperdriveLastTime = time;
+  hyperdriveContext.fillStyle = "#050509";
+  hyperdriveContext.fillRect(0, 0, hyperdriveWidth, hyperdriveHeight);
+
+  const centerX = hyperdriveWidth * 0.5;
+  const centerY = hyperdriveHeight * 0.5;
+  const maxRadius = Math.hypot(hyperdriveWidth, hyperdriveHeight) * 0.62;
+  hyperdriveContext.lineCap = "round";
+
+  hyperdriveStars.forEach((star, index) => {
+    if (!staticFrame && !reduceMotion) {
+      star.depth += delta * 0.00019 * star.speed * (0.72 + star.depth * 2.4);
+    }
+    if (star.depth > 1) {
+      hyperdriveStars[index] = createHyperdriveStar(false);
+      return;
+    }
+
+    const headRadius = 12 + Math.pow(star.depth, 2.05) * maxRadius;
+    const tailDepth = Math.max(0, star.depth - (0.018 + star.depth * 0.075));
+    const tailRadius = 12 + Math.pow(tailDepth, 2.05) * maxRadius;
+    const verticalScale = 0.72;
+    const headX = centerX + Math.cos(star.angle) * headRadius;
+    const headY = centerY + Math.sin(star.angle) * headRadius * verticalScale;
+    const tailX = centerX + Math.cos(star.angle) * tailRadius;
+    const tailY = centerY + Math.sin(star.angle) * tailRadius * verticalScale;
+    const opacity = 0.16 + star.depth * 0.78;
+
+    hyperdriveContext.strokeStyle = `rgba(${star.tone}, ${opacity})`;
+    hyperdriveContext.lineWidth = 0.6 + star.depth * 2.4;
+    hyperdriveContext.beginPath();
+    hyperdriveContext.moveTo(tailX, tailY);
+    hyperdriveContext.lineTo(headX, headY);
+    hyperdriveContext.stroke();
+  });
+
+  if (!staticFrame && !reduceMotion && hyperdriveVisible) {
+    hyperdriveFrame = window.requestAnimationFrame(renderHyperdrive);
+  }
+}
+
+if (hyperdriveCanvas && hyperdriveContext && hyperdriveStage) {
+  resizeHyperdrive();
+  window.addEventListener("resize", resizeHyperdrive);
+
+  if (reduceMotion) {
+    hyperdriveStage.classList.add("is-engaged");
+  } else {
+    const hyperdriveObserver = new IntersectionObserver(
+      ([entry]) => {
+        hyperdriveVisible = entry.isIntersecting;
+        hyperdriveStage.classList.toggle("is-engaged", hyperdriveVisible);
+        if (hyperdriveVisible && !hyperdriveFrame) {
+          hyperdriveLastTime = 0;
+          hyperdriveFrame = window.requestAnimationFrame(renderHyperdrive);
+        } else if (!hyperdriveVisible && hyperdriveFrame) {
+          window.cancelAnimationFrame(hyperdriveFrame);
+          hyperdriveFrame = undefined;
+        }
+      },
+      { rootMargin: "100px", threshold: 0.15 },
+    );
+    hyperdriveObserver.observe(hyperdriveStage);
+  }
+}
+
 const silenceSection = document.querySelector(".silence-feature");
 const silenceStage = document.querySelector(".silence-stage");
 const silenceWord = document.querySelector(".silence-word");
@@ -542,6 +660,8 @@ if (canvas && context) {
   }
 }
 
-window.addEventListener("beforeunload", () =>
-  window.cancelAnimationFrame(animationFrame),
-);
+window.addEventListener("beforeunload", () => {
+  window.cancelAnimationFrame(animationFrame);
+  window.cancelAnimationFrame(hyperdriveFrame);
+  clearSilenceTimers();
+});
