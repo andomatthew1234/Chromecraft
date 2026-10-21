@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Chromecraft is a focused, local-first browser for the moments that matter."
+    />
+    <title>Chromecraft browser</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="hero">
+      <canvas class="dot-field" aria-hidden="true"></canvas>
+
+      <header class="site-header">
+        <a class="wordmark" href="./" aria-label="Chromecraft browser home">
+          Chromecraft <span>browser</span>
+        </a>
+        <div class="header-mark" aria-hidden="true">
+          <span></span><span></span><span></span>
+        </div>
+      </header>
+
+      <section class="hero-content" aria-labelledby="hero-title">
+        <p class="eyebrow">A new browser, made for the present.</p>
+        <h1 id="hero-title">
+          The browser that lets you
+          <span class="word-slot" aria-live="polite">
+            <span class="rotating-word">Browse</span>
+          </span>
+        </h1>
+        <p class="description">
+          A dependable, local-first browser for the work, play, and everything
+          in between.
+        </p>
+        <div class="actions" aria-label="Coming soon">
+          <button class="button button-primary" type="button">Download</button>
+          <button class="button button-secondary" type="button">
+            Learn more
+          </button>
+        </div>
+      </section>
+
+      <p class="hero-note">Built for Windows and Linux.</p>
+    </main>
+
+    <script src="./script.js"></script>
+  </body>
+</html>
