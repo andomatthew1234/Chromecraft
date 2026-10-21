@@ -1,0 +1,7 @@
+.artifacts/
+.vite/
+dist/
+node_modules/
+out/
+resources/extensions/ublock-origin/
+pnpm-lock.yaml

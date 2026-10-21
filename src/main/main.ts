@@ -37,6 +37,7 @@ import {
   type InstalledExtensionSnapshot,
   type PreparedExtensionPreview,
 } from "./chrome-web-store-extension-service";
+import { isExpectedExtensionCancellation } from "./extension-operation";
 import {
   DownloadManager,
   type DownloadSnapshot as ManagerDownload,
@@ -99,6 +100,7 @@ let extensionErrorId: string | null = null;
 let extensionProgress: ExtensionOperationProgressSnapshot | null = null;
 let preparedExtensionToken: string | null = null;
 let preparedExtensionId: string | null = null;
+let extensionSnapshotSendQueue: Promise<void> = Promise.resolve();
 let ipcRegistered = false;
 
 function requireManager(event: IpcMainInvokeEvent): TabManager {
@@ -167,12 +169,27 @@ async function getExtensionsSnapshot(): Promise<ExtensionsSnapshot> {
   };
 }
 
-async function sendExtensionsSnapshot(): Promise<void> {
-  if (!shellView || shellView.webContents.isDestroyed()) return;
-  shellView.webContents.send(
-    channels.extensionsChanged,
-    await getExtensionsSnapshot(),
-  );
+function sendExtensionsSnapshot(): Promise<void> {
+  const state = {
+    operation: extensionOperation,
+    operationExtensionId: extensionOperationId,
+    error: extensionError,
+    errorExtensionId: extensionErrorId,
+    progress: extensionProgress ? { ...extensionProgress } : null,
+    popupExtensionId: tabManager?.extensionPopupId ?? null,
+  };
+  const pending = extensionSnapshotSendQueue.then(async () => {
+    if (!shellView || shellView.webContents.isDestroyed()) return;
+    const snapshot = await getExtensionsSnapshot();
+    shellView.webContents.send(channels.extensionsChanged, {
+      ...snapshot,
+      ...state,
+    });
+  });
+  extensionSnapshotSendQueue = pending.catch((error) => {
+    console.warn("Could not send the extension snapshot.", error);
+  });
+  return pending;
 }
 
 async function runExtensionOperation<T>(
@@ -203,8 +220,10 @@ async function runExtensionOperation<T>(
     const result = await action();
     return result;
   } catch (error) {
-    extensionError = error instanceof Error ? error.message : String(error);
-    extensionErrorId = extensionId;
+    if (!isExpectedExtensionCancellation(operation, error)) {
+      extensionError = error instanceof Error ? error.message : String(error);
+      extensionErrorId = extensionId;
+    }
     throw error;
   } finally {
     extensionOperation = "idle";

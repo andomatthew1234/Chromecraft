@@ -1,0 +1,7 @@
+.artifacts/
+.vite/
+node_modules/
+out/
+*.log
+.ubo-*
+unused-in-controller-tests.json.*.tmp

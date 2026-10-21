@@ -1,0 +1,360 @@
+.extension-install-banner {
+  position: relative;
+  height: 88px;
+  min-width: 0;
+  display: grid;
+  overflow: hidden;
+  grid-template-columns: 48px minmax(0, 1fr) auto 40px;
+  gap: var(--space-4);
+  align-items: center;
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--md-outline-variant);
+  color: var(--md-on-surface);
+  background-color: var(--md-surface-container-low);
+  background-image:
+    radial-gradient(
+      circle at 7% 118%,
+      color-mix(in srgb, var(--md-primary-container) 48%, transparent) 0 54px,
+      transparent 55px
+    ),
+    radial-gradient(
+      circle at 72% -90%,
+      color-mix(in srgb, var(--md-secondary-container) 52%, transparent) 0 82px,
+      transparent 83px
+    ),
+    linear-gradient(
+      135deg,
+      transparent 0 68%,
+      color-mix(in srgb, var(--md-tertiary-container) 30%, transparent) 68% 82%,
+      transparent 82%
+    );
+  box-shadow: var(--elevation-1);
+  animation: extension-install-banner-in var(--motion-emphasized) both;
+  user-select: none;
+}
+
+.app-shell.sidebar-panel-open .extension-install-banner {
+  margin-left: var(--sidebar-width);
+}
+
+.app-shell.sidebar-rail-only .extension-install-banner {
+  margin-left: var(--rail-width);
+}
+
+.app-shell.hyperdrive-monitor-open .extension-install-banner {
+  margin-right: var(--hyperdrive-monitor-width);
+}
+
+.extension-install-banner::before {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(
+      45deg,
+      transparent 0 46%,
+      color-mix(in srgb, var(--md-primary) 7%, transparent) 46% 50%,
+      transparent 50% 96%,
+      color-mix(in srgb, var(--md-primary) 7%, transparent) 96%
+    ),
+    linear-gradient(
+      -45deg,
+      transparent 0 46%,
+      color-mix(in srgb, var(--md-secondary) 6%, transparent) 46% 50%,
+      transparent 50% 96%,
+      color-mix(in srgb, var(--md-secondary) 6%, transparent) 96%
+    );
+  background-size: 48px 48px;
+  content: "";
+  pointer-events: none;
+}
+
+.extension-install-banner > * {
+  position: relative;
+  z-index: 1;
+}
+
+@keyframes extension-install-banner-in {
+  from {
+    opacity: 0;
+    transform: translateY(-12px);
+  }
+}
+
+.extension-install-banner__mark {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  display: grid;
+  overflow: hidden;
+  place-items: center;
+  border-radius: var(--shape-lg);
+  color: var(--md-on-primary-container);
+  background: var(--md-primary-container);
+}
+
+.extension-install-banner__mark .material-icon {
+  position: relative;
+  z-index: 1;
+  width: 24px;
+  height: 24px;
+  font-size: 24px;
+  line-height: 24px;
+}
+
+.extension-install-banner__mark-texture {
+  position: absolute;
+  top: 5px;
+  left: 5px;
+  width: 7px;
+  height: 7px;
+  border-radius: 2px;
+  color: color-mix(in srgb, var(--md-on-primary-container) 16%, transparent);
+  background: currentColor;
+  box-shadow:
+    27px 3px currentColor,
+    8px 29px currentColor,
+    29px 26px currentColor;
+}
+
+.extension-install-banner[data-state="error"] .extension-install-banner__mark,
+.extension-install-banner[data-state="unsupported"]
+  .extension-install-banner__mark {
+  color: var(--md-on-error-container);
+  background: var(--md-error-container);
+}
+
+.extension-install-banner[data-state="installed"]
+  .extension-install-banner__mark,
+.extension-install-banner[data-state="updated"]
+  .extension-install-banner__mark {
+  color: var(--md-success);
+  background: color-mix(in srgb, var(--md-success-container) 78%, transparent);
+}
+
+.extension-install-banner__copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.extension-install-banner__heading {
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.extension-install-banner__heading strong {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font: var(--type-title-medium);
+}
+
+.extension-install-banner__heading > span,
+.extension-install-banner__meta,
+.extension-install-banner__progress-row {
+  color: var(--md-on-surface-variant);
+  font: var(--type-label-small);
+}
+
+.extension-install-banner__heading > span {
+  flex: 0 0 auto;
+}
+
+.extension-install-banner__description {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 0;
+  color: var(--md-on-surface-variant);
+  font: var(--type-body-small);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+}
+
+.extension-install-banner__meta {
+  min-width: 0;
+  display: flex;
+  gap: 6px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.extension-install-banner__meta span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.extension-install-banner__progress-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-top: var(--space-1);
+}
+
+.extension-install-banner__progress {
+  width: min(320px, 100%);
+  height: 4px;
+  overflow: hidden;
+  border: 0;
+  border-radius: var(--shape-full);
+  color: var(--md-primary);
+  background: var(--md-surface-container-highest);
+  appearance: none;
+}
+
+.extension-install-banner__progress::-webkit-progress-bar {
+  border-radius: inherit;
+  background: var(--md-surface-container-highest);
+}
+
+.extension-install-banner__progress::-webkit-progress-value {
+  border-radius: inherit;
+  background: var(--md-primary);
+}
+
+.extension-install-banner__progress:indeterminate::-webkit-progress-value {
+  width: 35%;
+  animation: extension-install-banner-progress 1.2s ease-in-out infinite;
+}
+
+@keyframes extension-install-banner-progress {
+  from {
+    margin-left: -35%;
+  }
+  to {
+    margin-left: 100%;
+  }
+}
+
+.extension-install-banner__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+}
+
+.extension-install-banner__button,
+.extension-install-banner__dismiss {
+  min-height: 40px;
+  border-radius: var(--shape-full);
+  font: var(--type-label-large);
+  transition:
+    color var(--motion-standard),
+    background-color var(--motion-standard),
+    box-shadow var(--motion-standard),
+    transform var(--motion-standard);
+}
+
+.extension-install-banner__button {
+  padding: 0 var(--space-4);
+  white-space: nowrap;
+}
+
+.extension-install-banner__button--filled {
+  color: var(--md-on-primary);
+  background: var(--md-primary);
+}
+
+.extension-install-banner__button--filled:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--md-primary), var(--md-on-primary) 8%);
+  box-shadow: var(--elevation-1);
+}
+
+.extension-install-banner__button--tonal {
+  color: var(--md-on-secondary-container);
+  background: var(--md-secondary-container);
+}
+
+.extension-install-banner__button--tonal:hover:not(:disabled) {
+  background: color-mix(
+    in srgb,
+    var(--md-secondary-container),
+    var(--md-on-secondary-container) 8%
+  );
+}
+
+.extension-install-banner__button--danger {
+  color: var(--md-error);
+  background: transparent;
+}
+
+.extension-install-banner__button--danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--md-error) 10%, transparent);
+}
+
+.extension-install-banner__button:active:not(:disabled),
+.extension-install-banner__dismiss:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.extension-install-banner__button:disabled {
+  color: var(--md-disabled-content);
+  background: var(--md-disabled-container);
+  box-shadow: none;
+  cursor: default;
+}
+
+.extension-install-banner__dismiss {
+  width: 40px;
+  display: grid;
+  padding: 0;
+  place-items: center;
+  color: var(--md-on-surface-variant);
+  background: transparent;
+}
+
+.extension-install-banner__dismiss:hover {
+  color: var(--md-on-surface);
+  background: var(--md-hover);
+}
+
+@media (max-width: 820px) {
+  .extension-install-banner {
+    grid-template-columns: 40px minmax(0, 1fr) auto 40px;
+    gap: var(--space-2);
+    padding-left: var(--space-3);
+  }
+
+  .extension-install-banner__mark {
+    width: 40px;
+    height: 40px;
+    border-radius: var(--shape-md);
+  }
+
+  .extension-install-banner__mark-texture,
+  .extension-install-banner__description,
+  .extension-install-banner__heading > span {
+    display: none;
+  }
+}
+
+@media (max-width: 620px) {
+  .extension-install-banner {
+    grid-template-columns: 36px minmax(0, 1fr) auto 36px;
+    gap: var(--space-1);
+    padding-inline: var(--space-2);
+  }
+
+  .extension-install-banner__dismiss {
+    width: 36px;
+    height: 36px;
+    min-height: 36px;
+  }
+
+  .extension-install-banner__button {
+    min-height: 36px;
+    padding-inline: var(--space-3);
+  }
+
+  .extension-install-banner__progress-row {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .extension-install-banner,
+  .extension-install-banner__progress:indeterminate::-webkit-progress-value {
+    animation: none;
+  }
+}
