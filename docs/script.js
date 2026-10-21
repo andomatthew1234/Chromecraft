@@ -247,6 +247,163 @@ materialChip?.addEventListener("click", () => {
   materialChip.classList.toggle("is-selected", !isSelected);
 });
 
+const silenceSection = document.querySelector(".silence-feature");
+const silenceStage = document.querySelector(".silence-stage");
+const silenceWord = document.querySelector(".silence-word");
+const emailStack = document.querySelector(".email-stack");
+const emailCount = document.querySelector(".email-count");
+const silenceToggle = document.querySelector(".silence-toggle");
+const silenceReveal = document.querySelector(".silence-reveal");
+const silenceStatus = document.querySelector(".silence-status");
+const silenceTimers = new Set();
+const emailSenders = [
+  "Design team",
+  "Build report",
+  "News digest",
+  "Calendar",
+  "Project update",
+  "Account alert",
+  "Social",
+  "Shared document",
+];
+const emailSubjects = [
+  "New comment on your draft",
+  "Your daily summary is ready",
+  "Meeting moved by 15 minutes",
+  "You have 8 new mentions",
+  "A new sign-in was detected",
+  "Three files were shared with you",
+  "This week in your inbox",
+  "Quick question before you go",
+];
+let silenceHasStarted = false;
+let silenceComplete = false;
+let floodTimer;
+let unreadCount = 0;
+
+function scheduleSilence(callback, delay) {
+  const timer = window.setTimeout(() => {
+    silenceTimers.delete(timer);
+    callback();
+  }, delay);
+  silenceTimers.add(timer);
+  return timer;
+}
+
+function clearSilenceTimers() {
+  silenceTimers.forEach((timer) => window.clearTimeout(timer));
+  silenceTimers.clear();
+  window.clearInterval(floodTimer);
+  floodTimer = undefined;
+}
+
+function showSilenceWord(word) {
+  if (!silenceWord) return;
+  silenceWord.classList.remove("is-entering");
+  silenceWord.textContent = word;
+  window.requestAnimationFrame(() => {
+    silenceWord.classList.add("is-entering");
+    scheduleSilence(() => silenceWord.classList.remove("is-entering"), 340);
+  });
+}
+
+function createEmailNotification(index) {
+  const notification = document.createElement("div");
+  const icon = document.createElement("span");
+  const message = document.createElement("span");
+  const sender = document.createElement("strong");
+  const subject = document.createElement("small");
+
+  notification.className = "email-notification";
+  icon.className = "material-symbols-rounded";
+  icon.textContent = "mail";
+  sender.textContent = emailSenders[index % emailSenders.length];
+  subject.textContent = emailSubjects[index % emailSubjects.length];
+  message.append(sender, subject);
+  notification.append(icon, message);
+  return notification;
+}
+
+function startEmailFlood() {
+  if (!silenceSection || !emailStack || !emailCount) return;
+  emailStack.replaceChildren();
+  unreadCount = 0;
+  emailCount.textContent = "0 unread";
+  silenceSection.classList.add("is-flooding");
+
+  floodTimer = window.setInterval(() => {
+    const notification = createEmailNotification(unreadCount);
+    emailStack.prepend(notification);
+    unreadCount += 1;
+    emailCount.textContent = `${unreadCount} unread`;
+
+    if (unreadCount >= 100) {
+      window.clearInterval(floodTimer);
+      floodTimer = undefined;
+    }
+  }, 20);
+}
+
+function setQuietMode(isQuiet, announce = true) {
+  if (!silenceSection || !silenceToggle || !silenceReveal) return;
+  silenceSection.classList.toggle("is-silent", isQuiet);
+  silenceToggle.setAttribute("aria-pressed", String(isQuiet));
+  silenceToggle.setAttribute(
+    "aria-label",
+    isQuiet ? "Turn off quiet mode" : "Turn on quiet mode",
+  );
+  silenceReveal.setAttribute("aria-hidden", String(!isQuiet));
+
+  if (announce && silenceStatus) {
+    silenceStatus.textContent = isQuiet
+      ? "Notifications silenced."
+      : "Notifications restored.";
+  }
+}
+
+function finishSilenceStory(announce = true) {
+  window.clearInterval(floodTimer);
+  floodTimer = undefined;
+  silenceComplete = true;
+  setQuietMode(true, announce);
+}
+
+function startSilenceStory() {
+  if (silenceHasStarted || silenceComplete || !silenceSection) return;
+  silenceHasStarted = true;
+  silenceSection.classList.add("is-active");
+  showSilenceWord("Turn.");
+  scheduleSilence(() => showSilenceWord("It."), 500);
+  scheduleSilence(() => showSilenceWord("OFF."), 1000);
+  scheduleSilence(startEmailFlood, 1150);
+  scheduleSilence(() => finishSilenceStory(true), 3400);
+}
+
+silenceToggle?.addEventListener("click", () => {
+  const nextQuietState = silenceToggle.getAttribute("aria-pressed") !== "true";
+  clearSilenceTimers();
+  silenceComplete = nextQuietState;
+  silenceHasStarted = true;
+  setQuietMode(nextQuietState, true);
+});
+
+if (silenceSection && silenceStage) {
+  if (reduceMotion) {
+    if (silenceWord) silenceWord.textContent = "OFF.";
+    silenceHasStarted = true;
+    silenceComplete = true;
+    setQuietMode(true, false);
+  } else {
+    const silenceObserver = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) startSilenceStory();
+      },
+      { threshold: 0.55 },
+    );
+    silenceObserver.observe(silenceStage);
+  }
+}
+
 const canvas = document.querySelector(".dot-field");
 const context = canvas?.getContext("2d");
 const palette = [
