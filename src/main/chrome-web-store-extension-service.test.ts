@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { crc32, deflateRawSync } from "node:zlib";
 
 import type { Extension, Session } from "electron";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -544,7 +545,10 @@ describe("ChromeWebStoreExtensionService", () => {
       storagePath: await makeTemporaryDirectory(),
       fetch: async () => new Response(new Uint8Array(fixture.crx)),
       chromiumVersion: "152.0.0.0",
-      extensionReadyTimeoutMs: 250,
+      // Leave enough headroom for loaded CI/development machines. The assertion
+      // below controls when readiness is emitted; this timeout is not the subject
+      // of this test.
+      extensionReadyTimeoutMs: 2_000,
     });
     await service.initialize();
 
@@ -772,6 +776,98 @@ describe("ChromeWebStoreExtensionService", () => {
     expect(runtime.loadExtension).not.toHaveBeenCalled();
   });
 
+  it("installs a signed extension containing Adobe Photoshop's large WASM-sized entry", async () => {
+    const fixture = createCrxFixture({
+      extraFiles: {
+        "release/legacy/acr_web.wasm": {
+          contents: Buffer.alloc(45_789_365),
+          compression: "deflate",
+        },
+      },
+    });
+    const storagePath = await makeTemporaryDirectory();
+    const runtime = createSessionDouble(fixture.id);
+    const service = new ChromeWebStoreExtensionService(runtime.session, {
+      storagePath,
+      fetch: vi.fn(async () => new Response(new Uint8Array(fixture.crx))),
+      chromiumVersion: "152.0.0.0",
+    });
+    await service.initialize();
+
+    await expect(
+      service.installFromWebStoreUrl(
+        `https://chromewebstore.google.com/detail/fixture/${fixture.id}`,
+      ),
+    ).resolves.toMatchObject({ id: fixture.id, ready: true });
+    await expect(
+      fs.stat(
+        path.join(
+          storagePath,
+          fixture.id,
+          fixture.version,
+          "release",
+          "legacy",
+          "acr_web.wasm",
+        ),
+      ),
+    ).resolves.toMatchObject({ size: 45_789_365 });
+  });
+
+  it("rejects an archive entry above the bounded 64 MiB ceiling", async () => {
+    const fixture = createCrxFixture({
+      extraFiles: {
+        "oversized.bin": {
+          contents: Buffer.alloc(1),
+          declaredUncompressedSize: 64 * 1024 * 1024 + 1,
+        },
+      },
+    });
+    const runtime = createSessionDouble(fixture.id);
+    const service = new ChromeWebStoreExtensionService(runtime.session, {
+      storagePath: await makeTemporaryDirectory(),
+      fetch: vi.fn(async () => new Response(new Uint8Array(fixture.crx))),
+      chromiumVersion: "152.0.0.0",
+    });
+    await service.initialize();
+
+    await expect(
+      service.installFromWebStoreUrl(
+        `https://chromewebstore.google.com/detail/fixture/${fixture.id}`,
+      ),
+    ).rejects.toThrow(/entry exceeds the size limit/i);
+    expect(runtime.loadExtension).not.toHaveBeenCalled();
+  });
+
+  it("retains the aggregate extracted-size ceiling for large valid entries", async () => {
+    const maximumEntryBytes = 64 * 1024 * 1024;
+    const fixture = createCrxFixture({
+      extraFiles: {
+        "large-valid.bin": {
+          contents: Buffer.alloc(maximumEntryBytes),
+          compression: "deflate",
+        },
+        "aggregate-overflow.bin": {
+          contents: Buffer.alloc(1),
+          declaredUncompressedSize: maximumEntryBytes,
+        },
+      },
+    });
+    const runtime = createSessionDouble(fixture.id);
+    const service = new ChromeWebStoreExtensionService(runtime.session, {
+      storagePath: await makeTemporaryDirectory(),
+      fetch: vi.fn(async () => new Response(new Uint8Array(fixture.crx))),
+      chromiumVersion: "152.0.0.0",
+    });
+    await service.initialize();
+
+    await expect(
+      service.installFromWebStoreUrl(
+        `https://chromewebstore.google.com/detail/fixture/${fixture.id}`,
+      ),
+    ).rejects.toThrow(/extracted extension exceeds the size limit/i);
+    expect(runtime.loadExtension).not.toHaveBeenCalled();
+  });
+
   it("rejects archive traversal before extracting or loading the extension", async () => {
     const fixture = createCrxFixture({
       extraFiles: {
@@ -918,8 +1014,14 @@ function createSessionDouble(
   };
 }
 
+interface ZipFixtureFile {
+  contents: string | Buffer;
+  compression?: "deflate";
+  declaredUncompressedSize?: number;
+}
+
 interface CrxFixtureOptions {
-  extraFiles?: Record<string, string>;
+  extraFiles?: Record<string, string | Buffer | ZipFixtureFile>;
   manifest?: Record<string, unknown>;
 }
 
@@ -1017,31 +1119,46 @@ function protobufVarint(value: number): Buffer {
   return Buffer.from(bytes);
 }
 
-function createStoredZip(files: Record<string, string>): Buffer {
+function createStoredZip(
+  files: Record<string, string | Buffer | ZipFixtureFile>,
+): Buffer {
   const localEntries: Buffer[] = [];
   const centralEntries: Buffer[] = [];
   let offset = 0;
-  for (const [filename, contents] of Object.entries(files)) {
+  for (const [filename, input] of Object.entries(files)) {
     const name = Buffer.from(filename, "utf8");
-    const data = Buffer.from(contents, "utf8");
+    const file =
+      typeof input === "string" || Buffer.isBuffer(input)
+        ? { contents: input }
+        : input;
+    const data = Buffer.isBuffer(file.contents)
+      ? file.contents
+      : Buffer.from(file.contents, "utf8");
+    const compressed =
+      file.compression === "deflate" ? deflateRawSync(data) : data;
+    const compression = file.compression === "deflate" ? 8 : 0;
+    const declaredUncompressedSize =
+      file.declaredUncompressedSize ?? data.length;
     const checksum = crc32(data);
     const localHeader = Buffer.alloc(30);
     localHeader.writeUInt32LE(0x04034b50, 0);
     localHeader.writeUInt16LE(20, 4);
+    localHeader.writeUInt16LE(compression, 8);
     localHeader.writeUInt32LE(checksum, 14);
-    localHeader.writeUInt32LE(data.length, 18);
-    localHeader.writeUInt32LE(data.length, 22);
+    localHeader.writeUInt32LE(compressed.length, 18);
+    localHeader.writeUInt32LE(declaredUncompressedSize, 22);
     localHeader.writeUInt16LE(name.length, 26);
-    const local = Buffer.concat([localHeader, name, data]);
+    const local = Buffer.concat([localHeader, name, compressed]);
     localEntries.push(local);
 
     const centralHeader = Buffer.alloc(46);
     centralHeader.writeUInt32LE(0x02014b50, 0);
     centralHeader.writeUInt16LE(20, 4);
     centralHeader.writeUInt16LE(20, 6);
+    centralHeader.writeUInt16LE(compression, 10);
     centralHeader.writeUInt32LE(checksum, 16);
-    centralHeader.writeUInt32LE(data.length, 20);
-    centralHeader.writeUInt32LE(data.length, 24);
+    centralHeader.writeUInt32LE(compressed.length, 20);
+    centralHeader.writeUInt32LE(declaredUncompressedSize, 24);
     centralHeader.writeUInt16LE(name.length, 28);
     centralHeader.writeUInt32LE(offset, 42);
     centralEntries.push(Buffer.concat([centralHeader, name]));
@@ -1061,15 +1178,4 @@ function uint32(value: number): Buffer {
   const buffer = Buffer.alloc(4);
   buffer.writeUInt32LE(value, 0);
   return buffer;
-}
-
-function crc32(input: Uint8Array): number {
-  let crc = 0xffffffff;
-  for (const byte of input) {
-    crc ^= byte;
-    for (let bit = 0; bit < 8; bit += 1) {
-      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
-    }
-  }
-  return (crc ^ 0xffffffff) >>> 0;
 }

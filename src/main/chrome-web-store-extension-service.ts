@@ -1,7 +1,7 @@
 import { createHash, createPublicKey, randomUUID, verify } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { inflateRawSync } from "node:zlib";
+import { crc32 as zlibCrc32, inflateRawSync } from "node:zlib";
 
 import type { Extension, Session } from "electron";
 
@@ -10,7 +10,7 @@ import { parseChromeWebStoreListingUrl } from "../shared/web-store-listing";
 const UPDATE_SERVICE_URL = "https://clients2.google.com/service/update2/crx";
 const REGISTRY_FILENAME = "installed-extensions.json";
 const MAX_CRX_BYTES = 64 * 1024 * 1024;
-const MAX_ENTRY_BYTES = 32 * 1024 * 1024;
+const MAX_ENTRY_BYTES = 64 * 1024 * 1024;
 const MAX_EXTRACTED_BYTES = 128 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES = 4_096;
 const EXTENSION_ID_PATTERN = /^[a-p]{32}$/;
@@ -1180,7 +1180,10 @@ function extractZipEntries(archive: Buffer): ArchiveEntry[] {
         },
       );
     }
-    if (data.length !== uncompressedSize || crc32(data) !== checksum) {
+    if (
+      data.length !== uncompressedSize ||
+      zlibCrc32(data) >>> 0 !== checksum
+    ) {
       throw new Error(
         "The extension archive entry failed integrity validation.",
       );
@@ -3056,15 +3059,4 @@ function uint32(value: number): Buffer {
   const buffer = Buffer.alloc(4);
   buffer.writeUInt32LE(value, 0);
   return buffer;
-}
-
-function crc32(input: Uint8Array): number {
-  let crc = 0xffffffff;
-  for (const byte of input) {
-    crc ^= byte;
-    for (let bit = 0; bit < 8; bit += 1) {
-      crc = (crc >>> 1) ^ (crc & 1 ? 0xedb88320 : 0);
-    }
-  }
-  return (crc ^ 0xffffffff) >>> 0;
 }
