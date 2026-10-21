@@ -69,13 +69,17 @@ only the extension's service-worker registration when the bridge changes.
 
 For Manifest V3 `webRequest.onBeforeRequest`, Chromecraft supplies a real
 browser-owned event path because Electron 44 exposes the API shape but does not
-route matching requests to the worker. A service-worker preload exposes only a
-small typed bridge; the main process derives the extension identity from the
-trusted worker scope, re-checks the `webRequest` and host permissions, filters
-requests, wakes a dormant worker, and dispatches the matching details. Ordinary
-website workers and caller-provided extension IDs are rejected. The current
-bridge is observation-only: it does not claim blocking, redirect, header, or
-request-body behavior that has not been implemented and behaviorally tested.
+route matching requests to the worker. A bundled internal MV2 observer receives
+the native request event without displacing uBlock's listener, while a
+service-worker preload exposes only a small typed delivery bridge. The main
+process derives the destination extension identity from the trusted worker
+scope, re-checks `webRequest` and host permissions, filters requests, wakes a
+dormant worker, and dispatches the matching details. The observer's frame IPC is
+accepted only from its fixed bundled extension origin and browsing Session.
+Ordinary website workers and caller-provided extension IDs are rejected. The
+current bridge is observation-only: it does not claim blocking, redirect,
+header, or request-body behavior that has not been implemented and behaviorally
+tested.
 
 For enabled extensions, the bridge also implements a deliberately narrow
 `chrome.windows.create`, `chrome.windows.update`, and `chrome.windows.remove`

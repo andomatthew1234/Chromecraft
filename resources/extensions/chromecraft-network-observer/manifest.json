@@ -1,0 +1,12 @@
+{
+  "manifest_version": 2,
+  "name": "Chromecraft Network Observer",
+  "version": "1.0.0",
+  "description": "Internal request event adapter for Manifest V3 extensions.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqLUxE7pWdwX8RdlrAV7Gh5e1C4J/13xzLIhOldKoZlRkSkctvSRetO3LlWTS1If2smz+daKrmADuEk1wabFsxB7PLTsMQo602l7+waUWYqYiH2fa/3QLvG2WbgkictNVeartl9UESPEnY/hzE/d/o+RhQxsEnKGwGfOU9PHdtyw4Zh3u2ZHKpAs6IDzDfHS1xC4QpgD8q8ArAqSfGteFjgwBUfHVpZz3I6qtSDgQuXZjn6Taju8kqNIz8MfKXQp9RZBKRXZYI8Fw58rj6gV/PtaPn5A7b8Rdeo+AHl0aN6HTbe/RDtn7PpJgh+T8wnrVNNrqniLXPnR7sFnFen5mIwIDAQAB",
+  "permissions": ["webRequest", "<all_urls>"],
+  "background": {
+    "scripts": ["background.js"],
+    "persistent": true
+  }
+}

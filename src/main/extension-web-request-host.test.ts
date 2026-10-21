@@ -1,13 +1,13 @@
 import { EventEmitter } from "node:events";
-import type {
-  Extension,
-  OnBeforeRequestListenerDetails,
-  ServiceWorkerMain,
-  Session,
-} from "electron";
+import type { Extension, ServiceWorkerMain, Session } from "electron";
 import { describe, expect, it, vi } from "vitest";
 
-import { extensionHostChannels } from "../shared/extension-host-protocol";
+import {
+  EXTENSION_NETWORK_OBSERVER_ID,
+  EXTENSION_NETWORK_OBSERVER_ORIGIN,
+  extensionHostChannels,
+  type ExtensionWebRequestEventDetails,
+} from "../shared/extension-host-protocol";
 import {
   ExtensionWebRequestHost,
   extensionIdFromScope,
@@ -20,10 +20,10 @@ describe("ExtensionWebRequestHost", () => {
   it("authenticates an MV3 worker and delivers matching requests", async () => {
     const fixture = createFixture();
     const host = new ExtensionWebRequestHost(fixture.session, {
-      preloadPath: "C:\\chromecraft\\extension-worker-preload.cjs",
-      resolveTabId: () => 7,
+      ...hostPaths(),
+      ipc: fixture.ipc,
     });
-    host.start();
+    await host.start();
 
     fixture.serviceWorkers.emit("running-status-changed", {
       versionId: 42,
@@ -41,13 +41,11 @@ describe("ExtensionWebRequestHost", () => {
       },
     );
 
-    const callback = vi.fn();
     fixture.emitRequest(
       requestDetails({
         url: "https://allowed.example/vault?refresh=1",
-        resourceType: "xhr",
+        tabId: 7,
       }),
-      callback,
     );
     await vi.waitFor(() =>
       expect(fixture.worker.send).toHaveBeenCalledWith(
@@ -62,18 +60,18 @@ describe("ExtensionWebRequestHost", () => {
         }),
       ),
     );
-    expect(callback).toHaveBeenCalledWith({});
 
     host.dispose();
-    expect(fixture.unregisterPreloadScript).toHaveBeenCalledWith("preload-id");
+    expect(fixture.unregisterPreloadScript).toHaveBeenCalledTimes(2);
   });
 
   it("does not deliver requests outside declared host permissions", async () => {
     const fixture = createFixture();
     const host = new ExtensionWebRequestHost(fixture.session, {
-      preloadPath: "C:\\chromecraft\\extension-worker-preload.cjs",
+      ...hostPaths(),
+      ipc: fixture.ipc,
     });
-    host.start();
+    await host.start();
     fixture.serviceWorkers.emit("running-status-changed", {
       versionId: 42,
       runningStatus: "running",
@@ -91,7 +89,37 @@ describe("ExtensionWebRequestHost", () => {
 
     fixture.emitRequest(
       requestDetails({ url: "https://private.example/account" }),
-      vi.fn(),
+    );
+    await Promise.resolve();
+    expect(fixture.worker.send).not.toHaveBeenCalled();
+    host.dispose();
+  });
+
+  it("rejects observer messages from ordinary website frames", async () => {
+    const fixture = createFixture();
+    const host = new ExtensionWebRequestHost(fixture.session, {
+      ...hostPaths(),
+      ipc: fixture.ipc,
+    });
+    await host.start();
+    fixture.serviceWorkers.emit("running-status-changed", {
+      versionId: 42,
+      runningStatus: "running",
+    });
+    fixture.workerIpc.emit(
+      extensionHostChannels.workerMessage,
+      { serviceWorker: fixture.worker },
+      {
+        type: "webRequest-subscriptions",
+        eventName: "onBeforeRequest",
+        filters: [{ urls: ["<all_urls>"] }],
+      },
+    );
+    fixture.worker.send.mockClear();
+
+    fixture.emitRequest(
+      requestDetails(),
+      "https://allowed.example/pretend-observer",
     );
     await Promise.resolve();
     expect(fixture.worker.send).not.toHaveBeenCalled();
@@ -137,12 +165,13 @@ describe("extension URL match patterns", () => {
 
 function createFixture(): {
   session: Session;
+  ipc: EventEmitter;
   serviceWorkers: EventEmitter;
   workerIpc: EventEmitter;
   worker: ServiceWorkerMain & { send: ReturnType<typeof vi.fn> };
   emitRequest: (
-    details: OnBeforeRequestListenerDetails,
-    callback: (response: Electron.CallbackResponse) => void,
+    details: ExtensionWebRequestEventDetails,
+    senderUrl?: string,
   ) => void;
   unregisterPreloadScript: ReturnType<typeof vi.fn>;
 } {
@@ -156,6 +185,14 @@ function createFixture(): {
     name: "Fixture",
     path: "C:\\fixture",
     url: `chrome-extension://${EXTENSION_ID}/`,
+    version: "1.0.0",
+  } satisfies Extension;
+  const observerExtension = {
+    id: EXTENSION_NETWORK_OBSERVER_ID,
+    manifest: { manifest_version: 2 },
+    name: "Chromecraft Network Observer",
+    path: "C:\\observer",
+    url: `${EXTENSION_NETWORK_OBSERVER_ORIGIN}/`,
     version: "1.0.0",
   } satisfies Extension;
   const workerIpc = new EventEmitter();
@@ -174,59 +211,77 @@ function createFixture(): {
   });
   const extensions = new EventEmitter();
   Object.assign(extensions, {
-    getExtension: (id: string) => (id === EXTENSION_ID ? extension : null),
+    getExtension: (id: string) =>
+      id === EXTENSION_ID
+        ? extension
+        : id === EXTENSION_NETWORK_OBSERVER_ID
+          ? observerExtension
+          : null,
+    loadExtension: vi.fn(async () => {
+      queueMicrotask(() =>
+        extensions.emit("extension-ready", {}, observerExtension),
+      );
+      return observerExtension;
+    }),
+    removeExtension: vi.fn(async () => undefined),
   });
-  let requestListener:
-    | ((
-        details: OnBeforeRequestListenerDetails,
-        callback: (response: Electron.CallbackResponse) => void,
-      ) => void)
-    | null = null;
+  const ipc = new EventEmitter();
   const unregisterPreloadScript = vi.fn();
+  let nextPreloadId = 0;
   const session = {
     extensions,
     serviceWorkers,
-    webRequest: {
-      onBeforeRequest: vi.fn(
-        (
-          filterOrListener: unknown,
-          maybeListener?: (
-            details: OnBeforeRequestListenerDetails,
-            callback: (response: Electron.CallbackResponse) => void,
-          ) => void,
-        ) => {
-          requestListener =
-            typeof filterOrListener === "function"
-              ? (filterOrListener as typeof requestListener)
-              : (maybeListener ?? null);
-        },
-      ),
-    },
-    registerPreloadScript: vi.fn(() => "preload-id"),
+    registerPreloadScript: vi.fn(() => `preload-${++nextPreloadId}`),
     unregisterPreloadScript,
   } as unknown as Session;
   return {
     session,
+    ipc,
     serviceWorkers,
     workerIpc,
     worker,
-    emitRequest: (details, callback) => requestListener?.(details, callback),
+    emitRequest: (
+      details,
+      senderUrl = `${EXTENSION_NETWORK_OBSERVER_ORIGIN}/background.html`,
+    ) =>
+      ipc.emit(
+        extensionHostChannels.observerRequest,
+        {
+          sender: {
+            session,
+            getURL: () => senderUrl,
+          },
+          senderFrame: {
+            url: senderUrl,
+          },
+        },
+        details,
+      ),
     unregisterPreloadScript,
   };
 }
 
 function requestDetails(
-  overrides: Partial<OnBeforeRequestListenerDetails> = {},
-): OnBeforeRequestListenerDetails {
+  overrides: Partial<ExtensionWebRequestEventDetails> = {},
+): ExtensionWebRequestEventDetails {
   return {
-    id: 12,
+    requestId: "12",
     url: "https://allowed.example/resource",
     method: "GET",
-    resourceType: "xhr",
-    referrer: "",
-    timestamp: 123,
-    uploadData: [],
-    webContentsId: 99,
+    type: "xmlhttprequest",
+    timeStamp: 123,
+    frameId: 0,
+    parentFrameId: -1,
+    tabId: 7,
     ...overrides,
+  };
+}
+
+function hostPaths() {
+  return {
+    serviceWorkerPreloadPath: "C:\\chromecraft\\extension-worker-preload.cjs",
+    observerPreloadPath: "C:\\chromecraft\\observer-preload.cjs",
+    observerExtensionPath: "C:\\chromecraft\\observer",
+    readyTimeoutMs: 100,
   };
 }

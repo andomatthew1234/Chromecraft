@@ -53,11 +53,12 @@ The network row is backed by a browser-owned MV3 bridge rather than a reported
 namespace alone. Electron 44.7.2 and 44.9.3 expose a listener-shaped API in MV3
 workers but do not route matching requests to it. Chromecraft now authenticates
 the worker from its `ServiceWorkerMain` scope, validates `webRequest` and host
-permissions in the main process, owns one Session request observer, wakes a
-suspended worker, and dispatches the real matching request to its registered
-listener. MV2 stays on Electron's native path. This first slice is observational
-`onBeforeRequest`; blocking responses, header stages, request-body access, and
-the remaining event family are not yet claimed.
+permissions in the main process, receives events from a bundled internal MV2
+observer, wakes a suspended worker, and dispatches the real matching request to
+its registered listener. The internal observer uses Electron's native extension
+event path, so it coexists with uBlock instead of replacing its request handler.
+This first slice is observational `onBeforeRequest`; blocking responses, header
+stages, request-body access, and the remaining event family are not yet claimed.
 
 Passing this deterministic matrix proves only these named behaviors; broad
 Chrome Web Store compatibility still requires more matrices for bookmarks,

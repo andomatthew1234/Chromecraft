@@ -1,10 +1,12 @@
-import type {
-  Extension,
-  OnBeforeRequestListenerDetails,
-  ServiceWorkerMain,
-  Session,
+import {
+  ipcMain,
+  type Extension,
+  type ServiceWorkerMain,
+  type Session,
 } from "electron";
 import {
+  EXTENSION_NETWORK_OBSERVER_ID,
+  EXTENSION_NETWORK_OBSERVER_ORIGIN,
   extensionHostChannels,
   type ExtensionHostMessage,
   type ExtensionWebRequestEventDetails,
@@ -31,21 +33,38 @@ interface BoundWorker {
 }
 
 export interface ExtensionWebRequestHostOptions {
-  preloadPath: string;
-  resolveTabId?: (webContentsId: number | undefined) => number;
+  serviceWorkerPreloadPath: string;
+  observerPreloadPath: string;
+  observerExtensionPath: string;
+  readyTimeoutMs?: number;
+  ipc?: ExtensionObserverIpc;
+}
+
+interface ExtensionObserverIpc {
+  on(
+    channel: string,
+    listener: (event: Electron.IpcMainEvent, details: unknown) => void,
+  ): unknown;
+  removeListener(
+    channel: string,
+    listener: (event: Electron.IpcMainEvent, details: unknown) => void,
+  ): unknown;
 }
 
 /**
  * Bridges Electron's missing MV3 webRequest event routing into extension workers.
  *
  * The main process authenticates every registration from ServiceWorkerMain.scope,
- * validates declared permissions, owns the single Session.webRequest observer, and
- * wakes suspended workers before delivery. The worker never supplies its identity.
+ * validates declared permissions, receives requests from an internal native MV2
+ * observer that composes with uBlock, and wakes suspended workers before delivery.
+ * The worker never supplies its identity.
  */
 export class ExtensionWebRequestHost {
   private readonly subscriptions = new Map<string, ExtensionSubscription>();
   private readonly boundWorkers = new Map<number, BoundWorker>();
-  private preloadRegistrationId: string | null = null;
+  private readonly ipc: ExtensionObserverIpc;
+  private readonly preloadRegistrationIds: string[] = [];
+  private observerExtension: Extension | null = null;
   private started = false;
 
   private readonly onWorkerStatusChanged = (
@@ -66,21 +85,31 @@ export class ExtensionWebRequestHost {
     this.subscriptions.delete(extension.id);
   };
 
-  private readonly onBeforeRequest = (
-    details: OnBeforeRequestListenerDetails,
-    callback: (response: Electron.CallbackResponse) => void,
+  private readonly onObserverRequest = (
+    event: Electron.IpcMainEvent,
+    rawDetails: unknown,
   ): void => {
-    callback({});
-    const eventDetails = mapRequestDetails(
-      details,
-      this.options.resolveTabId?.(details.webContentsId) ?? -1,
-    );
+    if (event.sender.session !== this.browserSession) return;
+    const senderUrl = event.senderFrame?.url ?? event.sender.getURL();
+    if (!senderUrl.startsWith(`${EXTENSION_NETWORK_OBSERVER_ORIGIN}/`)) return;
+    if (
+      this.browserSession.extensions.getExtension(EXTENSION_NETWORK_OBSERVER_ID)
+        ?.id !== EXTENSION_NETWORK_OBSERVER_ID
+    ) {
+      return;
+    }
+    const eventDetails = parseObservedRequest(rawDetails);
+    if (!eventDetails) return;
+    this.dispatchRequest(eventDetails);
+  };
+
+  private dispatchRequest(eventDetails: ExtensionWebRequestEventDetails): void {
     for (const [extensionId, subscription] of this.subscriptions) {
       const extension =
         this.browserSession.extensions.getExtension(extensionId);
       if (
         !extension ||
-        !canObserveRequest(extension, details.url) ||
+        !canObserveRequest(extension, eventDetails.url) ||
         !subscription.filters.some((filter) =>
           matchesWebRequestFilter(filter, eventDetails),
         )
@@ -93,19 +122,28 @@ export class ExtensionWebRequestHost {
         details: eventDetails,
       });
     }
-  };
+  }
 
   constructor(
     private readonly browserSession: Session,
     private readonly options: ExtensionWebRequestHostOptions,
-  ) {}
+  ) {
+    this.ipc = options.ipc ?? ipcMain;
+  }
 
-  start(): void {
+  async start(): Promise<void> {
     if (this.started) return;
-    this.preloadRegistrationId = this.browserSession.registerPreloadScript({
-      type: "service-worker",
-      filePath: this.options.preloadPath,
-    });
+    this.started = true;
+    this.preloadRegistrationIds.push(
+      this.browserSession.registerPreloadScript({
+        type: "service-worker",
+        filePath: this.options.serviceWorkerPreloadPath,
+      }),
+      this.browserSession.registerPreloadScript({
+        type: "frame",
+        filePath: this.options.observerPreloadPath,
+      }),
+    );
     this.browserSession.serviceWorkers.on(
       "running-status-changed",
       this.onWorkerStatusChanged,
@@ -114,21 +152,22 @@ export class ExtensionWebRequestHost {
       "extension-unloaded",
       this.onExtensionUnloaded,
     );
+    this.ipc.on(extensionHostChannels.observerRequest, this.onObserverRequest);
     for (const versionId of Object.keys(
       this.browserSession.serviceWorkers.getAllRunning(),
     )) {
       this.bindWorker(Number(versionId));
     }
-    this.browserSession.webRequest.onBeforeRequest(
-      { urls: ["<all_urls>"] },
-      this.onBeforeRequest,
-    );
-    this.started = true;
+    try {
+      this.observerExtension = await this.loadObserverExtension();
+    } catch (error) {
+      this.dispose();
+      throw error;
+    }
   }
 
   dispose(): void {
     if (!this.started) return;
-    this.browserSession.webRequest.onBeforeRequest(null);
     this.browserSession.serviceWorkers.removeListener(
       "running-status-changed",
       this.onWorkerStatusChanged,
@@ -137,14 +176,63 @@ export class ExtensionWebRequestHost {
       "extension-unloaded",
       this.onExtensionUnloaded,
     );
+    this.ipc.removeListener(
+      extensionHostChannels.observerRequest,
+      this.onObserverRequest,
+    );
     for (const versionId of [...this.boundWorkers.keys()])
       this.unbindWorker(versionId);
-    if (this.preloadRegistrationId) {
-      this.browserSession.unregisterPreloadScript(this.preloadRegistrationId);
-      this.preloadRegistrationId = null;
+    for (const registrationId of this.preloadRegistrationIds.splice(0)) {
+      this.browserSession.unregisterPreloadScript(registrationId);
+    }
+    if (this.observerExtension) {
+      void this.browserSession.extensions.removeExtension(
+        this.observerExtension.id,
+      );
+      this.observerExtension = null;
     }
     this.subscriptions.clear();
     this.started = false;
+  }
+
+  private async loadObserverExtension(): Promise<Extension> {
+    let readyTimer: ReturnType<typeof setTimeout> | null = null;
+    let resolveReady!: (extension: Extension) => void;
+    const ready = new Promise<Extension>((resolve) => {
+      resolveReady = resolve;
+    });
+    const onReady = (_event: Electron.Event, extension: Extension) => {
+      if (extension.id === EXTENSION_NETWORK_OBSERVER_ID)
+        resolveReady(extension);
+    };
+    this.browserSession.extensions.on("extension-ready", onReady);
+    try {
+      const loaded = await this.browserSession.extensions.loadExtension(
+        this.options.observerExtensionPath,
+        { allowFileAccess: false },
+      );
+      if (loaded.id !== EXTENSION_NETWORK_OBSERVER_ID) {
+        await this.browserSession.extensions.removeExtension(loaded.id);
+        throw new Error("The internal network observer has an unexpected id.");
+      }
+      return await Promise.race([
+        ready,
+        new Promise<never>((_resolve, reject) => {
+          readyTimer = setTimeout(
+            () =>
+              reject(
+                new Error(
+                  "The internal extension network observer did not become ready.",
+                ),
+              ),
+            Math.max(1, this.options.readyTimeoutMs ?? 15_000),
+          );
+        }),
+      ]);
+    } finally {
+      if (readyTimer) clearTimeout(readyTimer);
+      this.browserSession.extensions.removeListener("extension-ready", onReady);
+    }
   }
 
   private bindWorker(versionId: number): void {
@@ -296,32 +384,47 @@ function canObserveRequest(extension: Extension, url: string): boolean {
   );
 }
 
-function mapRequestDetails(
-  details: OnBeforeRequestListenerDetails,
-  tabId: number,
-): ExtensionWebRequestEventDetails {
+function parseObservedRequest(
+  raw: unknown,
+): ExtensionWebRequestEventDetails | null {
+  if (!raw || typeof raw !== "object") return null;
+  const value = raw as Record<string, unknown>;
+  if (
+    (typeof value.requestId !== "string" &&
+      typeof value.requestId !== "number") ||
+    typeof value.url !== "string" ||
+    value.url.length > 65_536 ||
+    typeof value.method !== "string" ||
+    value.method.length > 32 ||
+    typeof value.type !== "string" ||
+    value.type.length > 64 ||
+    typeof value.timeStamp !== "number" ||
+    !Number.isFinite(value.timeStamp)
+  ) {
+    return null;
+  }
+  try {
+    new URL(value.url);
+  } catch {
+    return null;
+  }
   return {
-    requestId: String(details.id),
-    url: details.url,
-    method: details.method,
-    frameId: details.resourceType === "mainFrame" ? 0 : -1,
-    parentFrameId: -1,
-    tabId,
-    type: chromeResourceType(details.resourceType),
-    timeStamp: details.timestamp,
-    ...(details.initiatorOrigin ? { initiator: details.initiatorOrigin } : {}),
+    requestId: String(value.requestId).slice(0, 256),
+    url: value.url,
+    method: value.method,
+    frameId: Number.isSafeInteger(value.frameId)
+      ? (value.frameId as number)
+      : -1,
+    parentFrameId: Number.isSafeInteger(value.parentFrameId)
+      ? (value.parentFrameId as number)
+      : -1,
+    tabId: Number.isSafeInteger(value.tabId) ? (value.tabId as number) : -1,
+    type: value.type,
+    timeStamp: value.timeStamp,
+    ...(typeof value.initiator === "string" && value.initiator.length <= 2_048
+      ? { initiator: value.initiator }
+      : {}),
   };
-}
-
-function chromeResourceType(resourceType: string): string {
-  const mapped: Record<string, string> = {
-    mainFrame: "main_frame",
-    subFrame: "sub_frame",
-    xhr: "xmlhttprequest",
-    cspReport: "csp_report",
-    webSocket: "websocket",
-  };
-  return mapped[resourceType] ?? resourceType;
 }
 
 export function matchesWebRequestFilter(

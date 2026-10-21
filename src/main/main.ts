@@ -1033,11 +1033,28 @@ async function createMainWindow(): Promise<void> {
   registerInternalProtocol(browserSession);
 
   const extensionWebRequestHost = new ExtensionWebRequestHost(browserSession, {
-    preloadPath: path.join(__dirname, "extension-service-worker-preload.cjs"),
-    resolveTabId: (webContentsId) =>
-      tabManager?.getExtensionTabIdForWebContents(webContentsId) ?? -1,
+    serviceWorkerPreloadPath: path.join(
+      __dirname,
+      "extension-service-worker-preload.cjs",
+    ),
+    observerPreloadPath: path.join(
+      __dirname,
+      "extension-network-observer-preload.cjs",
+    ),
+    observerExtensionPath: app.isPackaged
+      ? path.join(
+          process.resourcesPath,
+          "extensions",
+          "chromecraft-network-observer",
+        )
+      : path.join(
+          app.getAppPath(),
+          "resources",
+          "extensions",
+          "chromecraft-network-observer",
+        ),
   });
-  extensionWebRequestHost.start();
+  await extensionWebRequestHost.start();
 
   const extensions = new ChromeWebStoreExtensionService(browserSession, {
     storagePath: path.join(app.getPath("userData"), "extensions"),

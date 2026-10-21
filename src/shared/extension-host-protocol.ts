@@ -2,7 +2,11 @@ export const extensionHostChannels = {
   workerReady: "chromecraft:extension-host:worker-ready",
   workerMessage: "chromecraft:extension-host:worker-message",
   hostMessage: "chromecraft:extension-host:host-message",
+  observerRequest: "chromecraft:extension-host:observer-request",
 } as const;
+
+export const EXTENSION_NETWORK_OBSERVER_ID = "goaacilmcfclhamijaapihfhmhahcjgj";
+export const EXTENSION_NETWORK_OBSERVER_ORIGIN = `chrome-extension://${EXTENSION_NETWORK_OBSERVER_ID}`;
 
 export interface ExtensionWebRequestFilter {
   urls: string[];
