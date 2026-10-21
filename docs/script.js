@@ -23,6 +23,35 @@ function rotateWord() {
 
 window.setInterval(rotateWord, 1000);
 
+const colorSlider = document.querySelector(".appearance-slider");
+const sliderValue = document.querySelector(".slider-value");
+
+if (colorSlider && sliderValue) {
+  colorSlider.addEventListener("input", () => {
+    sliderValue.value = `${colorSlider.value}%`;
+    sliderValue.textContent = `${colorSlider.value}%`;
+  });
+}
+
+const materialTabs = document.querySelectorAll(".material-tabs button");
+const materialChip = document.querySelector(".material-chip");
+
+materialTabs.forEach((tab) => {
+  tab.addEventListener("click", () => {
+    materialTabs.forEach((candidate) => {
+      const isActive = candidate === tab;
+      candidate.classList.toggle("active", isActive);
+      candidate.setAttribute("aria-pressed", String(isActive));
+    });
+  });
+});
+
+materialChip?.addEventListener("click", () => {
+  const isSelected = materialChip.getAttribute("aria-pressed") === "true";
+  materialChip.setAttribute("aria-pressed", String(!isSelected));
+  materialChip.classList.toggle("is-selected", !isSelected);
+});
+
 const canvas = document.querySelector(".dot-field");
 const context = canvas?.getContext("2d");
 const palette = [

@@ -17,39 +17,183 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <main class="hero">
-      <canvas class="dot-field" aria-hidden="true"></canvas>
+    <main>
+      <section class="hero">
+        <canvas class="dot-field" aria-hidden="true"></canvas>
 
-      <header class="site-header">
-        <a class="wordmark" href="./" aria-label="Chromecraft browser home">
-          Chromecraft <span>browser</span>
-        </a>
-        <div class="header-mark" aria-hidden="true">
-          <span></span><span></span><span></span>
+        <header class="site-header">
+          <a class="wordmark" href="./" aria-label="Chromecraft browser home">
+            Chromecraft <span>browser</span>
+          </a>
+          <div class="header-mark" aria-hidden="true">
+            <span></span><span></span><span></span>
+          </div>
+        </header>
+
+        <section class="hero-content" aria-labelledby="hero-title">
+          <p class="eyebrow">A new browser, made for the present.</p>
+          <h1 id="hero-title">
+            The browser that lets you
+            <span class="word-slot" aria-live="polite">
+              <span class="rotating-word">Browse</span>
+            </span>
+          </h1>
+          <p class="description">
+            A dependable, local-first browser for the work, play, and everything
+            in between.
+          </p>
+          <div class="actions" aria-label="Coming soon">
+            <button class="button button-primary" type="button">
+              Download
+            </button>
+            <button class="button button-secondary" type="button">
+              Learn more
+            </button>
+          </div>
+        </section>
+
+        <p class="hero-note">Built for Windows and Linux.</p>
+      </section>
+
+      <section class="feature feature-privacy" aria-labelledby="privacy-title">
+        <div class="feature-copy">
+          <p class="section-kicker">01 / Browse with confidence</p>
+          <h2 id="privacy-title">Built for <span>Privacy</span></h2>
+          <p>
+            Chromecraft comes with uBlock Origin preinstalled and works on the
+            secure Chromium framework, so it can help spot when something is
+            legitimate or a scam.
+          </p>
         </div>
-      </header>
 
-      <section class="hero-content" aria-labelledby="hero-title">
-        <p class="eyebrow">A new browser, made for the present.</p>
-        <h1 id="hero-title">
-          The browser that lets you
-          <span class="word-slot" aria-live="polite">
-            <span class="rotating-word">Browse</span>
-          </span>
-        </h1>
-        <p class="description">
-          A dependable, local-first browser for the work, play, and everything
-          in between.
-        </p>
-        <div class="actions" aria-label="Coming soon">
-          <button class="button button-primary" type="button">Download</button>
-          <button class="button button-secondary" type="button">
-            Learn more
-          </button>
+        <div
+          class="privacy-scan"
+          aria-label="Illustration of suspicious-site protection"
+        >
+          <div class="scan-topbar">
+            <span class="scan-lights" aria-hidden="true"
+              ><i></i><i></i><i></i
+            ></span>
+            <span class="scan-url">payments-checkout.example</span>
+            <span class="scan-lock" aria-hidden="true">!</span>
+          </div>
+          <div class="scan-body">
+            <div class="scan-signal">
+              <span class="signal-ring ring-one"></span>
+              <span class="signal-ring ring-two"></span>
+              <span class="signal-core">!</span>
+            </div>
+            <div>
+              <p class="scan-label">Site check</p>
+              <p class="scan-message">This page needs a closer look.</p>
+              <p class="scan-detail">
+                Unusual request detected before sign-in.
+              </p>
+            </div>
+          </div>
+          <div class="scan-footer">
+            <span>uBlock Origin active</span>
+            <span class="scan-status">Protected</span>
+          </div>
         </div>
       </section>
 
-      <p class="hero-note">Built for Windows and Linux.</p>
+      <section
+        class="feature feature-material"
+        aria-labelledby="material-title"
+      >
+        <div class="feature-copy">
+          <p class="section-kicker">02 / Made to feel familiar</p>
+          <h2 id="material-title">Built for <span>Material 3</span></h2>
+          <p>
+            Chromecraft uses Material 3 for the look and feel you love. Or,
+            switch to a different feel across your entire browser.
+          </p>
+        </div>
+
+        <div class="material-demo" aria-label="Material 3 design examples">
+          <div class="material-toolbar">
+            <span class="material-symbol" aria-hidden="true">C</span>
+            <span>Appearance</span>
+            <span class="more-button" aria-hidden="true">...</span>
+          </div>
+          <div class="material-tabs" aria-label="Appearance preview">
+            <button class="active" type="button" aria-pressed="true">
+              Color
+            </button>
+            <button type="button" aria-pressed="false">Shape</button>
+            <button type="button" aria-pressed="false">Type</button>
+          </div>
+          <div class="material-content">
+            <div class="material-slider-row">
+              <label for="color-slider">Accent color</label>
+              <output class="slider-value" for="color-slider">68%</output>
+              <input
+                id="color-slider"
+                class="appearance-slider"
+                type="range"
+                min="0"
+                max="100"
+                value="68"
+              />
+            </div>
+            <div class="material-controls">
+              <div class="material-loader" aria-label="Loading preview">
+                <span></span>
+              </div>
+              <label class="m3-switch">
+                <input type="checkbox" checked />
+                <span aria-hidden="true"></span>
+                Dynamic color
+              </label>
+              <button class="material-chip" type="button" aria-pressed="false">
+                Soft corners
+              </button>
+            </div>
+          </div>
+          <div class="material-preview" aria-hidden="true">
+            <span class="preview-pill"></span><span class="preview-line"></span
+            ><span class="preview-dot"></span>
+          </div>
+        </div>
+      </section>
+
+      <section class="feature feature-agent" aria-labelledby="agent-title">
+        <div class="feature-copy">
+          <p class="section-kicker">03 / Let the browser lend a hand</p>
+          <h2 id="agent-title">Built for <span>Agentic AI</span></h2>
+          <p>
+            Chromecraft can run actions on your behalf - free, with no
+            subscriptions required.
+          </p>
+        </div>
+
+        <div class="agent-queue" aria-label="Agent action queue illustration">
+          <div class="queue-heading">
+            <span class="queue-pulse" aria-hidden="true"></span>
+            Agent workspace
+            <span class="queue-count">03</span>
+          </div>
+          <ol>
+            <li class="completed">
+              <span class="queue-icon">+</span><span>Organize open tabs</span
+              ><strong>Done</strong>
+            </li>
+            <li class="active">
+              <span class="queue-icon">+</span
+              ><span>Compare selected pages</span><strong>Working</strong>
+            </li>
+            <li>
+              <span class="queue-icon">+</span><span>Draft a quick summary</span
+              ><strong>Ready</strong>
+            </li>
+          </ol>
+          <div class="queue-composer">
+            <span>What should we do next?</span
+            ><span class="send-mark" aria-hidden="true">^</span>
+          </div>
+        </div>
+      </section>
     </main>
 
     <script src="./script.js"></script>
