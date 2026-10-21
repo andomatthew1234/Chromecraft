@@ -70,6 +70,21 @@ export interface ExtensionActionEventAckMessage {
   eventId: string;
 }
 
+export interface ExtensionCommandsSubscriptionsMessage {
+  type: "commands-subscriptions";
+  listening: boolean;
+}
+
+export interface ExtensionCommandsGetAllMessage {
+  type: "commands-get-all";
+  requestId: string;
+}
+
+export interface ExtensionCommandsEventAckMessage {
+  type: "commands-event-ack";
+  eventId: string;
+}
+
 export type ExtensionTabsEventName =
   | "onCreated"
   | "onActivated"
@@ -86,6 +101,9 @@ export type ExtensionWorkerMessage =
   | ExtensionTabsSubscriptionsMessage
   | ExtensionActionSubscriptionsMessage
   | ExtensionActionEventAckMessage
+  | ExtensionCommandsSubscriptionsMessage
+  | ExtensionCommandsGetAllMessage
+  | ExtensionCommandsEventAckMessage
   | ExtensionActionCommandMessage
   | ExtensionWorkerReadyMessage;
 
@@ -138,10 +156,25 @@ export interface ExtensionActionEventMessage {
   args: unknown[];
 }
 
+export interface ExtensionCommandsResultMessage {
+  type: "commands-result";
+  requestId: string;
+  commands: Array<{ name: string; description: string; shortcut: string }>;
+}
+
+export interface ExtensionCommandsEventMessage {
+  type: "commands-event";
+  eventId: string;
+  command: string;
+  tab?: Record<string, unknown>;
+}
+
 export type ExtensionHostMessage =
   | ExtensionHostReadyMessage
   | ExtensionWebRequestEventMessage
   | ExtensionTabsEventMessage
   | ExtensionTabsSnapshotMessage
   | ExtensionActionEventMessage
-  | ExtensionActionResultMessage;
+  | ExtensionActionResultMessage
+  | ExtensionCommandsResultMessage
+  | ExtensionCommandsEventMessage;

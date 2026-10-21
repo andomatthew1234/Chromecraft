@@ -1224,6 +1224,7 @@ async function createMainWindow(): Promise<void> {
     hyperdrive,
     sendBrowserData,
     () => void sendExtensionsSnapshot(),
+    (input) => actionHost.handleCommandInput(input),
   );
   tabManager = manager;
   actionHost.attachTabs(manager);

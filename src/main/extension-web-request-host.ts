@@ -15,6 +15,7 @@ import {
   type ExtensionActionCommandMessage,
   type ExtensionActionEventMessage,
   type ExtensionActionNamespace,
+  type ExtensionCommandsEventMessage,
   type ExtensionTabsEventMessage,
   type ExtensionTabsEventName,
   type ExtensionWebRequestEventDetails,
@@ -25,6 +26,11 @@ import {
   ExtensionActionHost,
   type ResolvedExtensionAction,
 } from "./extension-action-host";
+import {
+  ExtensionCommandHost,
+  type ExtensionCommandInput,
+  type ExtensionCommandInvocation,
+} from "./extension-command-host";
 import type {
   ExtensionTabSnapshot,
   ExtensionTabTransition,
@@ -53,6 +59,10 @@ interface ExtensionActionSubscription {
 interface ExtensionActionFrameSubscription {
   frame: Electron.WebFrameMain;
   namespaces: Set<ExtensionActionNamespace>;
+}
+
+interface ExtensionCommandsSubscription {
+  scope: string;
 }
 
 export interface ExtensionTabsSource {
@@ -120,6 +130,14 @@ export class ExtensionWebRequestHost {
     string,
     Set<ExtensionActionFrameSubscription>
   >();
+  private readonly commandsSubscriptions = new Map<
+    string,
+    ExtensionCommandsSubscription
+  >();
+  private readonly commandsFrameSubscriptions = new Map<
+    string,
+    Set<Electron.WebFrameMain>
+  >();
   private readonly deliveryQueues = new Map<string, Promise<void>>();
   private readonly boundWorkers = new Map<number, BoundWorker>();
   private readonly workerReadyWaiters = new Map<
@@ -130,13 +148,19 @@ export class ExtensionWebRequestHost {
     string,
     (acknowledged: boolean) => void
   >();
+  private readonly commandsAckWaiters = new Map<
+    string,
+    (acknowledged: boolean) => void
+  >();
   private readonly ipc: ExtensionObserverIpc;
   private readonly preloadRegistrationIds: string[] = [];
   private readonly actions: ExtensionActionHost;
+  private readonly commands = new ExtensionCommandHost(process.platform);
   private observerExtension: Extension | null = null;
   private tabsSource: ExtensionTabsSource | null = null;
   private unsubscribeTabs: (() => void) | null = null;
   private nextActionEventId = 1;
+  private nextCommandEventId = 1;
   private started = false;
 
   private readonly onWorkerStatusChanged = (
@@ -158,7 +182,17 @@ export class ExtensionWebRequestHost {
     this.tabsSubscriptions.delete(extension.id);
     this.actionSubscriptions.delete(extension.id);
     this.actionFrameSubscriptions.delete(extension.id);
+    this.commandsSubscriptions.delete(extension.id);
+    this.commandsFrameSubscriptions.delete(extension.id);
     this.actions.unregister(extension.id);
+    this.commands.unregister(extension.id);
+  };
+
+  private readonly onExtensionLoaded = (
+    _event: Electron.Event,
+    extension: Extension,
+  ): void => {
+    this.registerCommands(extension);
   };
 
   private readonly onObserverRequest = (
@@ -203,6 +237,28 @@ export class ExtensionWebRequestHost {
     if (!message) return;
     if (message.type === "action-event-ack") {
       this.resolveActionAck(message.eventId, true);
+      return;
+    }
+    if (message.type === "commands-event-ack") {
+      this.resolveCommandsAck(message.eventId, true);
+      return;
+    }
+    if (message.type === "commands-subscriptions") {
+      this.registerCommands(extension);
+      this.registerFrameCommandsSubscription(
+        extension,
+        event.senderFrame,
+        message.listening,
+      );
+      return;
+    }
+    if (message.type === "commands-get-all") {
+      this.registerCommands(extension);
+      event.senderFrame.send(extensionHostChannels.frameHostMessage, {
+        type: "commands-result",
+        requestId: message.requestId,
+        commands: this.commands.getAll(extension.id),
+      });
       return;
     }
     this.registerAction(extension);
@@ -320,6 +376,20 @@ export class ExtensionWebRequestHost {
     return invocation;
   }
 
+  handleCommandInput(input: ExtensionCommandInput): boolean {
+    const tab =
+      this.tabsSource?.extensionTabSnapshots.find(
+        (candidate) => candidate.active,
+      ) ?? null;
+    const invocation = this.commands.match(
+      input,
+      tab ? { id: tab.id, url: tab.url } : null,
+    );
+    if (!invocation) return false;
+    void this.dispatchCommandInvocation(invocation, tab);
+    return true;
+  }
+
   async start(): Promise<void> {
     if (this.started) return;
     this.started = true;
@@ -345,6 +415,10 @@ export class ExtensionWebRequestHost {
       "extension-unloaded",
       this.onExtensionUnloaded,
     );
+    this.browserSession.extensions.on(
+      "extension-loaded",
+      this.onExtensionLoaded,
+    );
     this.ipc.on(extensionHostChannels.observerRequest, this.onObserverRequest);
     this.ipc.on(extensionHostChannels.frameMessage, this.onFrameMessage);
     for (const versionId of Object.keys(
@@ -352,6 +426,9 @@ export class ExtensionWebRequestHost {
     )) {
       this.bindWorker(Number(versionId));
     }
+    const loadedExtensions =
+      this.browserSession.extensions.getAllExtensions?.() ?? [];
+    for (const extension of loadedExtensions) this.registerCommands(extension);
     try {
       this.observerExtension = await this.loadObserverExtension();
     } catch (error) {
@@ -384,6 +461,10 @@ export class ExtensionWebRequestHost {
       "extension-unloaded",
       this.onExtensionUnloaded,
     );
+    this.browserSession.extensions.removeListener(
+      "extension-loaded",
+      this.onExtensionLoaded,
+    );
     this.ipc.removeListener(
       extensionHostChannels.observerRequest,
       this.onObserverRequest,
@@ -410,9 +491,13 @@ export class ExtensionWebRequestHost {
     this.tabsSubscriptions.clear();
     this.actionSubscriptions.clear();
     this.actionFrameSubscriptions.clear();
+    this.commandsSubscriptions.clear();
+    this.commandsFrameSubscriptions.clear();
     this.deliveryQueues.clear();
     for (const eventId of [...this.actionAckWaiters.keys()])
       this.resolveActionAck(eventId, false);
+    for (const eventId of [...this.commandsAckWaiters.keys()])
+      this.resolveCommandsAck(eventId, false);
     this.started = false;
   }
 
@@ -502,6 +587,28 @@ export class ExtensionWebRequestHost {
       this.resolveActionAck(message.eventId, true);
       return;
     }
+    if (message.type === "commands-event-ack") {
+      this.resolveCommandsAck(message.eventId, true);
+      return;
+    }
+    if (message.type === "commands-get-all") {
+      this.registerCommands(extension);
+      worker.send(extensionHostChannels.hostMessage, {
+        type: "commands-result",
+        requestId: message.requestId,
+        commands: this.commands.getAll(extensionId),
+      });
+      return;
+    }
+    if (message.type === "commands-subscriptions") {
+      this.registerCommands(extension);
+      if (message.listening) {
+        this.commandsSubscriptions.set(extensionId, { scope: worker.scope });
+      } else {
+        this.commandsSubscriptions.delete(extensionId);
+      }
+      return;
+    }
     if (message.type === "webRequest-subscriptions") {
       if (!hasPermission(extension, "webRequest")) return;
       this.subscriptions.set(extensionId, {
@@ -540,9 +647,14 @@ export class ExtensionWebRequestHost {
   }
 
   private dispatchTabTransition(transition: ExtensionTabTransition): void {
-    if (transition.type === "removed") this.actions.removeTab(transition.tabId);
-    if (transition.type === "updated" && transition.change.url !== undefined)
+    if (transition.type === "removed") {
+      this.actions.removeTab(transition.tabId);
+      this.commands.removeTab(transition.tabId);
+    }
+    if (transition.type === "updated" && transition.change.url !== undefined) {
       this.actions.navigatedTab(transition.tabId, transition.tab.url);
+      this.commands.navigatedTab(transition.tabId, transition.tab.url);
+    }
     if (transition.type === "activated") {
       for (const extensionId of this.actions.extensionIds)
         this.options.onActionChanged?.(extensionId);
@@ -596,6 +708,91 @@ export class ExtensionWebRequestHost {
       baseUrl: extension.url,
       manifest: extension.manifest as Record<string, unknown>,
     });
+  }
+
+  private registerCommands(extension: Extension): void {
+    this.commands.register({
+      id: extension.id,
+      manifest: extension.manifest as Record<string, unknown>,
+    });
+  }
+
+  private registerFrameCommandsSubscription(
+    extension: Extension,
+    frame: Electron.WebFrameMain,
+    listening: boolean,
+  ): void {
+    const subscriptions =
+      this.commandsFrameSubscriptions.get(extension.id) ?? new Set();
+    subscriptions.delete(frame);
+    if (listening) subscriptions.add(frame);
+    if (subscriptions.size > 0)
+      this.commandsFrameSubscriptions.set(extension.id, subscriptions);
+    else this.commandsFrameSubscriptions.delete(extension.id);
+  }
+
+  private async dispatchCommandInvocation(
+    invocation: ExtensionCommandInvocation,
+    tab: ExtensionTabSnapshot | null,
+  ): Promise<void> {
+    const extension = this.browserSession.extensions.getExtension(
+      invocation.extensionId,
+    );
+    if (!extension) return;
+    if (invocation.reservedAction) {
+      try {
+        const action = await this.invokeActionFromToolbar(
+          extension.id,
+          tab?.id ?? null,
+        );
+        if (action.kind === "popup") {
+          await this.options.openActionPopup?.(
+            extension.id,
+            action.popupUrl,
+            tab?.id ?? null,
+          );
+        }
+      } catch {
+        // Chrome silently ignores disabled, hidden, or unavailable actions.
+      }
+      return;
+    }
+    const index = tab
+      ? Math.max(
+          0,
+          this.tabsSource?.extensionTabSnapshots.findIndex(
+            (candidate) => candidate.id === tab.id,
+          ) ?? -1,
+        )
+      : -1;
+    const event: ExtensionCommandsEventMessage = {
+      type: "commands-event",
+      eventId: `command-${Date.now().toString(36)}-${(this
+        .nextCommandEventId++).toString(36)}`,
+      command: invocation.command,
+      ...(tab
+        ? {
+            tab: sanitizeTabSnapshot(
+              extension,
+              chromeTabSnapshot(tab, index),
+              this.commands.hasActiveTabGrant(extension.id, tab.id, tab.url),
+            ),
+          }
+        : {}),
+    };
+    const workerSubscription = this.commandsSubscriptions.get(extension.id);
+    if (workerSubscription)
+      this.deliver(extension.id, workerSubscription.scope, event);
+    const frames = this.commandsFrameSubscriptions.get(extension.id);
+    if (!frames) return;
+    for (const frame of [...frames]) {
+      try {
+        frame.send(extensionHostChannels.frameHostMessage, event);
+      } catch {
+        frames.delete(frame);
+      }
+    }
+    if (frames.size === 0) this.commandsFrameSubscriptions.delete(extension.id);
   }
 
   private async resolveActionIcon(
@@ -789,6 +986,10 @@ export class ExtensionWebRequestHost {
       await this.deliverActionEvent(extensionId, scope, message);
       return;
     }
+    if (message.type === "commands-event") {
+      await this.deliverCommandsEvent(extensionId, scope, message);
+      return;
+    }
     try {
       let worker =
         await this.browserSession.serviceWorkers.startWorkerForScope(scope);
@@ -860,6 +1061,43 @@ export class ExtensionWebRequestHost {
     );
   }
 
+  private async deliverCommandsEvent(
+    extensionId: string,
+    scope: string,
+    message: ExtensionCommandsEventMessage,
+  ): Promise<void> {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      if (!this.browserSession.extensions.getExtension(extensionId)) return;
+      try {
+        let worker =
+          await this.browserSession.serviceWorkers.startWorkerForScope(scope);
+        if (!(await this.waitForWorkerReady(worker))) {
+          worker =
+            await this.browserSession.serviceWorkers.startWorkerForScope(scope);
+          if (!(await this.waitForWorkerReady(worker))) continue;
+        }
+        if (extensionIdFromScope(worker.scope) !== extensionId) return;
+        const task = worker.startTask();
+        try {
+          const acknowledged = this.waitForCommandsAck(message.eventId, 1_250);
+          worker.send(extensionHostChannels.hostMessage, message);
+          if (await acknowledged) {
+            safelyEndWorkerTask(task);
+            return;
+          }
+        } finally {
+          safelyEndWorkerTask(task);
+        }
+      } catch {
+        // A force-stopped version can remain visible briefly; retry once.
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    console.warn(
+      `Could not confirm delivery of an extension command event to ${extensionId}.`,
+    );
+  }
+
   private waitForActionAck(
     eventId: string,
     timeoutMs: number,
@@ -882,6 +1120,30 @@ export class ExtensionWebRequestHost {
 
   private resolveActionAck(eventId: string, acknowledged: boolean): void {
     this.actionAckWaiters.get(eventId)?.(acknowledged);
+  }
+
+  private waitForCommandsAck(
+    eventId: string,
+    timeoutMs: number,
+  ): Promise<boolean> {
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (acknowledged: boolean) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        if (this.commandsAckWaiters.get(eventId) === finish)
+          this.commandsAckWaiters.delete(eventId);
+        resolve(acknowledged);
+      };
+      this.commandsAckWaiters.set(eventId, finish);
+      const timeout = setTimeout(() => finish(false), timeoutMs);
+      timeout.unref();
+    });
+  }
+
+  private resolveCommandsAck(eventId: string, acknowledged: boolean): void {
+    this.commandsAckWaiters.get(eventId)?.(acknowledged);
   }
 
   private waitForWorkerReady(worker: ServiceWorkerMain): Promise<boolean> {
@@ -953,6 +1215,30 @@ function parseWorkerMessage(raw: unknown): ExtensionWorkerMessage | null {
     )
       return null;
     return { type, eventId };
+  }
+  if (type === "commands-event-ack") {
+    const eventId = (raw as { eventId?: unknown }).eventId;
+    if (
+      typeof eventId !== "string" ||
+      eventId.length < 1 ||
+      eventId.length > 128
+    )
+      return null;
+    return { type, eventId };
+  }
+  if (type === "commands-subscriptions") {
+    const listening = (raw as { listening?: unknown }).listening;
+    return typeof listening === "boolean" ? { type, listening } : null;
+  }
+  if (type === "commands-get-all") {
+    const requestId = (raw as { requestId?: unknown }).requestId;
+    if (
+      typeof requestId !== "string" ||
+      requestId.length < 1 ||
+      requestId.length > 128
+    )
+      return null;
+    return { type, requestId };
   }
   if (type === "tabs-subscriptions") {
     const rawEvents = (raw as { events?: unknown }).events;

@@ -118,6 +118,14 @@ as password-manager autofill and passkeys.
   row is independently reported so a native API that resolves successfully but
   silently returns Electron's dummy value is still a conformance failure.
 
+- `test-packaged-extension-commands.mjs` is the focused packaged conformance
+  harness for MV3 and MV2 `chrome.commands`. It sends real keyboard input to
+  an active browsing surface and verifies `getAll`, `onCommand`, shortcut
+  ownership and collisions, reserved action-command routing, popup suppression,
+  active-tab payloads, extension isolation, and stopped-worker wake-up. Run it
+  with `pnpm test:extension-commands:win`; its machine-readable report is
+  `.artifacts/extensions/extension-commands.json`.
+
 - `diagnose-web-store-extension.mjs` uses a real signed Web Store package and
   records Electron warnings, but does not prove every feature of that package.
 - `validate-real-bitwarden-popup.mjs` and

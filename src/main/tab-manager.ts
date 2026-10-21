@@ -268,6 +268,9 @@ export class TabManager {
     private readonly hyperdrive: HyperdriveController,
     private readonly onBrowserDataChanged: () => void,
     private readonly onExtensionsChanged: () => void,
+    private readonly onExtensionCommandInput?: (
+      input: Electron.Input,
+    ) => boolean,
   ) {
     this.extensionPopup = extensions
       ? new ExtensionPopupController(window, browserSession, extensions, {
@@ -1505,7 +1508,7 @@ export class TabManager {
         event.preventDefault();
         this.shellView.webContents.send(channels.openCommandPalette);
       } else if (
-        (command && key === "l") ||
+        (command && !input.shift && key === "l") ||
         (input.alt && key === "d") ||
         key === "f6"
       ) {
@@ -1558,6 +1561,8 @@ export class TabManager {
       } else if (key === "escape" && active?.isLoading) {
         event.preventDefault();
         this.stop(active.id);
+      } else if (this.onExtensionCommandInput?.(input)) {
+        event.preventDefault();
       }
     });
   }

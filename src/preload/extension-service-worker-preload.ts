@@ -38,7 +38,10 @@ ipcRenderer.on(extensionHostChannels.workerReady, () => {
 contextBridge.exposeInMainWorld("__chromecraftExtensionHost", {
   send(message: ExtensionWorkerMessage): void {
     if (!message || typeof message !== "object") return;
-    if (!hostReady && message.type === "action-command") {
+    if (
+      !hostReady &&
+      (message.type === "action-command" || message.type === "commands-get-all")
+    ) {
       queuedWorkerMessages.push(message);
       return;
     }

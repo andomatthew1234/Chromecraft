@@ -2260,6 +2260,11 @@ function extensionCompatibilitySource(): string {
   let hostTabsReady = false;
   const pendingActionCommands = new Map();
   let nextActionRequestId = 1;
+  const commandHostListeners = new Set();
+  const queuedCommandEvents = [];
+  const seenCommandEventIds = new Set();
+  const pendingCommandRequests = new Map();
+  let nextCommandRequestId = 1;
   const wildcardMatch = (pattern, candidate) => {
     let url;
     try { url = new URL(candidate); } catch { return false; }
@@ -2433,6 +2438,50 @@ function extensionCompatibilitySource(): string {
     actionHostEvents.set(namespace, event);
     return event;
   };
+  const sendCommandsSubscriptions = () => {
+    extensionHostBridge?.send?.({
+      type: "commands-subscriptions",
+      listening: commandHostListeners.size > 0
+    });
+  };
+  const dispatchCommandEvent = (message) => {
+    const complete = () => {
+      if (typeof message.eventId !== "string") return;
+      seenCommandEventIds.add(message.eventId);
+      if (seenCommandEventIds.size > 64) seenCommandEventIds.delete(seenCommandEventIds.values().next().value);
+      extensionHostBridge?.send?.({ type: "commands-event-ack", eventId: message.eventId });
+    };
+    if (commandHostListeners.size === 0) {
+      if (queuedCommandEvents.length < 8) queuedCommandEvents.push(message);
+      return;
+    }
+    const pending = [];
+    for (const listener of commandHostListeners) {
+      try {
+        const result = listener(message.command, message.tab);
+        if (result && typeof result.then === "function") pending.push(result);
+      } catch (error) {
+        console.error("Chromecraft extension command listener failed.", error);
+      }
+    }
+    if (pending.length > 0) Promise.allSettled(pending).then(complete);
+    else complete();
+  };
+  const commandsHostEvent = {
+    addListener(listener) {
+      if (typeof listener !== "function") return;
+      commandHostListeners.add(listener);
+      sendCommandsSubscriptions();
+      for (const message of queuedCommandEvents.splice(0)) dispatchCommandEvent(message);
+    },
+    removeListener(listener) {
+      if (!commandHostListeners.delete(listener)) return;
+      sendCommandsSubscriptions();
+    },
+    hasListener(listener) { return commandHostListeners.has(listener); },
+    hasListeners() { return commandHostListeners.size > 0; },
+    sync() { sendCommandsSubscriptions(); }
+  };
   const applyTabsEvent = (message) => {
     if (message.eventName === "onCreated") {
       const tab = message.args?.[0];
@@ -2464,6 +2513,7 @@ function extensionCompatibilitySource(): string {
         for (const hostEvent of webRequestHostEvents.values()) hostEvent.sync();
         sendTabsSubscriptions();
         sendActionSubscriptions();
+        sendCommandsSubscriptions();
         return;
       }
       if (message.type === "webRequest-event" && message.eventName === "onBeforeRequest") {
@@ -2510,6 +2560,22 @@ function extensionCompatibilitySource(): string {
         clearTimeout(pending.timer);
         if (message.ok) pending.resolve(message.value);
         else pending.reject(new Error(message.error || "Extension action command failed."));
+        return;
+      }
+      if (message.type === "commands-event" && typeof message.command === "string") {
+        if (typeof message.eventId === "string" && seenCommandEventIds.has(message.eventId)) {
+          extensionHostBridge.send({ type: "commands-event-ack", eventId: message.eventId });
+          return;
+        }
+        dispatchCommandEvent(message);
+        return;
+      }
+      if (message.type === "commands-result" && typeof message.requestId === "string") {
+        const pending = pendingCommandRequests.get(message.requestId);
+        if (!pending) return;
+        pendingCommandRequests.delete(message.requestId);
+        clearTimeout(pending.timer);
+        pending.resolve(Array.isArray(message.commands) ? message.commands : []);
       }
     });
     extensionHostBridge.send({ type: "worker-ready" });
@@ -2905,7 +2971,23 @@ function extensionCompatibilitySource(): string {
     ensureEvent(alarms, "onAlarm");
 
     const commands = ensureNamespace(api, "commands");
-    ensureEvent(commands, "onCommand");
+    if (extensionHostBridge?.send) {
+      setOverride(commands, "onCommand", commandsHostEvent);
+      setOverride(commands, "getAll", (callback) => {
+        const requestId = "commands-" + Date.now().toString(36) + "-" + (nextCommandRequestId++).toString(36);
+        const operation = new Promise((resolve, reject) => {
+          const timer = setTimeout(() => {
+            pendingCommandRequests.delete(requestId);
+            reject(new Error("The extension commands request timed out."));
+          }, 15000);
+          pendingCommandRequests.set(requestId, { resolve, reject, timer });
+          extensionHostBridge.send({ type: "commands-get-all", requestId });
+        });
+        return completeAsync(callback, operation);
+      });
+    } else {
+      ensureEvent(commands, "onCommand");
+    }
 
     const idle = ensureNamespace(api, "idle");
     ensureEvent(idle, "onStateChanged");
