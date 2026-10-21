@@ -433,6 +433,23 @@ button {
   width: 66%;
 }
 
+.extension-logo-bing img {
+  height: 58%;
+  width: 58%;
+}
+
+.extension-logo-rewards img {
+  height: 66%;
+  width: 66%;
+}
+
+.extension-logo-trustpilot img {
+  background: #00b67a;
+  border-radius: 18px;
+  box-shadow: 0 8px 26px rgba(0, 182, 122, 0.2);
+  padding: 11px;
+}
+
 .extension-tile-label {
   background: rgba(4, 11, 27, 0.9);
   border: 1px solid rgba(146, 223, 255, 0.35);
@@ -2202,6 +2219,11 @@ h1 {
   .extension-logo-light img {
     border-radius: 12px;
     padding: 8px;
+  }
+
+  .extension-logo-trustpilot img {
+    border-radius: 12px;
+    padding: 7px;
   }
 
   .extension-tile-label {
