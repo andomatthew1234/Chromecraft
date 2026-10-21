@@ -135,6 +135,17 @@ describe("PreferencesStore search suggestions", () => {
     expect(preferences.snapshot.searchEngine).toBe("duckduckgo");
   });
 
+  it("keeps extension developer mode off by default and persists opt-in", async () => {
+    const preferences = new PreferencesStore(filePath);
+    await preferences.load();
+    expect(preferences.snapshot.extensionDeveloperMode).toBe(false);
+
+    await preferences.setExtensionDeveloperMode(true);
+    const reloaded = new PreferencesStore(filePath);
+    await reloaded.load();
+    expect(reloaded.snapshot.extensionDeveloperMode).toBe(true);
+  });
+
   it("persists explicit opt-in and validates malformed stored values", async () => {
     const preferences = new PreferencesStore(filePath);
     await preferences.load();

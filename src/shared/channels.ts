@@ -56,6 +56,8 @@ export const channels = {
   cancelPreparedExtension: "extensions:cancel-prepared",
   dismissWebStoreInstallBanner: "extensions:dismiss-web-store-banner",
   setExtensionEnabled: "extensions:set-enabled",
+  setExtensionDeveloperMode: "extensions:set-developer-mode",
+  importUnpackedExtension: "extensions:import-unpacked",
   removeExtension: "extensions:remove",
   openExtensionPage: "extensions:open-page",
   toggleExtensionPopup: "extensions:toggle-popup",

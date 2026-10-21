@@ -1,4 +1,10 @@
-import { createHash, createPublicKey, randomUUID, verify } from "node:crypto";
+import {
+  createHash,
+  createPublicKey,
+  generateKeyPairSync,
+  randomUUID,
+  verify,
+} from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { crc32 as zlibCrc32, inflateRawSync } from "node:zlib";
@@ -70,6 +76,27 @@ export interface ExtensionInstallProgress {
 export type ExtensionInstallProgressListener = (
   progress: ExtensionInstallProgress,
 ) => void;
+
+export interface ExtensionUpdateProgress extends ExtensionInstallProgress {
+  extensionId: string;
+  name: string;
+  index: number;
+  total: number;
+}
+
+export interface ExtensionUpdateResult {
+  id: string;
+  name: string;
+  fromVersion: string;
+  toVersion: string | null;
+  state:
+    | "installed"
+    | "up-to-date"
+    | "unavailable"
+    | "approval-required"
+    | "failed";
+  detail?: string;
+}
 
 export interface PreparedExtensionPreview {
   token: string;
@@ -279,6 +306,185 @@ export class ChromeWebStoreExtensionService {
     return this.commitPreparedExtension(preview.token);
   }
 
+  async checkAndInstallUpdates(
+    onProgress?: (progress: ExtensionUpdateProgress) => void,
+  ): Promise<ExtensionUpdateResult[]> {
+    this.requireInitialized();
+    if (
+      this.activePreparation ||
+      this.preparedExtension ||
+      this.committingPreviewToken
+    ) {
+      throw new Error(
+        "Finish or cancel the pending extension review before checking for updates.",
+      );
+    }
+    const runtimes = [...this.runtimes.values()].sort((left, right) =>
+      left.snapshot.name.localeCompare(right.snapshot.name),
+    );
+    const results: ExtensionUpdateResult[] = [];
+
+    for (const [offset, runtime] of runtimes.entries()) {
+      const { id, version } = runtime.stored;
+      const name = runtime.snapshot.name;
+      if (runtime.stored.sourceUrl === `unpacked:${id}`) {
+        results.push({
+          id,
+          name,
+          fromVersion: version,
+          toVersion: null,
+          state: "unavailable",
+          detail:
+            "Unpacked extensions are updated from their selected source folder.",
+        });
+        continue;
+      }
+      const emit = (progress: ExtensionInstallProgress) =>
+        emitExtensionUpdateProgress(onProgress, {
+          ...progress,
+          extensionId: id,
+          name,
+          index: offset + 1,
+          total: runtimes.length,
+        });
+
+      try {
+        const preview = await this.prepareFromWebStoreUrl(
+          runtime.stored.sourceUrl,
+          emit,
+        );
+        if (compareExtensionVersions(preview.version, version) <= 0) {
+          this.cancelPreparedExtension(preview.token);
+          results.push({
+            id,
+            name,
+            fromVersion: version,
+            toVersion: preview.version,
+            state: "up-to-date",
+          });
+          continue;
+        }
+
+        const addedAccess = addedExtensionAccess(runtime.snapshot, preview);
+        if (addedAccess.length > 0) {
+          this.cancelPreparedExtension(preview.token);
+          results.push({
+            id,
+            name,
+            fromVersion: version,
+            toVersion: preview.version,
+            state: "approval-required",
+            detail: `Review new access before installing: ${addedAccess.join(", ")}.`,
+          });
+          continue;
+        }
+
+        await this.commitPreparedExtension(preview.token, emit);
+        results.push({
+          id,
+          name,
+          fromVersion: version,
+          toVersion: preview.version,
+          state: "installed",
+        });
+      } catch (error) {
+        console.warn(`Extension update failed for ${id}.`, error);
+        this.cancelPreparedExtension();
+        results.push({
+          id,
+          name,
+          fromVersion: version,
+          toVersion: null,
+          state: "failed",
+          detail:
+            "ChromeCraft could not check or install this extension update.",
+        });
+      }
+    }
+    return results;
+  }
+
+  async importUnpacked(
+    sourcePath: string,
+  ): Promise<InstalledExtensionSnapshot> {
+    this.requireInitialized();
+    const source = await fs.realpath(path.resolve(sourcePath));
+    const sourceStat = await fs.stat(source);
+    if (!sourceStat.isDirectory()) {
+      throw new Error("Select a folder containing an extension manifest.");
+    }
+    if (
+      isSameOrChildPath(this.storagePath, source) ||
+      isSameOrChildPath(source, this.storagePath)
+    ) {
+      throw new Error("The managed extension directory cannot be imported.");
+    }
+
+    const entries = await readUnpackedDirectory(source);
+    const manifestEntry = entries.find(
+      (entry) => !entry.directory && entry.name === "manifest.json",
+    );
+    if (!manifestEntry) {
+      throw new Error("The selected folder has no manifest.json.");
+    }
+    const manifest = parseManifest(manifestEntry.data);
+    const localizedName = localizedManifestText(
+      manifest.name,
+      manifest,
+      entries,
+    );
+    const localizedDescription = localizedManifestText(
+      manifest.description,
+      manifest,
+      entries,
+    );
+    if (localizedName) manifest.name = localizedName;
+    if (localizedDescription) manifest.description = localizedDescription;
+    const publicKey = ensureUnpackedManifestKey(manifest);
+    const extensionId = extensionIdFromPublicKey(publicKey);
+    if (this.runtimes.has(extensionId)) {
+      throw new Error("That custom extension is already installed.");
+    }
+
+    applyElectronCompatibility(entries, manifest);
+    manifestEntry.data = Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`);
+    const destination = this.extensionVersionPath(
+      extensionId,
+      manifest.version,
+    );
+    await this.writeArchiveAtomically(destination, entries);
+    const stored: StoredExtension = {
+      id: extensionId,
+      version: manifest.version,
+      enabled: true,
+      sourceUrl: `unpacked:${extensionId}`,
+    };
+    const runtime = this.runtimeFromManifest(stored, manifest);
+    runtime.snapshot.iconDataUrl = extensionIconDataUrlFromEntries(
+      entries,
+      manifest,
+    );
+    try {
+      await this.loadRuntime(runtime, true);
+      this.runtimes.set(extensionId, runtime);
+      await this.persistRegistry();
+      this.options.onChanged?.();
+      return cloneSnapshot(runtime.snapshot);
+    } catch (error) {
+      this.runtimes.delete(extensionId);
+      if (runtime.extension) {
+        try {
+          await this.browserSession.extensions.removeExtension(extensionId);
+        } catch {
+          // Preserve the original import failure when cleanup also fails.
+        }
+        runtime.extension = null;
+      }
+      await fs.rm(path.dirname(destination), { recursive: true, force: true });
+      throw error;
+    }
+  }
+
   async prepareFromWebStoreUrl(
     itemUrl: string,
     onProgress?: ExtensionInstallProgressListener,
@@ -378,7 +584,7 @@ export class ChromeWebStoreExtensionService {
         description:
           typeof manifest.description === "string" ? manifest.description : "",
         permissions: stringArray(manifest.permissions),
-        hostPermissions: stringArray(manifest.host_permissions),
+        hostPermissions: extensionHostAccess(manifest),
         warnings: compatibilityWarnings(manifest),
         sourceUrl,
       };
@@ -423,7 +629,7 @@ export class ChromeWebStoreExtensionService {
       const stored: StoredExtension = {
         id: extensionId,
         version: manifest.version,
-        enabled: true,
+        enabled: previous?.stored.enabled ?? true,
         sourceUrl,
       };
       const runtime = this.runtimeFromManifest(stored, manifest);
@@ -432,7 +638,7 @@ export class ChromeWebStoreExtensionService {
         manifest,
       );
       try {
-        await this.loadRuntime(runtime, true);
+        if (stored.enabled) await this.loadRuntime(runtime, true);
         this.runtimes.set(extensionId, runtime);
         emitInstallProgress(onProgress, { stage: "finishing" });
         await this.persistRegistry();
@@ -721,7 +927,7 @@ export class ChromeWebStoreExtensionService {
         enabled: stored.enabled,
         ready: false,
         permissions: stringArray(manifest.permissions),
-        hostPermissions: stringArray(manifest.host_permissions),
+        hostPermissions: extensionHostAccess(manifest),
         warnings: compatibilityWarnings(manifest),
         error: null,
         sourceUrl: stored.sourceUrl,
@@ -925,6 +1131,18 @@ function emitInstallProgress(
     listener({ ...progress });
   } catch {
     // Progress observers must never be able to interrupt a verified install.
+  }
+}
+
+function emitExtensionUpdateProgress(
+  listener: ((progress: ExtensionUpdateProgress) => void) | undefined,
+  progress: ExtensionUpdateProgress,
+): void {
+  if (!listener) return;
+  try {
+    listener({ ...progress });
+  } catch {
+    // Update progress observers must never interrupt a verified install.
   }
 }
 
@@ -3097,10 +3315,90 @@ function isStoredExtension(value: unknown): value is StoredExtension {
   }
   try {
     requireVersion(stored.version);
-    return parseChromeWebStoreItemUrl(stored.sourceUrl) === stored.id;
+    return (
+      stored.sourceUrl === `unpacked:${stored.id}` ||
+      parseChromeWebStoreItemUrl(stored.sourceUrl) === stored.id
+    );
   } catch {
     return false;
   }
+}
+
+function ensureUnpackedManifestKey(manifest: ExtensionManifest): Buffer {
+  if (typeof manifest.key === "string" && manifest.key.trim()) {
+    const publicKey = Buffer.from(manifest.key, "base64");
+    if (publicKey.byteLength === 0 || publicKey.byteLength > 16 * 1024) {
+      throw new Error("The custom extension manifest key is invalid.");
+    }
+    try {
+      createPublicKey({ key: publicKey, format: "der", type: "spki" });
+    } catch {
+      throw new Error("The custom extension manifest key is invalid.");
+    }
+    return publicKey;
+  }
+  const { publicKey } = generateKeyPairSync("rsa", {
+    modulusLength: 2048,
+    publicKeyEncoding: { type: "spki", format: "der" },
+    privateKeyEncoding: { type: "pkcs8", format: "der" },
+  });
+  manifest.key = publicKey.toString("base64");
+  return publicKey;
+}
+
+async function readUnpackedDirectory(root: string): Promise<ArchiveEntry[]> {
+  const entries: ArchiveEntry[] = [];
+  let extractedBytes = 0;
+  const visit = async (directory: string, prefix: string): Promise<void> => {
+    const children = await fs.readdir(directory, { withFileTypes: true });
+    for (const child of children) {
+      if (entries.length >= MAX_ARCHIVE_ENTRIES) {
+        throw new Error("The custom extension contains too many files.");
+      }
+      const name = prefix ? `${prefix}/${child.name}` : child.name;
+      validateArchivePath(name);
+      const candidate = path.join(directory, child.name);
+      const information = await fs.lstat(candidate);
+      if (information.isSymbolicLink()) {
+        throw new Error("Custom extensions cannot contain symbolic links.");
+      }
+      const realCandidate = await fs.realpath(candidate);
+      assertChildPath(root, realCandidate);
+      if (information.isDirectory()) {
+        entries.push({
+          name: `${name}/`,
+          data: Buffer.alloc(0),
+          directory: true,
+        });
+        await visit(realCandidate, name);
+        continue;
+      }
+      if (!information.isFile()) {
+        throw new Error("The custom extension contains an unsupported file.");
+      }
+      if (information.size > MAX_ENTRY_BYTES) {
+        throw new Error("A custom extension file exceeds the size limit.");
+      }
+      extractedBytes += information.size;
+      if (extractedBytes > MAX_EXTRACTED_BYTES) {
+        throw new Error("The custom extension exceeds the size limit.");
+      }
+      entries.push({
+        name,
+        data: await fs.readFile(realCandidate),
+        directory: false,
+      });
+    }
+  };
+  await visit(root, "");
+  return entries;
+}
+
+function isSameOrChildPath(parent: string, candidate: string): boolean {
+  const relative = path.relative(parent, candidate);
+  return (
+    !relative || (!relative.startsWith("..") && !path.isAbsolute(relative))
+  );
 }
 
 function requireExtensionId(extensionId: string): void {
@@ -3113,6 +3411,44 @@ function requireVersion(version: string): void {
   if (!/^\d+(?:\.\d+){0,3}$/.test(version) || version.length > 64) {
     throw new TypeError("The extension version is invalid.");
   }
+}
+
+export function compareExtensionVersions(left: string, right: string): number {
+  requireVersion(left);
+  requireVersion(right);
+  const leftParts = left.split(".").map(Number);
+  const rightParts = right.split(".").map(Number);
+  for (let index = 0; index < 4; index += 1) {
+    const difference = (leftParts[index] ?? 0) - (rightParts[index] ?? 0);
+    if (difference !== 0) return Math.sign(difference);
+  }
+  return 0;
+}
+
+function addedExtensionAccess(
+  current: InstalledExtensionSnapshot,
+  update: PreparedExtensionPreview,
+): string[] {
+  const currentAccess = new Set([
+    ...current.permissions,
+    ...current.hostPermissions,
+  ]);
+  return [...update.permissions, ...update.hostPermissions]
+    .filter((permission) => !currentAccess.has(permission))
+    .sort();
+}
+
+function extensionHostAccess(manifest: ExtensionManifest): string[] {
+  return [
+    ...new Set([
+      ...stringArray(manifest.host_permissions),
+      ...(Array.isArray(manifest.content_scripts)
+        ? manifest.content_scripts.flatMap((script) =>
+            stringArray(script.matches),
+          )
+        : []),
+    ]),
+  ].sort();
 }
 
 function assertChildPath(parent: string, candidate: string): void {

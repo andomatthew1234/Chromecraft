@@ -153,6 +153,13 @@ const api: ChromecraftApi = {
       id,
       enabled,
     ) as Promise<void>,
+  setExtensionDeveloperMode: (enabled) =>
+    ipcRenderer.invoke(
+      channels.setExtensionDeveloperMode,
+      enabled,
+    ) as Promise<void>,
+  importUnpackedExtension: () =>
+    ipcRenderer.invoke(channels.importUnpackedExtension) as Promise<boolean>,
   removeExtension: (id) =>
     ipcRenderer.invoke(channels.removeExtension, id) as Promise<void>,
   openExtensionPage: (id, page) =>

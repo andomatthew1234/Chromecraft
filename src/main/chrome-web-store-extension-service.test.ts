@@ -1,4 +1,9 @@
-import { createHash, generateKeyPairSync, sign } from "node:crypto";
+import {
+  createHash,
+  generateKeyPairSync,
+  sign,
+  type KeyObject,
+} from "node:crypto";
 import { EventEmitter } from "node:events";
 import { promises as fs } from "node:fs";
 import os from "node:os";
@@ -8,7 +13,10 @@ import { crc32, deflateRawSync } from "node:zlib";
 import type { Extension, Session } from "electron";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ChromeWebStoreExtensionService } from "./chrome-web-store-extension-service";
+import {
+  ChromeWebStoreExtensionService,
+  compareExtensionVersions,
+} from "./chrome-web-store-extension-service";
 
 const temporaryDirectories: string[] = [];
 
@@ -24,6 +32,162 @@ afterEach(async () => {
 });
 
 describe("ChromeWebStoreExtensionService", () => {
+  it("compares Chrome extension versions numerically", () => {
+    expect(compareExtensionVersions("1.10", "1.2.9")).toBe(1);
+    expect(compareExtensionVersions("2", "2.0.0.0")).toBe(0);
+    expect(compareExtensionVersions("3.0.0", "4")).toBe(-1);
+  });
+
+  it("reports an installed extension as up to date without reloading it", async () => {
+    const fixture = createCrxFixture();
+    const runtime = createSessionDouble(fixture.id);
+    const service = new ChromeWebStoreExtensionService(runtime.session, {
+      storagePath: await makeTemporaryDirectory(),
+      fetch: async () => new Response(new Uint8Array(fixture.crx)),
+      chromiumVersion: "152.0.0.0",
+    });
+    await service.initialize();
+    await service.installFromWebStoreUrl(
+      `https://chromewebstore.google.com/detail/${fixture.id}`,
+    );
+    runtime.loadExtension.mockClear();
+
+    await expect(service.checkAndInstallUpdates()).resolves.toEqual([
+      expect.objectContaining({
+        id: fixture.id,
+        fromVersion: "1.0.0",
+        toVersion: "1.0.0",
+        state: "up-to-date",
+      }),
+    ]);
+    expect(runtime.loadExtension).not.toHaveBeenCalled();
+  });
+
+  it("reports unpacked extensions as locally managed during update checks", async () => {
+    const fixture = createCrxFixture();
+    const sourcePath = await makeTemporaryDirectory();
+    await fs.writeFile(
+      path.join(sourcePath, "manifest.json"),
+      JSON.stringify({
+        manifest_version: 3,
+        name: "Local extension",
+        version: "1.0.0",
+        key: fixture.publicKeyBase64,
+        background: { service_worker: "background.js" },
+      }),
+    );
+    await fs.writeFile(path.join(sourcePath, "background.js"), "// local\n");
+    const runtime = createSessionDouble(fixture.id);
+    const service = new ChromeWebStoreExtensionService(runtime.session, {
+      storagePath: await makeTemporaryDirectory(),
+      fetch: vi.fn(),
+      chromiumVersion: "152.0.0.0",
+    });
+    await service.initialize();
+    await service.importUnpacked(sourcePath);
+
+    await expect(service.checkAndInstallUpdates()).resolves.toEqual([
+      expect.objectContaining({
+        id: fixture.id,
+        state: "unavailable",
+        detail: expect.stringContaining("source folder"),
+      }),
+    ]);
+  });
+
+  it("installs a verified extension update while preserving its disabled state", async () => {
+    const signingKeys = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const initial = createCrxFixture({
+      signingKeys,
+      manifest: { version: "1.0.0", permissions: ["storage"] },
+    });
+    const update = createCrxFixture({
+      signingKeys,
+      manifest: { version: "1.1.0", permissions: ["storage"] },
+    });
+    const runtime = createSessionDouble(initial.id);
+    let response = initial.crx;
+    const service = new ChromeWebStoreExtensionService(runtime.session, {
+      storagePath: await makeTemporaryDirectory(),
+      fetch: async () => new Response(new Uint8Array(response)),
+      chromiumVersion: "152.0.0.0",
+    });
+    await service.initialize();
+    await service.installFromWebStoreUrl(
+      `https://chromewebstore.google.com/detail/${initial.id}`,
+    );
+    await service.setEnabled(initial.id, false);
+    runtime.loadExtension.mockClear();
+    response = update.crx;
+
+    await expect(service.checkAndInstallUpdates()).resolves.toEqual([
+      expect.objectContaining({
+        id: initial.id,
+        fromVersion: "1.0.0",
+        toVersion: "1.1.0",
+        state: "installed",
+      }),
+    ]);
+    await expect(service.listInstalled()).resolves.toEqual([
+      expect.objectContaining({
+        id: initial.id,
+        version: "1.1.0",
+        enabled: false,
+        ready: false,
+      }),
+    ]);
+    expect(runtime.loadExtension).not.toHaveBeenCalled();
+  });
+
+  it("requires review instead of installing an update with new access", async () => {
+    const signingKeys = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const initial = createCrxFixture({
+      signingKeys,
+      manifest: { version: "1.0.0", permissions: ["storage"] },
+    });
+    const update = createCrxFixture({
+      signingKeys,
+      manifest: {
+        version: "2.0.0",
+        permissions: ["storage"],
+        content_scripts: [
+          {
+            matches: ["https://sensitive.example/*"],
+            js: ["content.js"],
+          },
+        ],
+      },
+      extraFiles: { "content.js": "globalThis.newHostAccess = true;\n" },
+    });
+    const runtime = createSessionDouble(initial.id);
+    let response = initial.crx;
+    const service = new ChromeWebStoreExtensionService(runtime.session, {
+      storagePath: await makeTemporaryDirectory(),
+      fetch: async () => new Response(new Uint8Array(response)),
+      chromiumVersion: "152.0.0.0",
+    });
+    await service.initialize();
+    await service.installFromWebStoreUrl(
+      `https://chromewebstore.google.com/detail/${initial.id}`,
+    );
+    runtime.loadExtension.mockClear();
+    response = update.crx;
+
+    await expect(service.checkAndInstallUpdates()).resolves.toEqual([
+      expect.objectContaining({
+        id: initial.id,
+        fromVersion: "1.0.0",
+        toVersion: "2.0.0",
+        state: "approval-required",
+        detail: expect.stringContaining("https://sensitive.example/*"),
+      }),
+    ]);
+    await expect(service.listInstalled()).resolves.toEqual([
+      expect.objectContaining({ version: "1.0.0" }),
+    ]);
+    expect(runtime.loadExtension).not.toHaveBeenCalled();
+  });
+
   it("uses the signed package action icon for toolbar snapshots", async () => {
     const fixture = createCrxFixture({
       manifest: {
@@ -152,6 +316,9 @@ describe("ChromeWebStoreExtensionService", () => {
     ).rejects.toThrow();
 
     const commitProgress: string[] = [];
+    await expect(service.checkAndInstallUpdates()).rejects.toThrow(
+      /pending extension review/i,
+    );
     const installed = await service.commitPreparedExtension(
       preview.token,
       ({ stage }) => commitProgress.push(stage),
@@ -932,6 +1099,78 @@ describe("ChromeWebStoreExtensionService", () => {
       expect(runtime.loadExtension).not.toHaveBeenCalled();
     },
   );
+
+  it("imports an unpacked extension into managed storage without deleting its source", async () => {
+    const storagePath = await makeTemporaryDirectory();
+    const sourcePath = await makeTemporaryDirectory();
+    await fs.writeFile(
+      path.join(sourcePath, "manifest.json"),
+      JSON.stringify({
+        manifest_version: 3,
+        name: "Developer fixture",
+        version: "1.2.3",
+        description: "Loaded from a selected folder",
+      }),
+    );
+    const runtime = createSessionDouble("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    const service = new ChromeWebStoreExtensionService(runtime.session, {
+      storagePath,
+      fetch: vi.fn(),
+      chromiumVersion: "152.0.0.0",
+    });
+    await service.initialize();
+
+    const installed = await service.importUnpacked(sourcePath);
+
+    expect(installed.name).toBe("Developer fixture");
+    expect(installed.sourceUrl).toBe(`unpacked:${installed.id}`);
+    expect(installed.ready).toBe(true);
+    expect(runtime.loadExtension).toHaveBeenCalledTimes(1);
+    await expect(
+      fs.stat(path.join(storagePath, installed.id, "1.2.3", "manifest.json")),
+    ).resolves.toBeDefined();
+
+    service.dispose();
+    const restartedRuntime = createSessionDouble(installed.id);
+    const restarted = new ChromeWebStoreExtensionService(
+      restartedRuntime.session,
+      {
+        storagePath,
+        fetch: vi.fn(),
+        chromiumVersion: "152.0.0.0",
+      },
+    );
+    await restarted.initialize();
+    expect(await restarted.listInstalled()).toEqual([
+      expect.objectContaining({
+        id: installed.id,
+        sourceUrl: `unpacked:${installed.id}`,
+        ready: true,
+      }),
+    ]);
+
+    await restarted.uninstall(installed.id);
+    await expect(
+      fs.stat(path.join(sourcePath, "manifest.json")),
+    ).resolves.toBeDefined();
+  });
+
+  it("rejects unpacked folders without a valid manifest", async () => {
+    const storagePath = await makeTemporaryDirectory();
+    const sourcePath = await makeTemporaryDirectory();
+    const runtime = createSessionDouble("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+    const service = new ChromeWebStoreExtensionService(runtime.session, {
+      storagePath,
+      fetch: vi.fn(),
+      chromiumVersion: "152.0.0.0",
+    });
+    await service.initialize();
+
+    await expect(service.importUnpacked(sourcePath)).rejects.toThrow(
+      /manifest\.json/i,
+    );
+    expect(runtime.loadExtension).not.toHaveBeenCalled();
+  });
 });
 
 async function makeTemporaryDirectory(): Promise<string> {
@@ -1023,6 +1262,7 @@ interface ZipFixtureFile {
 interface CrxFixtureOptions {
   extraFiles?: Record<string, string | Buffer | ZipFixtureFile>;
   manifest?: Record<string, unknown>;
+  signingKeys?: { privateKey: KeyObject; publicKey: KeyObject };
 }
 
 function createCrxFixture(options: CrxFixtureOptions = {}): {
@@ -1031,9 +1271,11 @@ function createCrxFixture(options: CrxFixtureOptions = {}): {
   version: string;
   publicKeyBase64: string;
 } {
-  const { privateKey, publicKey } = generateKeyPairSync("rsa", {
-    modulusLength: 2048,
-  });
+  const { privateKey, publicKey } =
+    options.signingKeys ??
+    generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+    });
   const publicKeyDer = publicKey.export({ type: "spki", format: "der" });
   const idBytes = createHash("sha256")
     .update(publicKeyDer)
@@ -1043,7 +1285,10 @@ function createCrxFixture(options: CrxFixtureOptions = {}): {
     .flatMap((byte) => [byte >> 4, byte & 0x0f])
     .map((nibble) => String.fromCharCode("a".charCodeAt(0) + nibble))
     .join("");
-  const version = "1.0.0";
+  const version =
+    typeof options.manifest?.version === "string"
+      ? options.manifest.version
+      : "1.0.0";
   const manifest = JSON.stringify(
     {
       manifest_version: 3,

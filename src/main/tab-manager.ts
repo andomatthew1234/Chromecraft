@@ -347,6 +347,8 @@ export class TabManager {
           ...this.preferences.snapshot.hyperdriveExcludedHosts,
         ],
         hyperdriveMonitorOpen: this.preferences.snapshot.hyperdriveMonitorOpen,
+        extensionDeveloperMode:
+          this.preferences.snapshot.extensionDeveloperMode,
       },
       baseChromeHeight: this.baseChromeHeight,
       chromeHeight: this.chromeHeight,
@@ -756,6 +758,11 @@ export class TabManager {
 
   async setRemoteSearchSuggestionsEnabled(enabled: boolean): Promise<void> {
     await this.preferences.setRemoteSearchSuggestionsEnabled(enabled);
+    this.emitSnapshot();
+  }
+
+  async setExtensionDeveloperMode(enabled: boolean): Promise<void> {
+    await this.preferences.setExtensionDeveloperMode(enabled);
     this.emitSnapshot();
   }
 

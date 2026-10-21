@@ -1657,171 +1657,65 @@ function HyperdriveSettings({
   );
 }
 
-function ExtensionsPanel({
+function ExtensionIdentityIcon({
+  extension,
+  className,
+}: {
+  extension: BrowserExtensionSnapshot;
+  className: string;
+}) {
+  const iconUrl = extension.iconDataUrl ?? extension.action?.iconUrl;
+  return (
+    <span className={className} aria-hidden="true">
+      {iconUrl ? (
+        <img src={iconUrl} alt="" />
+      ) : (
+        extension.name.slice(0, 1).toUpperCase()
+      )}
+    </span>
+  );
+}
+
+export function ExtensionsSidebarPanel({
   snapshot,
-  requestInstall,
-  requestRemove,
+  openPage,
 }: {
   snapshot: ExtensionsSnapshot;
-  requestInstall: (itemUrl: string) => void;
-  requestRemove: (id: string, name: string) => void;
+  openPage: () => void;
 }) {
-  const [itemUrl, setItemUrl] = useState("");
-  const installing =
-    snapshot.operation === "installing" || snapshot.operation === "reviewing";
   return (
-    <div className="extensions-panel">
-      <section className="extension-install-card">
-        <span className="extension-install-icon" aria-hidden="true">
-          <Icon name="extension" />
-        </span>
-        <div>
-          <h3>Install from Chrome Web Store</h3>
-          <p>
-            Paste an extension listing URL. Chromecraft verifies its signed CRX3
-            package before loading it into this profile.
-          </p>
-        </div>
-        <form
-          onSubmit={(event) => {
-            event.preventDefault();
-            const trimmed = itemUrl.trim();
-            if (parseChromeWebStoreListingUrl(trimmed)) requestInstall(trimmed);
-          }}
-        >
-          <input
-            type="url"
-            value={itemUrl}
-            onChange={(event) => setItemUrl(event.target.value)}
-            placeholder="https://chromewebstore.google.com/detail/…"
-            aria-label="Chrome Web Store extension URL"
-            disabled={installing}
-          />
-          <button
-            type="submit"
-            className="tonal-button"
-            disabled={
-              !parseChromeWebStoreListingUrl(itemUrl.trim()) || installing
-            }
-          >
-            {installing ? "Verifying…" : "Review install"}
-          </button>
-        </form>
-        <p className="extension-compatibility-note">
-          Electron supports a subset of Chrome extension APIs. Chromecraft shows
-          compatibility warnings and never labels a downloaded package as ready
-          unless Electron actually loads it.
-        </p>
-      </section>
-      {snapshot.error && (
-        <div className="extension-error" role="alert">
-          <Icon name="warning" />
-          <span>{snapshot.error}</span>
-        </div>
-      )}
-      <div className="extension-list" role="list">
+    <div className="extensions-sidebar-panel extensions-sidebar-summary">
+      <div className="extensions-sidebar-list" role="list">
         {snapshot.items.map((extension) => (
           <article
-            className="extension-item"
+            className="extensions-sidebar-item"
             key={extension.id}
             role="listitem"
+            data-extension-id={extension.id}
           >
-            <div className="extension-item-heading">
-              <span className="extension-avatar" aria-hidden="true">
-                {extension.name.slice(0, 1).toUpperCase()}
-              </span>
-              <span>
-                <strong>{extension.name}</strong>
-                <small>Version {extension.version}</small>
-              </span>
-              <input
-                type="checkbox"
-                role="switch"
-                className="switch-input"
-                checked={extension.enabled}
-                disabled={snapshot.operation !== "idle"}
-                onChange={(event) =>
-                  void window.chromecraft.setExtensionEnabled(
-                    extension.id,
-                    event.target.checked,
-                  )
-                }
-                aria-label={`${extension.enabled ? "Disable" : "Enable"} ${extension.name}`}
-              />
-            </div>
-            <p>{extension.description || "No description provided."}</p>
-            <span className="extension-status" data-status={extension.status}>
-              {extension.status === "ready"
-                ? "Ready"
-                : extension.status === "disabled"
-                  ? "Disabled"
-                  : extension.status === "loading"
-                    ? "Loading"
-                    : extension.status === "incompatible"
-                      ? "Compatibility issue"
-                      : "Load failed"}
+            <ExtensionIdentityIcon
+              extension={extension}
+              className="extensions-sidebar-icon"
+            />
+            <span className="extensions-sidebar-copy">
+              <strong>{extension.name}</strong>
+              <small>
+                {extension.description ||
+                  (extension.enabled ? "Ready to use" : "Turned off")}
+              </small>
             </span>
-            {extension.error && (
-              <small className="extension-item-error">{extension.error}</small>
-            )}
-            {extension.warnings.length > 0 && (
-              <details>
-                <summary>
-                  {extension.warnings.length} compatibility warning(s)
-                </summary>
-                <ul>
-                  {extension.warnings.map((warning) => (
-                    <li key={warning}>{warning}</li>
-                  ))}
-                </ul>
-              </details>
-            )}
-            <div className="extension-actions">
-              {extension.popupUrl && (
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    const rect = event.currentTarget.getBoundingClientRect();
-                    void window.chromecraft.toggleExtensionPopup(extension.id, {
-                      x: rect.x,
-                      y: rect.y,
-                      width: rect.width,
-                      height: rect.height,
-                    });
-                  }}
-                >
-                  Open popup
-                </button>
-              )}
-              {extension.optionsUrl && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    void window.chromecraft.openExtensionPage(
-                      extension.id,
-                      "options",
-                    )
-                  }
-                >
-                  Options
-                </button>
-              )}
-              <button
-                type="button"
-                className="danger-text-button"
-                disabled={snapshot.operation !== "idle"}
-                onClick={() => requestRemove(extension.id, extension.name)}
-              >
-                Remove
-              </button>
-            </div>
+            <span
+              className="extensions-sidebar-state"
+              data-status={extension.status}
+              aria-label={extension.enabled ? "Enabled" : "Disabled"}
+            />
           </article>
         ))}
         {snapshot.initialized && snapshot.items.length === 0 && (
           <EmptyState
             icon="extension"
             title="No user extensions"
-            description="Open a Chrome Web Store listing or paste its URL above."
+            description="Add extensions from the Chrome Web Store to see them here."
           />
         )}
         {!snapshot.initialized && (
@@ -1831,7 +1725,371 @@ function ExtensionsPanel({
           </div>
         )}
       </div>
+      <div className="extensions-sidebar-footer">
+        <button
+          type="button"
+          className="tonal-button"
+          onClick={openPage}
+          aria-label="Open extensions page"
+        >
+          <Icon name="open" />
+          Open extensions page
+        </button>
+      </div>
     </div>
+  );
+}
+
+export function ExtensionsPage({
+  snapshot,
+  developerMode,
+  close,
+  requestInstall,
+  requestRemove,
+}: {
+  snapshot: ExtensionsSnapshot;
+  developerMode: boolean;
+  close: () => void;
+  requestInstall: (itemUrl: string) => void;
+  requestRemove: (id: string, name: string) => void;
+}) {
+  const [manualInstallOpen, setManualInstallOpen] = useState(false);
+  const [itemUrl, setItemUrl] = useState("");
+  const [actionError, setActionError] = useState<string | null>(null);
+  const installing =
+    snapshot.operation === "installing" || snapshot.operation === "reviewing";
+  const storeUrl = "https://chromewebstore.google.com/category/extensions";
+  const importUnpacked = async () => {
+    setActionError(null);
+    try {
+      await window.chromecraft.importUnpackedExtension();
+    } catch {
+      setActionError("Chromecraft could not import that extension folder.");
+    }
+  };
+
+  return (
+    <main className="extensions-page" aria-labelledby="extensions-page-title">
+      <div className="extensions-page-content">
+        <header className="extensions-page-header">
+          <button
+            type="button"
+            className="extensions-page-back"
+            onClick={close}
+            aria-label="Back to browsing"
+            title="Back to browsing"
+          >
+            <Icon name="back" />
+          </button>
+          <span>
+            <small>Chromecraft</small>
+            <h1 id="extensions-page-title">Extensions</h1>
+          </span>
+        </header>
+
+        <div className="extensions-page-layout">
+          <section
+            className="extensions-library"
+            aria-labelledby="installed-extensions-title"
+          >
+            <div className="extensions-section-heading">
+              <span>
+                <small>On this browser</small>
+                <h2 id="installed-extensions-title">Installed extensions</h2>
+              </span>
+              <span className="extension-total">
+                {snapshot.items.length} installed
+              </span>
+            </div>
+            {snapshot.error && (
+              <div className="extension-error" role="alert">
+                <Icon name="warning" />
+                <span>{snapshot.error}</span>
+              </div>
+            )}
+            <div className="extensions-page-list" role="list">
+              {snapshot.items.map((extension) => (
+                <article
+                  className="extension-page-item"
+                  key={extension.id}
+                  role="listitem"
+                  data-extension-id={extension.id}
+                >
+                  <div className="extension-page-item-heading">
+                    <ExtensionIdentityIcon
+                      extension={extension}
+                      className="extension-page-icon"
+                    />
+                    <span>
+                      <strong>{extension.name}</strong>
+                      <small>Version {extension.version}</small>
+                    </span>
+                    <input
+                      type="checkbox"
+                      role="switch"
+                      className="switch-input"
+                      checked={extension.enabled}
+                      disabled={snapshot.operation !== "idle"}
+                      onChange={(event) =>
+                        void window.chromecraft.setExtensionEnabled(
+                          extension.id,
+                          event.target.checked,
+                        )
+                      }
+                      aria-label={`${extension.enabled ? "Disable" : "Enable"} ${extension.name}`}
+                    />
+                  </div>
+                  <p>{extension.description || "No description provided."}</p>
+                  <span
+                    className="extension-status"
+                    data-status={extension.status}
+                  >
+                    {extension.status === "ready"
+                      ? "Ready"
+                      : extension.status === "disabled"
+                        ? "Disabled"
+                        : extension.status === "loading"
+                          ? "Loading"
+                          : extension.status === "incompatible"
+                            ? "Compatibility issue"
+                            : "Load failed"}
+                  </span>
+                  {developerMode && extension.error && (
+                    <small className="extension-item-error">
+                      {extension.error}
+                    </small>
+                  )}
+                  {developerMode && extension.warnings.length > 0 && (
+                    <details>
+                      <summary>
+                        {extension.warnings.length} extension warning(s)
+                      </summary>
+                      <ul>
+                        {extension.warnings.map((warning) => (
+                          <li key={warning}>{warning}</li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
+                  <div className="extension-actions">
+                    {extension.popupUrl && (
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          const rect =
+                            event.currentTarget.getBoundingClientRect();
+                          void window.chromecraft.toggleExtensionPopup(
+                            extension.id,
+                            {
+                              x: rect.x,
+                              y: rect.y,
+                              width: rect.width,
+                              height: rect.height,
+                            },
+                          );
+                        }}
+                      >
+                        Open popup
+                      </button>
+                    )}
+                    {extension.optionsUrl && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          void window.chromecraft.openExtensionPage(
+                            extension.id,
+                            "options",
+                          )
+                        }
+                      >
+                        Options
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="danger-text-button"
+                      disabled={snapshot.operation !== "idle"}
+                      onClick={() =>
+                        requestRemove(extension.id, extension.name)
+                      }
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </article>
+              ))}
+              {snapshot.initialized && snapshot.items.length === 0 && (
+                <EmptyState
+                  icon="extension"
+                  title="No extensions installed"
+                  description="Visit the Chrome Web Store or add an extension manually."
+                />
+              )}
+              {!snapshot.initialized && (
+                <div className="extension-loading">
+                  <ExpressiveLoadingIndicator label="Loading extensions" />
+                  <span>Loading extensions…</span>
+                </div>
+              )}
+            </div>
+          </section>
+
+          <aside
+            className="extension-management-tiles"
+            aria-label="Extension tools"
+          >
+            <section
+              className="extension-management-tile extension-add-tile"
+              data-extension-tile="add"
+            >
+              <span className="extension-tile-icon" aria-hidden="true">
+                <Icon name="add" />
+              </span>
+              <div>
+                <small>Add extension</small>
+                <h2>Find something useful</h2>
+                <p>
+                  Browse extensions made for Chrome, or paste a listing link to
+                  review it before installation.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="filled-button extension-store-button"
+                aria-label="Open Chrome Web Store"
+                onClick={() => {
+                  close();
+                  void window.chromecraft.createTab(storeUrl);
+                }}
+              >
+                <span className="extension-store-logo" aria-hidden="true">
+                  <span />
+                </span>
+                Open Chrome Web Store
+              </button>
+              <button
+                type="button"
+                className="extension-manual-toggle"
+                aria-expanded={manualInstallOpen}
+                aria-controls="manual-extension-install"
+                onClick={() => setManualInstallOpen((open) => !open)}
+              >
+                Add extension manually
+                <Icon name={manualInstallOpen ? "chevronUp" : "chevronDown"} />
+              </button>
+              {manualInstallOpen && (
+                <form
+                  className="extension-manual-form"
+                  id="manual-extension-install"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    const trimmed = itemUrl.trim();
+                    if (parseChromeWebStoreListingUrl(trimmed)) {
+                      requestInstall(trimmed);
+                    }
+                  }}
+                >
+                  <label htmlFor="manual-extension-url">
+                    Chrome Web Store listing URL
+                  </label>
+                  <input
+                    id="manual-extension-url"
+                    type="url"
+                    value={itemUrl}
+                    onChange={(event) => setItemUrl(event.target.value)}
+                    placeholder="https://chromewebstore.google.com/detail/…"
+                    aria-label="Chrome Web Store extension URL"
+                    disabled={installing}
+                    autoFocus
+                  />
+                  <button
+                    type="submit"
+                    className="tonal-button"
+                    disabled={
+                      !parseChromeWebStoreListingUrl(itemUrl.trim()) ||
+                      installing
+                    }
+                  >
+                    {installing ? "Verifying…" : "Review extension"}
+                  </button>
+                </form>
+              )}
+            </section>
+
+            <section
+              className="extension-management-tile extension-updates-tile"
+              data-extension-tile="updates"
+            >
+              <span className="extension-tile-icon" aria-hidden="true">
+                <Icon name="reload" />
+              </span>
+              <div>
+                <small>Extension updates</small>
+                <h2>Updated with Chromecraft</h2>
+                <p>
+                  Extension updates are verified and bundled with browser
+                  updates, keeping the browser and its extensions in step.
+                </p>
+              </div>
+              <span className="extension-update-badge">
+                <Icon name="shield" />
+                Managed by browser updates
+              </span>
+            </section>
+
+            <section
+              className="extension-management-tile extension-dev-tile"
+              data-extension-tile="developer"
+            >
+              <span className="extension-tile-icon" aria-hidden="true">
+                <Icon name="tune" />
+              </span>
+              <div>
+                <small>Developer tools</small>
+                <h2>Dev mode</h2>
+                <p>
+                  Import an unpacked extension and show its compatibility
+                  warnings and loading errors.
+                </p>
+              </div>
+              <label className="extension-dev-toggle">
+                <span>
+                  <strong>Dev mode</strong>
+                  <small>{developerMode ? "Enabled" : "Disabled"}</small>
+                </span>
+                <input
+                  type="checkbox"
+                  role="switch"
+                  className="switch-input"
+                  aria-label="Extension developer mode"
+                  checked={developerMode}
+                  onChange={(event) =>
+                    void window.chromecraft.setExtensionDeveloperMode(
+                      event.target.checked,
+                    )
+                  }
+                />
+              </label>
+              <button
+                type="button"
+                className="tonal-button extension-load-unpacked"
+                aria-label="Load unpacked extension"
+                disabled={!developerMode || snapshot.operation !== "idle"}
+                onClick={() => void importUnpacked()}
+              >
+                <Icon name="folder" />
+                Load unpacked
+              </button>
+              {actionError && (
+                <p className="extension-dev-error" role="alert">
+                  {actionError}
+                </p>
+              )}
+            </section>
+          </aside>
+        </div>
+      </div>
+    </main>
   );
 }
 
@@ -1843,9 +2101,8 @@ function Sidebar({
   extensions,
   tool,
   setTool,
+  openExtensionsPage,
   requestClearHistory,
-  requestExtensionInstall,
-  requestExtensionRemove,
 }: {
   snapshot: BrowserSnapshot;
   hyperdrive: HyperdriveSnapshot;
@@ -1854,9 +2111,8 @@ function Sidebar({
   extensions: ExtensionsSnapshot;
   tool: SidebarTool | null;
   setTool: (tool: SidebarTool | null) => void;
+  openExtensionsPage: () => void;
   requestClearHistory: (range: "hour" | "day" | "all") => void;
-  requestExtensionInstall: (itemUrl: string) => void;
-  requestExtensionRemove: (id: string, name: string) => void;
 }) {
   const [query, setQuery] = useState("");
   const open = snapshot.preferences.sidebarOpen;
@@ -2154,10 +2410,9 @@ function Sidebar({
             </>
           )}
           {tool === "extensions" && (
-            <ExtensionsPanel
+            <ExtensionsSidebarPanel
               snapshot={extensions}
-              requestInstall={requestExtensionInstall}
-              requestRemove={requestExtensionRemove}
+              openPage={openExtensionsPage}
             />
           )}
           {tool === "settings" && (
@@ -3057,6 +3312,7 @@ export function App() {
   const [tool, setTool] = useState<SidebarTool | null>(null);
   const [brandMenuOpen, setBrandMenuOpen] = useState(false);
   const [updatesOpen, setUpdatesOpen] = useState(false);
+  const [extensionsPageOpen, setExtensionsPageOpen] = useState(false);
   const [extensionsMenuOpen, setExtensionsMenuOpen] = useState(false);
   const [tabHoverCardOpen, setTabHoverCardOpen] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
@@ -3124,6 +3380,7 @@ export function App() {
       paletteOpen ||
       brandMenuOpen ||
       updatesOpen ||
+      extensionsPageOpen ||
       extensionsMenuOpen ||
       tabHoverCardOpen ||
       tabMenu ||
@@ -3136,6 +3393,7 @@ export function App() {
   }, [
     brandMenuOpen,
     dialog,
+    extensionsPageOpen,
     extensionsMenuOpen,
     findOpen,
     omniboxExpanded,
@@ -3161,6 +3419,7 @@ export function App() {
       if (event.key === "Escape") {
         void window.chromecraft.closeExtensionPopup();
         setBrandMenuOpen(false);
+        setExtensionsPageOpen(false);
         setExtensionsMenuOpen(false);
         setUpdatesOpen(false);
         setPaletteOpen(false);
@@ -3281,6 +3540,7 @@ export function App() {
             setBrandMenuOpen(false);
           }}
           onOpenUpdates={() => {
+            setExtensionsPageOpen(false);
             setUpdatesOpen(true);
             setBrandMenuOpen(false);
           }}
@@ -3305,9 +3565,8 @@ export function App() {
           }}
           onManageExtensions={() => {
             setExtensionsMenuOpen(false);
-            setTool("extensions");
-            void window.chromecraft.setSidebarOpen(true);
-            void window.chromecraft.setSidebarAttached(true);
+            setUpdatesOpen(false);
+            setExtensionsPageOpen(true);
           }}
           onToggleExtensionPopup={(extension, rect) => {
             setExtensionsMenuOpen(false);
@@ -3378,9 +3637,8 @@ export function App() {
                 ? {
                     label: "View details",
                     onClick: () => {
-                      setTool("extensions");
-                      void window.chromecraft.setSidebarOpen(true);
-                      void window.chromecraft.setSidebarAttached(true);
+                      setUpdatesOpen(false);
+                      setExtensionsPageOpen(true);
                     },
                   }
                 : null
@@ -3427,6 +3685,10 @@ export function App() {
         extensions={extensions}
         tool={tool}
         setTool={setTool}
+        openExtensionsPage={() => {
+          setUpdatesOpen(false);
+          setExtensionsPageOpen(true);
+        }}
         requestClearHistory={(range) => {
           if (range === "all") {
             setDialog({ kind: "clear-history" });
@@ -3434,16 +3696,21 @@ export function App() {
             void window.chromecraft.clearHistory(range);
           }
         }}
-        requestExtensionInstall={(itemUrl) =>
-          void reviewExtensionInstall(itemUrl)
-        }
-        requestExtensionRemove={(id, name) =>
-          setDialog({ kind: "remove-extension", id, name })
-        }
       />
       <NewTabSurface tab={activeTab} snapshot={snapshot} data={data} />
       {updatesOpen && (
         <UpdatesPage snapshot={updates} close={() => setUpdatesOpen(false)} />
+      )}
+      {extensionsPageOpen && (
+        <ExtensionsPage
+          snapshot={extensions}
+          developerMode={snapshot.preferences.extensionDeveloperMode}
+          close={() => setExtensionsPageOpen(false)}
+          requestInstall={(itemUrl) => void reviewExtensionInstall(itemUrl)}
+          requestRemove={(id, name) =>
+            setDialog({ kind: "remove-extension", id, name })
+          }
+        />
       )}
       {snapshot.preferences.hyperdriveMonitorOpen && (
         <HyperdriveMonitor snapshot={hyperdrive} />

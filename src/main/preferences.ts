@@ -22,6 +22,7 @@ export interface BrowserPreferences {
   hyperdriveSearchPreloadingEnabled: boolean;
   hyperdriveExcludedHosts: string[];
   hyperdriveMonitorOpen: boolean;
+  extensionDeveloperMode: boolean;
 }
 
 const defaults: BrowserPreferences = {
@@ -39,6 +40,7 @@ const defaults: BrowserPreferences = {
   hyperdriveSearchPreloadingEnabled: false,
   hyperdriveExcludedHosts: [],
   hyperdriveMonitorOpen: false,
+  extensionDeveloperMode: false,
 };
 
 const themes = new Set<NewTabTheme>(["overworld", "nether", "end", "minimal"]);
@@ -145,6 +147,10 @@ export class PreferencesStore {
           typeof parsed.hyperdriveMonitorOpen === "boolean"
             ? parsed.hyperdriveMonitorOpen
             : defaults.hyperdriveMonitorOpen,
+        extensionDeveloperMode:
+          typeof parsed.extensionDeveloperMode === "boolean"
+            ? parsed.extensionDeveloperMode
+            : defaults.extensionDeveloperMode,
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
@@ -219,6 +225,10 @@ export class PreferencesStore {
 
   async setHyperdriveMonitorOpen(open: boolean): Promise<void> {
     await this.update({ hyperdriveMonitorOpen: open });
+  }
+
+  async setExtensionDeveloperMode(enabled: boolean): Promise<void> {
+    await this.update({ extensionDeveloperMode: enabled });
   }
 
   private async update(patch: Partial<BrowserPreferences>): Promise<void> {

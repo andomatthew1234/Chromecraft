@@ -68,6 +68,7 @@ export interface BrowserPreferencesSnapshot {
   hyperdriveSearchPreloadingEnabled: boolean;
   hyperdriveExcludedHosts: string[];
   hyperdriveMonitorOpen: boolean;
+  extensionDeveloperMode: boolean;
 }
 
 export interface HyperdriveDestinationSnapshot {
@@ -379,6 +380,8 @@ export interface ChromecraftApi {
     extensionId: string,
   ): Promise<void>;
   setExtensionEnabled(id: string, enabled: boolean): Promise<void>;
+  setExtensionDeveloperMode(enabled: boolean): Promise<void>;
+  importUnpackedExtension(): Promise<boolean>;
   removeExtension(id: string): Promise<void>;
   openExtensionPage(id: string, page: "options"): Promise<void>;
   toggleExtensionPopup(id: string, anchor: ExtensionPopupAnchor): Promise<void>;

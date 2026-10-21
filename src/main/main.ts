@@ -871,6 +871,32 @@ function registerIpc(): void {
       });
     },
   );
+  ipcMain.handle(
+    channels.setExtensionDeveloperMode,
+    async (event, enabled: unknown) => {
+      if (typeof enabled !== "boolean") {
+        throw new TypeError("enabled must be a boolean.");
+      }
+      await requireManager(event).setExtensionDeveloperMode(enabled);
+    },
+  );
+  ipcMain.handle(channels.importUnpackedExtension, async (event) => {
+    const service = requireExtensions(event);
+    const manager = requireManager(event);
+    if (!manager.snapshot.preferences.extensionDeveloperMode) {
+      throw new Error("Enable extension developer mode before importing.");
+    }
+    const result = await dialog.showOpenDialog({
+      title: "Load unpacked extension",
+      buttonLabel: "Load extension",
+      properties: ["openDirectory"],
+    });
+    if (result.canceled || !result.filePaths[0]) return false;
+    await runExtensionOperation("installing", null, () =>
+      service.importUnpacked(result.filePaths[0]),
+    );
+    return true;
+  });
   ipcMain.handle(channels.removeExtension, async (event, id: unknown) => {
     const service = requireExtensions(event);
     const extensionId = requireString(id, "id", 32);
