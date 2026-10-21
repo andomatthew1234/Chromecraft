@@ -13,6 +13,8 @@ import {
   extensionHostChannels,
   type ExtensionHostMessage,
   type ExtensionActionCommandMessage,
+  type ExtensionActionEventMessage,
+  type ExtensionActionNamespace,
   type ExtensionTabsEventMessage,
   type ExtensionTabsEventName,
   type ExtensionWebRequestEventDetails,
@@ -43,6 +45,16 @@ interface ExtensionTabsSubscription {
   events: Set<ExtensionTabsEventName>;
 }
 
+interface ExtensionActionSubscription {
+  scope: string;
+  namespaces: Set<ExtensionActionNamespace>;
+}
+
+interface ExtensionActionFrameSubscription {
+  frame: Electron.WebFrameMain;
+  namespaces: Set<ExtensionActionNamespace>;
+}
+
 export interface ExtensionTabsSource {
   readonly extensionTabSnapshots: ExtensionTabSnapshot[];
   getExtensionTab(extensionTabId: number): ExtensionTabSnapshot | null;
@@ -53,6 +65,7 @@ export interface ExtensionTabsSource {
 
 interface BoundWorker {
   worker: ServiceWorkerMain;
+  ready: boolean;
   listener: (
     event: Electron.IpcMainServiceWorkerEvent,
     message: unknown,
@@ -99,14 +112,31 @@ export class ExtensionWebRequestHost {
     string,
     ExtensionTabsSubscription
   >();
+  private readonly actionSubscriptions = new Map<
+    string,
+    ExtensionActionSubscription
+  >();
+  private readonly actionFrameSubscriptions = new Map<
+    string,
+    Set<ExtensionActionFrameSubscription>
+  >();
   private readonly deliveryQueues = new Map<string, Promise<void>>();
   private readonly boundWorkers = new Map<number, BoundWorker>();
+  private readonly workerReadyWaiters = new Map<
+    number,
+    Set<(ready: boolean) => void>
+  >();
+  private readonly actionAckWaiters = new Map<
+    string,
+    (acknowledged: boolean) => void
+  >();
   private readonly ipc: ExtensionObserverIpc;
   private readonly preloadRegistrationIds: string[] = [];
   private readonly actions: ExtensionActionHost;
   private observerExtension: Extension | null = null;
   private tabsSource: ExtensionTabsSource | null = null;
   private unsubscribeTabs: (() => void) | null = null;
+  private nextActionEventId = 1;
   private started = false;
 
   private readonly onWorkerStatusChanged = (
@@ -126,6 +156,8 @@ export class ExtensionWebRequestHost {
   ): void => {
     this.subscriptions.delete(extension.id);
     this.tabsSubscriptions.delete(extension.id);
+    this.actionSubscriptions.delete(extension.id);
+    this.actionFrameSubscriptions.delete(extension.id);
     this.actions.unregister(extension.id);
   };
 
@@ -168,8 +200,21 @@ export class ExtensionWebRequestHost {
     const extension = this.browserSession.extensions.getExtension(extensionId);
     if (!extension) return;
     const message = parseWorkerMessage(rawMessage);
-    if (!message || message.type !== "action-command") return;
+    if (!message) return;
+    if (message.type === "action-event-ack") {
+      this.resolveActionAck(message.eventId, true);
+      return;
+    }
     this.registerAction(extension);
+    if (message.type === "action-subscriptions") {
+      this.registerFrameActionSubscriptions(
+        extension,
+        event.senderFrame,
+        message.namespaces,
+      );
+      return;
+    }
+    if (message.type !== "action-command") return;
     void this.executeActionCommand(extension, message).then((response) => {
       try {
         event.senderFrame?.send(
@@ -227,6 +272,52 @@ export class ExtensionWebRequestHost {
     if (!extension) return null;
     this.registerAction(extension);
     return this.actions.resolve(extensionId, tabId);
+  }
+
+  async invokeActionFromToolbar(
+    extensionId: string,
+    tabId: number | null,
+  ): Promise<{ kind: "popup"; popupUrl: string } | { kind: "clicked" }> {
+    const extension = this.browserSession.extensions.getExtension(extensionId);
+    if (!extension) throw new Error("The extension is not loaded.");
+    this.registerAction(extension);
+    if (tabId === null) {
+      const action = this.actions.resolve(extensionId, null);
+      if (!action?.enabled || !action.visible)
+        throw new Error("The extension action is disabled or hidden.");
+      if (!action.popupUrl)
+        throw new Error("A popup-less action requires an active website tab.");
+      return { kind: "popup", popupUrl: action.popupUrl };
+    }
+    const tab = this.tabsSource?.getExtensionTab(tabId);
+    if (!tab) throw new Error("The active browser tab is unavailable.");
+    const invocation = this.actions.invokeFromToolbar(extensionId, {
+      id: tab.id,
+      url: tab.url,
+    });
+    const tabsSubscription = this.tabsSubscriptions.get(extensionId);
+    if (tabsSubscription)
+      this.sendTabsSnapshotToRunning(extension, tabsSubscription.scope);
+    const actionSubscription = this.actionSubscriptions.get(extensionId);
+    if (actionSubscription)
+      this.sendTabsSnapshotToRunning(extension, actionSubscription.scope);
+    if (invocation.kind === "popup") return invocation;
+    const index = Math.max(
+      0,
+      this.tabsSource?.extensionTabSnapshots.findIndex(
+        (candidate) => candidate.id === tab.id,
+      ) ?? -1,
+    );
+    this.dispatchActionClick(
+      extension,
+      this.actions.resolve(extensionId, tab.id)?.kind ?? "action",
+      sanitizeTabSnapshot(
+        extension,
+        chromeTabSnapshot(tab, index),
+        this.actions.hasActiveTabGrant(extensionId, tab.id, tab.url),
+      ),
+    );
+    return invocation;
   }
 
   async start(): Promise<void> {
@@ -317,7 +408,11 @@ export class ExtensionWebRequestHost {
     }
     this.subscriptions.clear();
     this.tabsSubscriptions.clear();
+    this.actionSubscriptions.clear();
+    this.actionFrameSubscriptions.clear();
     this.deliveryQueues.clear();
+    for (const eventId of [...this.actionAckWaiters.keys()])
+      this.resolveActionAck(eventId, false);
     this.started = false;
   }
 
@@ -372,7 +467,7 @@ export class ExtensionWebRequestHost {
       message: unknown,
     ) => void this.receiveWorkerMessage(event.serviceWorker, message);
     worker.ipc.on(extensionHostChannels.workerMessage, listener);
-    this.boundWorkers.set(versionId, { worker, listener });
+    this.boundWorkers.set(versionId, { worker, listener, ready: false });
     worker.send(extensionHostChannels.workerReady);
   }
 
@@ -384,6 +479,7 @@ export class ExtensionWebRequestHost {
       bound.listener,
     );
     this.boundWorkers.delete(versionId);
+    this.resolveWorkerReady(versionId, false);
   }
 
   private async receiveWorkerMessage(
@@ -397,7 +493,13 @@ export class ExtensionWebRequestHost {
     const message = parseWorkerMessage(rawMessage);
     if (!message) return;
     if (message.type === "worker-ready") {
-      worker.send(extensionHostChannels.workerReady);
+      const bound = this.boundWorkers.get(worker.versionId);
+      if (bound) bound.ready = true;
+      this.resolveWorkerReady(worker.versionId, true);
+      return;
+    }
+    if (message.type === "action-event-ack") {
+      this.resolveActionAck(message.eventId, true);
       return;
     }
     if (message.type === "webRequest-subscriptions") {
@@ -421,6 +523,15 @@ export class ExtensionWebRequestHost {
       }
       return;
     }
+    if (message.type === "action-subscriptions") {
+      this.registerAction(extension);
+      this.actionSubscriptions.set(extensionId, {
+        scope: worker.scope,
+        namespaces: new Set(message.namespaces),
+      });
+      this.deliver(extensionId, worker.scope, this.tabsSnapshot(extension));
+      return;
+    }
     this.tabsSubscriptions.set(extensionId, {
       scope: worker.scope,
       events: new Set(message.events),
@@ -431,7 +542,7 @@ export class ExtensionWebRequestHost {
   private dispatchTabTransition(transition: ExtensionTabTransition): void {
     if (transition.type === "removed") this.actions.removeTab(transition.tabId);
     if (transition.type === "updated" && transition.change.url !== undefined)
-      this.actions.navigatedTab(transition.tabId);
+      this.actions.navigatedTab(transition.tabId, transition.tab.url);
     if (transition.type === "activated") {
       for (const extensionId of this.actions.extensionIds)
         this.options.onActionChanged?.(extensionId);
@@ -452,7 +563,28 @@ export class ExtensionWebRequestHost {
       // sleeping worker that did not subscribe to this event.
       this.sendTabsSnapshotToRunning(extension, subscription.scope);
       if (!subscription.events.has(event.eventName)) continue;
-      const sanitized = sanitizeTabsEvent(extension, event);
+      const eventTab =
+        event.eventName === "onCreated"
+          ? event.args[0]
+          : event.eventName === "onUpdated"
+            ? event.args[2]
+            : null;
+      const eventTabRecord =
+        eventTab && typeof eventTab === "object"
+          ? (eventTab as Record<string, unknown>)
+          : null;
+      const sanitized = sanitizeTabsEvent(
+        extension,
+        event,
+        Number.isInteger(eventTabRecord?.id) &&
+          typeof eventTabRecord?.url === "string"
+          ? this.actions.hasActiveTabGrant(
+              extension.id,
+              eventTabRecord.id as number,
+              eventTabRecord.url,
+            )
+          : false,
+      );
       void this.deliver(extensionId, subscription.scope, sanitized);
     }
   }
@@ -554,9 +686,66 @@ export class ExtensionWebRequestHost {
     return {
       type: "tabs-snapshot",
       tabs: tabs.map((tab, index) =>
-        sanitizeTabSnapshot(extension, chromeTabSnapshot(tab, index)),
+        sanitizeTabSnapshot(
+          extension,
+          chromeTabSnapshot(tab, index),
+          this.actions.hasActiveTabGrant(extension.id, tab.id, tab.url),
+        ),
       ),
     };
+  }
+
+  private registerFrameActionSubscriptions(
+    extension: Extension,
+    frame: Electron.WebFrameMain,
+    namespaces: ExtensionActionNamespace[],
+  ): void {
+    const subscriptions =
+      this.actionFrameSubscriptions.get(extension.id) ??
+      new Set<ExtensionActionFrameSubscription>();
+    for (const existing of [...subscriptions]) {
+      if (existing.frame === frame) subscriptions.delete(existing);
+    }
+    if (namespaces.length > 0) {
+      subscriptions.add({ frame, namespaces: new Set(namespaces) });
+    }
+    if (subscriptions.size > 0)
+      this.actionFrameSubscriptions.set(extension.id, subscriptions);
+    else this.actionFrameSubscriptions.delete(extension.id);
+  }
+
+  private dispatchActionClick(
+    extension: Extension,
+    namespace: ExtensionActionNamespace,
+    tab: Record<string, unknown>,
+  ): void {
+    const message: ExtensionActionEventMessage = {
+      type: "action-event",
+      eventId: `action-${Date.now().toString(36)}-${(this
+        .nextActionEventId++).toString(36)}`,
+      namespace,
+      eventName: "onClicked",
+      args: [tab],
+    };
+    const workerSubscription = this.actionSubscriptions.get(extension.id);
+    if (workerSubscription?.namespaces.has(namespace)) {
+      this.deliver(extension.id, workerSubscription.scope, message);
+    }
+    const frameSubscriptions = this.actionFrameSubscriptions.get(extension.id);
+    if (!frameSubscriptions) return;
+    for (const subscription of [...frameSubscriptions]) {
+      if (!subscription.namespaces.has(namespace)) continue;
+      try {
+        subscription.frame.send(
+          extensionHostChannels.frameHostMessage,
+          message,
+        );
+      } catch {
+        frameSubscriptions.delete(subscription);
+      }
+    }
+    if (frameSubscriptions.size === 0)
+      this.actionFrameSubscriptions.delete(extension.id);
   }
 
   private sendTabsSnapshotToRunning(extension: Extension, scope: string): void {
@@ -596,17 +785,154 @@ export class ExtensionWebRequestHost {
     message: ExtensionHostMessage,
   ): Promise<void> {
     if (!this.browserSession.extensions.getExtension(extensionId)) return;
+    if (message.type === "action-event") {
+      await this.deliverActionEvent(extensionId, scope, message);
+      return;
+    }
     try {
-      const worker =
+      let worker =
         await this.browserSession.serviceWorkers.startWorkerForScope(scope);
+      if (!(await this.waitForWorkerReady(worker))) {
+        worker =
+          await this.browserSession.serviceWorkers.startWorkerForScope(scope);
+        if (!(await this.waitForWorkerReady(worker))) {
+          throw new Error("The extension worker bridge did not become ready.");
+        }
+      }
       if (extensionIdFromScope(worker.scope) !== extensionId) return;
-      worker.send(extensionHostChannels.hostMessage, message);
+      const task = worker.startTask();
+      try {
+        worker.send(extensionHostChannels.hostMessage, message);
+        const keepAlive = setTimeout(() => {
+          try {
+            task.end();
+          } catch {
+            // A force-stopped worker has already released this task.
+          }
+        }, 250);
+        keepAlive.unref();
+      } catch (error) {
+        task.end();
+        throw error;
+      }
     } catch (error) {
       console.warn(
         `Could not deliver an extension host event to ${extensionId}.`,
         error,
       );
     }
+  }
+
+  private async deliverActionEvent(
+    extensionId: string,
+    scope: string,
+    message: ExtensionActionEventMessage,
+  ): Promise<void> {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      if (!this.browserSession.extensions.getExtension(extensionId)) return;
+      try {
+        let worker =
+          await this.browserSession.serviceWorkers.startWorkerForScope(scope);
+        if (!(await this.waitForWorkerReady(worker))) {
+          worker =
+            await this.browserSession.serviceWorkers.startWorkerForScope(scope);
+          if (!(await this.waitForWorkerReady(worker))) continue;
+        }
+        if (extensionIdFromScope(worker.scope) !== extensionId) return;
+        const task = worker.startTask();
+        try {
+          const acknowledged = this.waitForActionAck(message.eventId, 1_250);
+          worker.send(extensionHostChannels.hostMessage, message);
+          if (await acknowledged) {
+            safelyEndWorkerTask(task);
+            return;
+          }
+        } finally {
+          safelyEndWorkerTask(task);
+        }
+      } catch {
+        // A force-stopped version can remain visible briefly; retry once.
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    console.warn(
+      `Could not confirm delivery of an extension action event to ${extensionId}.`,
+    );
+  }
+
+  private waitForActionAck(
+    eventId: string,
+    timeoutMs: number,
+  ): Promise<boolean> {
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (acknowledged: boolean) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        if (this.actionAckWaiters.get(eventId) === finish)
+          this.actionAckWaiters.delete(eventId);
+        resolve(acknowledged);
+      };
+      this.actionAckWaiters.set(eventId, finish);
+      const timeout = setTimeout(() => finish(false), timeoutMs);
+      timeout.unref();
+    });
+  }
+
+  private resolveActionAck(eventId: string, acknowledged: boolean): void {
+    this.actionAckWaiters.get(eventId)?.(acknowledged);
+  }
+
+  private waitForWorkerReady(worker: ServiceWorkerMain): Promise<boolean> {
+    if (!this.isWorkerRunning(worker)) {
+      this.unbindWorker(worker.versionId);
+    } else if (this.boundWorkers.get(worker.versionId)?.ready) {
+      return Promise.resolve(true);
+    }
+    return new Promise((resolve) => {
+      const waiters =
+        this.workerReadyWaiters.get(worker.versionId) ?? new Set();
+      let settled = false;
+      const finish = (ready: boolean) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeout);
+        waiters.delete(finish);
+        if (waiters.size === 0)
+          this.workerReadyWaiters.delete(worker.versionId);
+        resolve(ready);
+      };
+      waiters.add(finish);
+      this.workerReadyWaiters.set(worker.versionId, waiters);
+      const timeout = setTimeout(() => {
+        finish(false);
+      }, 1_000);
+      timeout.unref();
+    });
+  }
+
+  private isWorkerRunning(worker: ServiceWorkerMain): boolean {
+    if (worker.isDestroyed()) return false;
+    return Object.hasOwn(
+      this.browserSession.serviceWorkers.getAllRunning(),
+      String(worker.versionId),
+    );
+  }
+
+  private resolveWorkerReady(versionId: number, ready: boolean): void {
+    const waiters = this.workerReadyWaiters.get(versionId);
+    if (!waiters) return;
+    this.workerReadyWaiters.delete(versionId);
+    for (const resolve of waiters) resolve(ready);
+  }
+}
+
+function safelyEndWorkerTask(task: Electron.StartTask): void {
+  try {
+    task.end();
+  } catch {
+    // A force-stopped worker has already released this task.
   }
 }
 
@@ -618,6 +944,16 @@ function parseWorkerMessage(raw: unknown): ExtensionWorkerMessage | null {
   if (!raw || typeof raw !== "object") return null;
   const type = (raw as { type?: unknown }).type;
   if (type === "worker-ready") return { type };
+  if (type === "action-event-ack") {
+    const eventId = (raw as { eventId?: unknown }).eventId;
+    if (
+      typeof eventId !== "string" ||
+      eventId.length < 1 ||
+      eventId.length > 128
+    )
+      return null;
+    return { type, eventId };
+  }
   if (type === "tabs-subscriptions") {
     const rawEvents = (raw as { events?: unknown }).events;
     if (!Array.isArray(rawEvents)) return null;
@@ -639,6 +975,27 @@ function parseWorkerMessage(raw: unknown): ExtensionWorkerMessage | null {
       ),
     ];
     return { type, events };
+  }
+  if (type === "action-subscriptions") {
+    const rawNamespaces = (raw as { namespaces?: unknown }).namespaces;
+    if (!Array.isArray(rawNamespaces)) return null;
+    const allowed = new Set<ExtensionActionNamespace>([
+      "action",
+      "browserAction",
+      "pageAction",
+    ]);
+    const namespaces = [
+      ...new Set(
+        rawNamespaces
+          .slice(0, allowed.size)
+          .filter(
+            (namespace): namespace is ExtensionActionNamespace =>
+              typeof namespace === "string" &&
+              allowed.has(namespace as ExtensionActionNamespace),
+          ),
+      ),
+    ];
+    return { type, namespaces };
   }
   if (type === "action-command") {
     const value = raw as Record<string, unknown>;
@@ -758,13 +1115,14 @@ function chromeTabSnapshot(
 function sanitizeTabsEvent(
   extension: Extension,
   event: ExtensionTabsEventMessage,
+  activeTabAccess = false,
 ): ExtensionTabsEventMessage {
   if (event.eventName === "onRemoved" || event.eventName === "onActivated")
     return event;
   const tab = event.eventName === "onCreated" ? event.args[0] : event.args[2];
   if (!tab || typeof tab !== "object") return event;
   const candidate = tab as Record<string, unknown>;
-  const redacted = sanitizeTabSnapshot(extension, candidate);
+  const redacted = sanitizeTabSnapshot(extension, candidate, activeTabAccess);
   if (redacted === candidate) return event;
   if (event.eventName === "onCreated") return { ...event, args: [redacted] };
   const change = { ...(event.args[1] as Record<string, unknown>) };
@@ -776,9 +1134,14 @@ function sanitizeTabsEvent(
 function sanitizeTabSnapshot(
   extension: Extension,
   candidate: Record<string, unknown>,
+  activeTabAccess = false,
 ): Record<string, unknown> {
   const url = typeof candidate.url === "string" ? candidate.url : "";
-  if (hasPermission(extension, "tabs") || canAccessUrl(extension, url))
+  if (
+    activeTabAccess ||
+    hasPermission(extension, "tabs") ||
+    canAccessUrl(extension, url)
+  )
     return candidate;
   const redacted = { ...candidate };
   delete redacted.url;

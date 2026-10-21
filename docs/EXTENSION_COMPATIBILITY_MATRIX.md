@@ -98,7 +98,16 @@ as password-manager autofill and passkeys.
   aliases. Its disposable extensions verify manifest defaults, global and
   per-tab title/popup/badge/colour state, enablement, live Browser Shell
   rendering, programmatic `openPopup`, and state across a real MV3 worker
-  stop/restart. Legacy aliases are exercised from real MV2 background pages.
+  stop/restart. It also drives trusted pointer input against the packaged
+  Browser Shell to verify popup-less `onClicked` dispatch, authoritative active
+  tab payloads, popup/disabled/hidden suppression, MV2 aliases, and delivery
+  after a stopped MV3 worker is woken by the click itself. Its `activeTab`
+  checks require scripting to be unavailable before a real action click,
+  available after that click, and revoked after cross-origin navigation or tab
+  closure. These native permission checks intentionally remain red on stock
+  Electron 44, whose public extension API cannot call Chromium's active-tab
+  permission granter. Legacy aliases are exercised from real MV2 background
+  pages.
   Run it after `pnpm package:win` with:
 
   ```powershell

@@ -54,6 +54,15 @@ export interface ExtensionActionHostOptions {
   ) => Promise<string | null>;
 }
 
+export interface ExtensionActionInvocationTab {
+  id: number;
+  url: string;
+}
+
+export type ExtensionActionInvocation =
+  | { kind: "popup"; popupUrl: string }
+  | { kind: "clicked" };
+
 interface ActionDefaults {
   kind: ExtensionActionKind;
   title: string;
@@ -79,6 +88,8 @@ interface ActionOverrides {
 
 interface RegisteredAction {
   baseUrl: string;
+  activeTabPermission: boolean;
+  activeTabGrants: Map<number, string>;
   defaults: ActionDefaults;
   global: ActionOverrides;
   perTab: Map<number, ActionOverrides>;
@@ -109,6 +120,10 @@ export class ExtensionActionHost {
     const existing = this.registrations.get(registration.id);
     this.registrations.set(registration.id, {
       baseUrl: normalizedExtensionBase(registration.id, registration.baseUrl),
+      activeTabPermission: manifestPermissions(registration.manifest).has(
+        "activeTab",
+      ),
+      activeTabGrants: existing?.activeTabGrants ?? new Map(),
       defaults,
       global: existing?.global ?? {},
       perTab: existing?.perTab ?? new Map(),
@@ -272,14 +287,56 @@ export class ExtensionActionHost {
     }
   }
 
+  /**
+   * Applies Chrome's toolbar-click semantics after a trusted browser-UI click.
+   * Popup actions do not emit onClicked. Popup-less actions may acquire a
+   * temporary activeTab grant which remains scoped to this tab and origin.
+   */
+  invokeFromToolbar(
+    extensionId: string,
+    tab: ExtensionActionInvocationTab,
+  ): ExtensionActionInvocation {
+    const registration = this.requireRegistration(extensionId);
+    if (!Number.isSafeInteger(tab.id) || tab.id < 1)
+      throw new TypeError("Extension action tabId must be a positive integer.");
+    const action = this.requireResolved(extensionId, tab.id);
+    if (!action.enabled || !action.visible)
+      throw new Error("The extension action is disabled or hidden.");
+    if (registration.activeTabPermission) {
+      const origin = activeTabOrigin(tab.url);
+      if (origin) registration.activeTabGrants.set(tab.id, origin);
+    }
+    if (action.popupUrl) return { kind: "popup", popupUrl: action.popupUrl };
+    return { kind: "clicked" };
+  }
+
+  hasActiveTabGrant(extensionId: string, tabId: number, url: string): boolean {
+    const registration = this.registrations.get(extensionId);
+    const origin = activeTabOrigin(url);
+    return Boolean(
+      registration &&
+      origin &&
+      registration.activeTabGrants.get(tabId) === origin,
+    );
+  }
+
   removeTab(tabId: number): void {
     for (const [extensionId, registration] of this.registrations) {
-      if (registration.perTab.delete(tabId)) this.changed(extensionId);
+      const changed = registration.perTab.delete(tabId);
+      registration.activeTabGrants.delete(tabId);
+      if (changed) this.changed(extensionId);
     }
   }
 
-  navigatedTab(tabId: number): void {
+  navigatedTab(tabId: number, url?: string): void {
     for (const [extensionId, registration] of this.registrations) {
+      const grantedOrigin = registration.activeTabGrants.get(tabId);
+      if (
+        grantedOrigin &&
+        (url === undefined || activeTabOrigin(url) !== grantedOrigin)
+      ) {
+        registration.activeTabGrants.delete(tabId);
+      }
       if (registration.defaults.kind !== "pageAction") continue;
       const tab = registration.perTab.get(tabId);
       if (!tab || tab.visible === undefined) continue;
@@ -330,6 +387,24 @@ export class ExtensionActionHost {
 
   private changed(extensionId: string): void {
     this.options.changed?.(extensionId);
+  }
+}
+
+function manifestPermissions(manifest: Record<string, unknown>): Set<string> {
+  const values = (
+    Array.isArray(manifest.permissions) ? manifest.permissions : []
+  ).filter((entry): entry is string => typeof entry === "string");
+  return new Set(values);
+}
+
+function activeTabOrigin(rawUrl: string): string | null {
+  try {
+    const url = new URL(rawUrl);
+    return url.protocol === "http:" || url.protocol === "https:"
+      ? url.origin
+      : null;
+  } catch {
+    return null;
   }
 }
 

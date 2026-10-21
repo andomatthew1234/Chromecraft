@@ -897,16 +897,21 @@ function registerIpc(): void {
       requireExtensions(event);
       const manager = requireManager(event);
       const extensionId = requireString(id, "id", 32);
-      const action = extensionWebRequestHost?.resolveAction(
-        extensionId,
-        manager.activeExtensionTabId,
-      );
-      if (!action?.enabled || !action.visible || !action.popupUrl)
+      const tabId = manager.activeExtensionTabId;
+      if (!extensionWebRequestHost)
         throw new Error("That extension action is unavailable.");
+      const invocation = await extensionWebRequestHost.invokeActionFromToolbar(
+        extensionId,
+        tabId,
+      );
+      if (invocation.kind === "clicked") {
+        manager.closeExtensionPopup();
+        return;
+      }
       await manager.toggleExtensionPopup(
         extensionId,
         requireExtensionPopupAnchor(anchor),
-        action.popupUrl,
+        invocation.popupUrl,
       );
     },
   );

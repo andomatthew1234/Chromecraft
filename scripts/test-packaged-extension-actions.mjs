@@ -211,7 +211,7 @@ async function removeDisposableProfile(profile) {
   }
 }
 
-async function startFixture() {
+async function startFixture(label = "primary") {
   const requests = [];
   const server = http.createServer((request, response) => {
     const requestUrl = new URL(request.url ?? "/", "http://127.0.0.1");
@@ -222,8 +222,8 @@ async function startFixture() {
     });
     response.end(`<!doctype html>
       <html lang="en">
-        <head><meta charset="utf-8"><title>Action conformance fixture</title></head>
-        <body><main><h1 id="fixture-ready">Action conformance fixture</h1></main></body>
+        <head><meta charset="utf-8"><title>Action conformance fixture: ${label}</title></head>
+        <body data-fixture="${label}"><main><h1 id="fixture-ready">Action conformance fixture: ${label}</h1></main></body>
       </html>`);
   });
   await new Promise((resolve, reject) => {
@@ -248,6 +248,7 @@ const popupHtml = (name) => `<!doctype html>
 function probeSource(namespaceName, probeName, includeBadge, includeIsEnabled) {
   return `
 const api = chrome[${JSON.stringify(namespaceName)}];
+const clickStorageKey = ${JSON.stringify(`chromecraft-clicks-${namespaceName}`)};
 const invoke = (method, argument, omitArgument = false) => new Promise((resolve) => {
   if (!api || typeof api[method] !== "function") {
     resolve({ ok: false, error: method + " is unavailable" });
@@ -294,6 +295,51 @@ const read = async (tabId) => {
   }
   return result;
 };
+const storageGet = (key) => new Promise((resolve) => {
+  chrome.storage.local.get(key, (items) => resolve(items?.[key] ?? []));
+});
+const storageSet = (key, value) => new Promise((resolve) => {
+  chrome.storage.local.set({ [key]: value }, () => resolve());
+});
+const attemptInjection = async (tabId, marker) => {
+  if (!chrome.scripting?.executeScript) {
+    return { ok: false, error: "chrome.scripting.executeScript is unavailable" };
+  }
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (value) => {
+        document.documentElement.dataset.chromecraftActionClick = value;
+        return location.href;
+      },
+      args: [marker],
+    });
+    return { ok: true, results };
+  } catch (error) {
+    return { ok: false, error: String(error) };
+  }
+};
+if (api?.onClicked?.addListener) {
+  api.onClicked.addListener(async (tab) => {
+    const record = {
+      tab: {
+        id: tab?.id ?? null,
+        url: tab?.url ?? null,
+        title: tab?.title ?? null,
+        active: tab?.active ?? null,
+        windowId: tab?.windowId ?? null,
+        index: tab?.index ?? null,
+        status: tab?.status ?? null,
+      },
+      injection: ${JSON.stringify(namespaceName)} === "action"
+        ? await attemptInjection(tab?.id, "clicked-" + Date.now())
+        : { ok: true, skipped: true },
+    };
+    const clicks = await storageGet(clickStorageKey);
+    clicks.push(record);
+    await storageSet(clickStorageKey, clicks);
+  });
+}
 chrome.tabs?.onCreated?.addListener(() => {});
 globalThis[${JSON.stringify(probeName)}] = {
   surface: () => ({
@@ -310,6 +356,8 @@ globalThis[${JSON.stringify(probeName)}] = {
     disable: typeof api?.disable,
     isEnabled: typeof api?.isEnabled,
     openPopup: typeof api?.openPopup,
+    onClicked: typeof api?.onClicked,
+    onClickedAddListener: typeof api?.onClicked?.addListener,
     show: typeof api?.show,
     hide: typeof api?.hide,
   }),
@@ -337,6 +385,23 @@ globalThis[${JSON.stringify(probeName)}] = {
     tabTitle: await invoke("setTitle", { tabId, title: "Persistent tab title" }),
     tabPopup: await invoke("setPopup", { tabId, popup: "per-tab-popup.html" }),
   }),
+  configurePopupLess: async (tabId) => ({
+    globalPopup: await invoke("setPopup", { popup: "" }),
+    tabPopup: await invoke("setPopup", { tabId, popup: "" }),
+    globalEnable: typeof api?.enable === "function"
+      ? await invoke("enable", undefined, true)
+      : { ok: true, skipped: true },
+    tabEnable: typeof api?.enable === "function"
+      ? await invoke("enable", tabId)
+      : { ok: true, skipped: true },
+  }),
+  setPopupForTab: (tabId, popup) => invoke("setPopup", { tabId, popup }),
+  clicks: () => storageGet(clickStorageKey),
+  resetClicks: async () => {
+    await storageSet(clickStorageKey, []);
+    return { ok: true };
+  },
+  attemptInjection,
   disableTab: (tabId) => invoke("disable", tabId),
   enableGlobal: () => invoke("enable", undefined, true),
   openPopup: () => invoke("openPopup", {}),
@@ -371,7 +436,7 @@ async function seedExtensions(profile) {
       description: "Packaged behavioral fixture for chrome.action.",
       version: extensionVersion,
       key: keys.action,
-      permissions: ["storage", "tabs"],
+      permissions: ["storage", "tabs", "scripting", "activeTab"],
       background: { service_worker: "worker.js" },
       action: {
         default_title: "Manifest action title",
@@ -399,7 +464,7 @@ async function seedExtensions(profile) {
       name: "Chromecraft browserAction conformance",
       version: extensionVersion,
       key: keys.browserAction,
-      permissions: ["tabs"],
+      permissions: ["storage", "tabs"],
       background: { scripts: ["background.js"], persistent: true },
       browser_action: {
         default_title: "Manifest browserAction title",
@@ -427,7 +492,7 @@ async function seedExtensions(profile) {
       name: "Chromecraft pageAction conformance",
       version: extensionVersion,
       key: keys.pageAction,
-      permissions: ["tabs"],
+      permissions: ["storage", "tabs"],
       background: { scripts: ["background.js"], persistent: true },
       page_action: {
         default_title: "Manifest pageAction title",
@@ -521,13 +586,90 @@ async function settledToolbarState(
   }
 }
 
+async function dispatchRealToolbarClick(shell, extensionId) {
+  const hitTarget = await shell.evaluate(`(() => {
+    const button = document.querySelector(${JSON.stringify(
+      `[data-extension-action="${extensionId}"]`,
+    )});
+    if (!(button instanceof HTMLButtonElement)) return null;
+    const rect = button.getBoundingClientRect();
+    return {
+      x: rect.left + rect.width / 2,
+      y: rect.top + rect.height / 2,
+      width: rect.width,
+      height: rect.height,
+      disabled: button.disabled,
+      popupExpanded: button.getAttribute("aria-expanded"),
+    };
+  })()`);
+  if (!hitTarget || hitTarget.width <= 0 || hitTarget.height <= 0) {
+    return { dispatched: false, hitTarget };
+  }
+  await shell.send("Input.dispatchMouseEvent", {
+    type: "mouseMoved",
+    x: hitTarget.x,
+    y: hitTarget.y,
+  });
+  await shell.send("Input.dispatchMouseEvent", {
+    type: "mousePressed",
+    x: hitTarget.x,
+    y: hitTarget.y,
+    button: "left",
+    buttons: 1,
+    clickCount: 1,
+  });
+  await shell.send("Input.dispatchMouseEvent", {
+    type: "mouseReleased",
+    x: hitTarget.x,
+    y: hitTarget.y,
+    button: "left",
+    buttons: 0,
+    clickCount: 1,
+  });
+  return { dispatched: true, hitTarget };
+}
+
+async function readClicks(client, probeName) {
+  if (!client) return [];
+  return (
+    (await client.evaluate(
+      `globalThis[${JSON.stringify(probeName)}]?.clicks?.()`,
+    )) ?? []
+  );
+}
+
+async function waitForClicks(client, probeName, count, timeoutMs = 3_000) {
+  try {
+    return await poll(
+      () => readClicks(client, probeName),
+      (clicks) => Array.isArray(clicks) && clicks.length >= count,
+      `${probeName} to record ${count} toolbar click(s)`,
+      timeoutMs,
+    );
+  } catch {
+    return readClicks(client, probeName);
+  }
+}
+
+async function connectPage(port, url, description) {
+  const target = await waitForTarget(
+    port,
+    (candidate) => candidate.type === "page" && candidate.url === url,
+    description,
+  );
+  const client = await CdpClient.connect(target.webSocketDebuggerUrl);
+  await client.send("Runtime.enable");
+  return { target, client };
+}
+
 await fs.access(executable);
 await fs.mkdir(artifactDirectory, { recursive: true });
 const startedAt = new Date().toISOString();
 const profile = await fs.mkdtemp(
   path.join(os.tmpdir(), "chromecraft-extension-actions-"),
 );
-const fixture = await startFixture();
+const fixture = await startFixture("primary");
+const crossOriginFixture = await startFixture("cross-origin");
 await seedExtensions(profile);
 const debugPort = await findFreePort();
 const child = spawn(
@@ -558,6 +700,9 @@ let restartedWorker;
 let browserActionBackground;
 let pageActionBackground;
 let popup;
+let actionClickWorker;
+let activePage;
+let crossOriginPage;
 let fatalError = null;
 let actionEvidence = null;
 let restartEvidence = null;
@@ -1053,10 +1198,519 @@ try {
       "The legacy pageAction namespace did not preserve title, popup, and visibility operations.",
     ),
   );
+
+  // Toolbar-click conformance is tested at the packaged Browser Shell boundary.
+  // Input.dispatchMouseEvent is used instead of HTMLElement.click(), so the
+  // browser receives an actual trusted pointer gesture at the rendered action.
+  await shell.evaluate(
+    `window.chromecraft.activateTab(${JSON.stringify(firstBrowserTabId)})`,
+  );
+  const currentActionTarget = await waitForTarget(
+    debugPort,
+    (target) =>
+      target.type === "service_worker" &&
+      target.url.startsWith(`chrome-extension://${ids.action}/`),
+    "an active chrome.action worker for click conformance",
+  );
+  actionClickWorker = await CdpClient.connect(
+    currentActionTarget.webSocketDebuggerUrl,
+  );
+  await actionClickWorker.send("Runtime.enable");
+  await poll(
+    () =>
+      actionClickWorker.evaluate(
+        `Boolean(globalThis.__chromecraftActionProbe)`,
+      ),
+    (ready) => ready === true,
+    "the action click probe",
+  );
+  const clickSurface = await actionClickWorker.evaluate(
+    `globalThis.__chromecraftActionProbe.surface()`,
+  );
+  checks.push(
+    check(
+      "chrome.action.onClicked exposes a listener surface",
+      clickSurface.onClicked === "object" &&
+        clickSurface.onClickedAddListener === "function",
+      clickSurface,
+      "chrome.action.onClicked.addListener is unavailable.",
+    ),
+  );
+
+  const popupLessConfiguration = await actionClickWorker.evaluate(
+    `globalThis.__chromecraftActionProbe.configurePopupLess(${JSON.stringify(firstExtensionTabId)})`,
+  );
+  await actionClickWorker.evaluate(
+    `globalThis.__chromecraftActionProbe.resetClicks()`,
+  );
+  const primaryUrl = `${fixture.origin}/first`;
+  const primaryConnection = await connectPage(
+    debugPort,
+    primaryUrl,
+    "the primary action fixture page",
+  );
+  activePage = primaryConnection.client;
+  const beforeClickInjection = await actionClickWorker.evaluate(
+    `globalThis.__chromecraftActionProbe.attemptInjection(${JSON.stringify(firstExtensionTabId)}, "before-click")`,
+  );
+  const beforeClickMarker = await activePage.evaluate(
+    `document.documentElement.dataset.chromecraftActionClick ?? null`,
+  );
+  const popupLessToolbar = await settledToolbarState(
+    shell,
+    ids.action,
+    (state) => state?.disabled === false,
+  );
+  const firstRealClick = await dispatchRealToolbarClick(shell, ids.action);
+  const firstClickRecords = await waitForClicks(
+    actionClickWorker,
+    "__chromecraftActionProbe",
+    1,
+    5_000,
+  );
+  const firstClick = firstClickRecords[0] ?? null;
+  const afterClickMarker = await activePage.evaluate(
+    `document.documentElement.dataset.chromecraftActionClick ?? null`,
+  );
+  checks.push(
+    check(
+      "popup-less MV3 toolbar click dispatches onClicked with the real active tab",
+      popupLessToolbar?.disabled === false &&
+        firstRealClick.dispatched === true &&
+        firstClickRecords.length === 1 &&
+        firstClick?.tab?.id === firstExtensionTabId &&
+        firstClick?.tab?.url === primaryUrl &&
+        firstClick?.tab?.title === "Action conformance fixture: primary" &&
+        firstClick?.tab?.active === true &&
+        Number.isInteger(firstClick?.tab?.windowId) &&
+        Number.isInteger(firstClick?.tab?.index),
+      {
+        configuration: popupLessConfiguration,
+        toolbar: popupLessToolbar,
+        pointer: firstRealClick,
+        records: firstClickRecords,
+      },
+      "The popup-less Browser Shell action did not deliver one onClicked event with the authoritative active-tab payload.",
+    ),
+  );
+  checks.push(
+    check(
+      "activeTab is unavailable before a click and permits scripting after the real click",
+      beforeClickInjection?.ok === false &&
+        beforeClickMarker === null &&
+        firstClick?.injection?.ok === true &&
+        typeof afterClickMarker === "string" &&
+        afterClickMarker.startsWith("clicked-"),
+      {
+        beforeClickInjection,
+        beforeClickMarker,
+        clickInjection: firstClick?.injection ?? null,
+        afterClickMarker,
+      },
+      "The action click did not establish a temporary, observable activeTab scripting grant (or scripting was over-granted before the click).",
+    ),
+  );
+
+  activePage.close();
+  activePage = null;
+  const crossOriginUrl = `${crossOriginFixture.origin}/after-navigation`;
+  await shell.evaluate(
+    `window.chromecraft.navigate(${JSON.stringify(firstBrowserTabId)}, ${JSON.stringify(crossOriginUrl)})`,
+  );
+  await poll(
+    () => shell.evaluate(`window.chromecraft.getSnapshot()`),
+    (snapshot) => {
+      const tab = snapshot?.tabs?.find((item) => item.id === firstBrowserTabId);
+      return tab?.url === crossOriginUrl && tab?.isLoading === false;
+    },
+    "the active tab to finish its cross-origin navigation",
+  );
+  const crossConnection = await connectPage(
+    debugPort,
+    crossOriginUrl,
+    "the cross-origin action fixture page",
+  );
+  crossOriginPage = crossConnection.client;
+  const afterNavigationInjection = await actionClickWorker.evaluate(
+    `globalThis.__chromecraftActionProbe.attemptInjection(${JSON.stringify(firstExtensionTabId)}, "after-navigation")`,
+  );
+  const afterNavigationMarker = await crossOriginPage.evaluate(
+    `document.documentElement.dataset.chromecraftActionClick ?? null`,
+  );
+  checks.push(
+    check(
+      "activeTab scripting grant is revoked on cross-origin navigation",
+      firstClick?.injection?.ok === true &&
+        afterNavigationInjection?.ok === false &&
+        afterNavigationMarker === null,
+      {
+        grantedByClick: firstClick?.injection ?? null,
+        afterNavigationInjection,
+        afterNavigationMarker,
+        crossOriginUrl,
+      },
+      "The extension retained scripting access after the granted tab crossed origins.",
+    ),
+  );
+
+  const closeRevocationUrl = `${fixture.origin}/close-revocation`;
+  const closeRevocationBrowserTabId = await shell.evaluate(
+    `window.chromecraft.createTab(${JSON.stringify(closeRevocationUrl)})`,
+  );
+  await poll(
+    () => shell.evaluate(`window.chromecraft.getSnapshot()`),
+    (snapshot) => {
+      const tab = snapshot?.tabs?.find(
+        (item) => item.id === closeRevocationBrowserTabId,
+      );
+      return tab?.url === closeRevocationUrl && tab?.isLoading === false;
+    },
+    "the close-revocation fixture tab",
+  );
+  const [closeRevocationExtensionTab] = await actionClickWorker.evaluate(
+    `chrome.tabs.query({ active: true })`,
+  );
+  const closeRevocationExtensionTabId = closeRevocationExtensionTab?.id ?? null;
+  await actionClickWorker.evaluate(
+    `globalThis.__chromecraftActionProbe.configurePopupLess(${JSON.stringify(closeRevocationExtensionTabId)})`,
+  );
+  const closeTabClick = await dispatchRealToolbarClick(shell, ids.action);
+  const closeTabRecords = await waitForClicks(
+    actionClickWorker,
+    "__chromecraftActionProbe",
+    2,
+    5_000,
+  );
+  await shell.evaluate(
+    `window.chromecraft.closeTab(${JSON.stringify(closeRevocationBrowserTabId)})`,
+  );
+  const afterCloseInjection = await actionClickWorker.evaluate(
+    `globalThis.__chromecraftActionProbe.attemptInjection(${JSON.stringify(closeRevocationExtensionTabId)}, "after-close")`,
+  );
+  checks.push(
+    check(
+      "activeTab scripting grant is discarded when the granted tab closes",
+      closeTabClick.dispatched === true &&
+        closeTabRecords.some(
+          (record) =>
+            record?.tab?.id === closeRevocationExtensionTabId &&
+            record?.injection?.ok === true,
+        ) &&
+        afterCloseInjection?.ok === false,
+      {
+        tabId: closeRevocationExtensionTabId,
+        pointer: closeTabClick,
+        records: closeTabRecords,
+        afterCloseInjection,
+      },
+      "The close-path did not first grant and then revoke access to the clicked tab.",
+    ),
+  );
+
+  await shell.evaluate(
+    `window.chromecraft.activateTab(${JSON.stringify(firstBrowserTabId)})`,
+  );
+  await actionClickWorker.evaluate(
+    `globalThis.__chromecraftActionProbe.resetClicks()`,
+  );
+  const popupConfiguration = await actionClickWorker.evaluate(
+    `globalThis.__chromecraftActionProbe.setPopupForTab(${JSON.stringify(firstExtensionTabId)}, "per-tab-popup.html")`,
+  );
+  const popupClick = await dispatchRealToolbarClick(shell, ids.action);
+  const clickPopupTarget = await waitForTarget(
+    debugPort,
+    (target) =>
+      target.type === "page" &&
+      target.url === `chrome-extension://${ids.action}/per-tab-popup.html`,
+    "the click-opened action popup",
+    5_000,
+  ).catch(() => null);
+  await delay(300);
+  const popupSuppressedClicks = await readClicks(
+    actionClickWorker,
+    "__chromecraftActionProbe",
+  );
+  checks.push(
+    check(
+      "a configured popup opens and suppresses chrome.action.onClicked",
+      popupConfiguration?.ok === true &&
+        popupClick.dispatched === true &&
+        clickPopupTarget !== null &&
+        popupSuppressedClicks.length === 0,
+      {
+        popupConfiguration,
+        pointer: popupClick,
+        popupUrl: clickPopupTarget?.url ?? null,
+        clickRecords: popupSuppressedClicks,
+      },
+      "The click failed to open the configured popup, or incorrectly dispatched onClicked as well.",
+    ),
+  );
+  await shell.evaluate(`window.chromecraft.closeExtensionPopup()`);
+
+  await actionClickWorker.evaluate(
+    `globalThis.__chromecraftActionProbe.configurePopupLess(${JSON.stringify(firstExtensionTabId)})`,
+  );
+  await actionClickWorker.evaluate(
+    `globalThis.__chromecraftActionProbe.resetClicks()`,
+  );
+  const disableForSuppression = await actionClickWorker.evaluate(
+    `globalThis.__chromecraftActionProbe.disableTab(${JSON.stringify(firstExtensionTabId)})`,
+  );
+  const disabledToolbar = await settledToolbarState(
+    shell,
+    ids.action,
+    (state) => state?.disabled === true,
+  );
+  const disabledClick = await dispatchRealToolbarClick(shell, ids.action);
+  await delay(300);
+  const disabledClickRecords = await readClicks(
+    actionClickWorker,
+    "__chromecraftActionProbe",
+  );
+  checks.push(
+    check(
+      "disabled toolbar actions suppress onClicked",
+      disableForSuppression?.ok === true &&
+        disabledToolbar?.disabled === true &&
+        disabledClick.dispatched === true &&
+        disabledClickRecords.length === 0,
+      {
+        disableForSuppression,
+        toolbar: disabledToolbar,
+        pointer: disabledClick,
+        clickRecords: disabledClickRecords,
+      },
+      "A disabled action remained interactive or delivered an onClicked event.",
+    ),
+  );
+
+  const browserActionConfiguration = await browserActionBackground?.evaluate(
+    `globalThis.__chromecraftBrowserActionProbe.configurePopupLess(${JSON.stringify(firstExtensionTabId)})`,
+  );
+  await browserActionBackground?.evaluate(
+    `globalThis.__chromecraftBrowserActionProbe.resetClicks()`,
+  );
+  const browserActionClick = await dispatchRealToolbarClick(
+    shell,
+    ids.browserAction,
+  );
+  const browserActionClicks = await waitForClicks(
+    browserActionBackground,
+    "__chromecraftBrowserActionProbe",
+    1,
+    5_000,
+  );
+  checks.push(
+    check(
+      "popup-less MV2 browserAction dispatches onClicked with the active tab",
+      browserActionConfiguration &&
+        Object.values(browserActionConfiguration).every(
+          (result) => result?.ok === true,
+        ) &&
+        browserActionClick.dispatched === true &&
+        browserActionClicks.length === 1 &&
+        browserActionClicks[0]?.tab?.id === firstExtensionTabId &&
+        browserActionClicks[0]?.tab?.url === crossOriginUrl &&
+        browserActionClicks[0]?.tab?.active === true,
+      {
+        configuration: browserActionConfiguration,
+        pointer: browserActionClick,
+        records: browserActionClicks,
+      },
+      "The legacy popup-less browserAction did not receive exactly one authoritative click event.",
+    ),
+  );
+
+  const pageActionConfiguration = await pageActionBackground?.evaluate(
+    `globalThis.__chromecraftPageActionProbe.configurePopupLess(${JSON.stringify(firstExtensionTabId)})`,
+  );
+  await pageActionBackground?.evaluate(
+    `globalThis.__chromecraftPageActionProbe.resetClicks()`,
+  );
+  const pageActionShow = await pageActionBackground?.evaluate(
+    `globalThis.__chromecraftPageActionProbe.show(${JSON.stringify(firstExtensionTabId)})`,
+  );
+  const visiblePageActionToolbar = await settledToolbarState(
+    shell,
+    ids.pageAction,
+    (state) => state?.disabled === false,
+  );
+  const pageActionClick = await dispatchRealToolbarClick(shell, ids.pageAction);
+  const visiblePageActionClicks = await waitForClicks(
+    pageActionBackground,
+    "__chromecraftPageActionProbe",
+    1,
+    5_000,
+  );
+  const pageActionHide = await pageActionBackground?.evaluate(
+    `globalThis.__chromecraftPageActionProbe.hide(${JSON.stringify(firstExtensionTabId)})`,
+  );
+  const hiddenPageActionToolbar = await settledToolbarState(
+    shell,
+    ids.pageAction,
+    (state) => state?.disabled === true,
+  );
+  const hiddenPageActionClick = await dispatchRealToolbarClick(
+    shell,
+    ids.pageAction,
+  );
+  await delay(300);
+  const hiddenPageActionClicks = await readClicks(
+    pageActionBackground,
+    "__chromecraftPageActionProbe",
+  );
+  checks.push(
+    check(
+      "MV2 pageAction dispatches only while shown and suppresses clicks while hidden",
+      pageActionConfiguration?.globalPopup?.ok === true &&
+        pageActionConfiguration?.tabPopup?.ok === true &&
+        pageActionShow?.ok === true &&
+        visiblePageActionToolbar?.disabled === false &&
+        pageActionClick.dispatched === true &&
+        visiblePageActionClicks.length === 1 &&
+        visiblePageActionClicks[0]?.tab?.id === firstExtensionTabId &&
+        pageActionHide?.ok === true &&
+        hiddenPageActionToolbar?.disabled === true &&
+        hiddenPageActionClick.dispatched === true &&
+        hiddenPageActionClicks.length === 1,
+      {
+        configuration: pageActionConfiguration,
+        show: pageActionShow,
+        visibleToolbar: visiblePageActionToolbar,
+        visiblePointer: pageActionClick,
+        visibleRecords: visiblePageActionClicks,
+        hide: pageActionHide,
+        hiddenToolbar: hiddenPageActionToolbar,
+        hiddenPointer: hiddenPageActionClick,
+        hiddenRecords: hiddenPageActionClicks,
+      },
+      "The page action did not dispatch exactly once while shown and remain silent while hidden.",
+    ),
+  );
+
+  // Stop the MV3 worker only after all direct-worker checks. The click itself
+  // must be the event that restarts it; no tab event is used as a wake surrogate.
+  await actionClickWorker.evaluate(
+    `globalThis.__chromecraftActionProbe.configurePopupLess(${JSON.stringify(firstExtensionTabId)})`,
+  );
+  await actionClickWorker.evaluate(
+    `globalThis.__chromecraftActionProbe.resetClicks()`,
+  );
+  await actionClickWorker.evaluate(
+    `globalThis.__chromecraftActionProbe.enableGlobal()`,
+  );
+  const workerBeforeClickWake = currentActionTarget.id;
+  actionClickWorker.close();
+  actionClickWorker = null;
+  const browserVersionForClickWake = await fetchJson(
+    `http://127.0.0.1:${debugPort}/json/version`,
+  );
+  const browserForClickWake = await CdpClient.connect(
+    browserVersionForClickWake.webSocketDebuggerUrl,
+  );
+  let clickWorkerStopped = false;
+  try {
+    const stopped = await browserForClickWake.send("Target.closeTarget", {
+      targetId: workerBeforeClickWake,
+    });
+    clickWorkerStopped = stopped?.success === true;
+  } finally {
+    browserForClickWake.close();
+  }
+  if (clickWorkerStopped) {
+    await poll(
+      () => targetList(debugPort),
+      (targets) =>
+        !targets.some((target) => target.id === workerBeforeClickWake),
+      "the action worker to stop before the wake click",
+      10_000,
+    );
+  }
+  const stoppedWorkerClick = await dispatchRealToolbarClick(shell, ids.action);
+  const clickObservedTarget = clickWorkerStopped
+    ? await waitForTarget(
+        debugPort,
+        (target) =>
+          target.type === "service_worker" &&
+          target.id !== workerBeforeClickWake &&
+          target.url.startsWith(`chrome-extension://${ids.action}/`),
+        "the action click to restart its stopped MV3 worker",
+        4_000,
+      ).catch(() => null)
+    : null;
+  let inspectionWakeUsed = false;
+  let clickRestartedTarget = clickObservedTarget;
+  if (clickWorkerStopped && !clickRestartedTarget) {
+    inspectionWakeUsed = true;
+    await shell.evaluate(
+      `window.chromecraft.createTab(${JSON.stringify(`${fixture.origin}/wake-inspection`)})`,
+    );
+    clickRestartedTarget = await waitForTarget(
+      debugPort,
+      (target) =>
+        target.type === "service_worker" &&
+        target.id !== workerBeforeClickWake &&
+        target.url.startsWith(`chrome-extension://${ids.action}/`),
+      "the action worker to wake for persisted click inspection",
+      10_000,
+    ).catch(() => null);
+  }
+  let restartedClickRecords = [];
+  if (clickRestartedTarget) {
+    actionClickWorker = await CdpClient.connect(
+      clickRestartedTarget.webSocketDebuggerUrl,
+    );
+    await actionClickWorker.send("Runtime.enable");
+    await poll(
+      () =>
+        actionClickWorker.evaluate(
+          `Boolean(globalThis.__chromecraftActionProbe)`,
+        ),
+      (ready) => ready === true,
+      "the click-restarted action probe",
+      10_000,
+    );
+    restartedClickRecords = await waitForClicks(
+      actionClickWorker,
+      "__chromecraftActionProbe",
+      1,
+      5_000,
+    );
+  }
+  checks.push(
+    check(
+      "popup-less action click wakes a stopped MV3 worker and delivers onClicked",
+      clickWorkerStopped &&
+        stoppedWorkerClick.dispatched === true &&
+        clickRestartedTarget !== null &&
+        restartedClickRecords.length === 1 &&
+        restartedClickRecords[0]?.tab?.id === firstExtensionTabId &&
+        restartedClickRecords[0]?.tab?.url === crossOriginUrl,
+      {
+        workerStopped: clickWorkerStopped,
+        stoppedWorkerTargetId: workerBeforeClickWake,
+        pointer: stoppedWorkerClick,
+        clickWorkerObserved: clickObservedTarget !== null,
+        inspectionWakeUsed,
+        restartedTarget: clickRestartedTarget
+          ? {
+              id: clickRestartedTarget.id,
+              url: clickRestartedTarget.url,
+            }
+          : null,
+        records: restartedClickRecords,
+      },
+      "The real toolbar click did not restart the stopped worker and deliver the click exactly once.",
+    ),
+  );
 } catch (error) {
   fatalError = error.stack ?? error.message;
 } finally {
   popup?.close();
+  crossOriginPage?.close();
+  activePage?.close();
+  actionClickWorker?.close();
   pageActionBackground?.close();
   browserActionBackground?.close();
   restartedWorker?.close();
@@ -1064,13 +1718,14 @@ try {
   shell?.close();
   await terminate(child);
   await fixture.close();
+  await crossOriginFixture.close();
   await fs.writeFile(logPath, log, "utf8");
 }
 
 const requiredChecks = checks.filter((item) => item.required !== false);
 const failedChecks = requiredChecks.filter((item) => item.passed !== true);
 const report = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   startedAt,
   finishedAt: new Date().toISOString(),
   success: fatalError === null && failedChecks.length === 0,
@@ -1079,7 +1734,9 @@ const report = {
     extensionVersion,
     ids,
     origin: fixture.origin,
+    crossOrigin: crossOriginFixture.origin,
     requests: fixture.requests,
+    crossOriginRequests: crossOriginFixture.requests,
   },
   summary: {
     passed: requiredChecks.length - failedChecks.length,

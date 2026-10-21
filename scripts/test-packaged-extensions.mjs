@@ -429,12 +429,17 @@ try {
     document: enabledDocument,
   });
 
-  const actionOpened = await shell.evaluate(`(() => {
-    const action = document.querySelector(${JSON.stringify(`[data-extension-action="${extensionId}"]`)});
-    if (!(action instanceof HTMLButtonElement)) return false;
-    action.click();
-    return true;
-  })()`);
+  const actionOpened = await poll(
+    () =>
+      shell.evaluate(`(() => {
+      const action = document.querySelector(${JSON.stringify(`[data-extension-action="${extensionId}"]`)});
+      if (!(action instanceof HTMLButtonElement)) return false;
+      action.click();
+      return true;
+    })()`),
+    (opened) => opened === true,
+    "the installed extension toolbar action",
+  ).catch(() => false);
   if (!actionOpened) {
     throw new Error("The installed extension has no toolbar action button.");
   }

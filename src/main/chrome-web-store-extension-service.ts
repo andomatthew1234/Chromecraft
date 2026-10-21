@@ -14,7 +14,7 @@ const MAX_ENTRY_BYTES = 32 * 1024 * 1024;
 const MAX_EXTRACTED_BYTES = 128 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES = 4_096;
 const EXTENSION_ID_PATTERN = /^[a-p]{32}$/;
-const COMPATIBILITY_REVISION = 11;
+const COMPATIBILITY_REVISION = 12;
 const COMPATIBILITY_DIRECTORY = "chromecraft-compat";
 const LEGACY_COMPATIBILITY_DIRECTORY = "__chromecraft";
 const COMPATIBILITY_SCRIPT_PATH = `${COMPATIBILITY_DIRECTORY}/extension-compat.js`;
@@ -1372,6 +1372,11 @@ function compatibilityWarnings(manifest: ExtensionManifest): string[] {
       "Chromecraft bridges Manifest V3 onBeforeRequest observation with host-permission checks. Other webRequest stages, blocking responses, and header modification remain limited by Electron.",
     );
   }
+  if (permissions.includes("activeTab")) {
+    warnings.push(
+      "Chromecraft exposes trusted toolbar clicks and tab-scoped browser state, but stock Electron cannot grant Chromium's native activeTab permission to scripting, CORS, or other native extension APIs.",
+    );
+  }
   if (
     manifest.manifest_version === 3 &&
     typeof manifest.background?.service_worker === "string"
@@ -2245,6 +2250,9 @@ function extensionCompatibilitySource(): string {
   const extensionHostBridge = globalThis.__chromecraftExtensionHost ?? null;
   const webRequestHostEvents = new Map();
   const tabsHostEvents = new Map();
+  const actionHostEvents = new Map();
+  const pendingActionEventIds = new Set();
+  const seenActionEventIds = new Set();
   const hostTabs = new Map();
   let hostTabsReady = false;
   const pendingActionCommands = new Map();
@@ -2355,6 +2363,73 @@ function extensionCompatibilitySource(): string {
     tabsHostEvents.set(eventName, event);
     return event;
   };
+  const sendActionSubscriptions = () => {
+    if (!extensionHostBridge?.send) return;
+    extensionHostBridge.send({
+      type: "action-subscriptions",
+      namespaces: [...actionHostEvents.entries()]
+        .filter(([, event]) => event.hasListeners())
+        .map(([namespace]) => namespace)
+    });
+  };
+  const makeActionHostEvent = (namespace) => {
+    const existing = actionHostEvents.get(namespace);
+    if (existing) return existing;
+    const listeners = new Set();
+    const queuedEvents = [];
+    let flushScheduled = false;
+    const dispatchNow = (args, complete) => {
+      const pending = [];
+      for (const listener of listeners) {
+        try {
+          const result = listener(...args);
+          if (result && typeof result.then === "function") pending.push(result);
+        } catch (error) {
+          console.error("Chromecraft extension action listener failed.", error);
+        }
+      }
+      if (pending.length > 0) {
+        Promise.allSettled(pending).then(() => complete?.());
+      } else {
+        complete?.();
+      }
+    };
+    const scheduleFlush = () => {
+      if (flushScheduled || queuedEvents.length === 0) return;
+      flushScheduled = true;
+      queueMicrotask(() => {
+        flushScheduled = false;
+        if (listeners.size === 0) return;
+        for (const queued of queuedEvents.splice(0)) {
+          dispatchNow(queued.args, queued.complete);
+        }
+      });
+    };
+    const event = {
+      addListener(listener) {
+        if (typeof listener !== "function") return;
+        listeners.add(listener);
+        sendActionSubscriptions();
+        scheduleFlush();
+      },
+      removeListener(listener) {
+        if (!listeners.delete(listener)) return;
+        sendActionSubscriptions();
+      },
+      hasListener(listener) { return listeners.has(listener); },
+      hasListeners() { return listeners.size > 0; },
+      dispatch(args, complete) {
+        if (listeners.size === 0) {
+          if (queuedEvents.length < 8) queuedEvents.push({ args, complete });
+          return;
+        }
+        dispatchNow(args, complete);
+      },
+      sync() { sendActionSubscriptions(); }
+    };
+    actionHostEvents.set(namespace, event);
+    return event;
+  };
   const applyTabsEvent = (message) => {
     if (message.eventName === "onCreated") {
       const tab = message.args?.[0];
@@ -2385,6 +2460,7 @@ function extensionCompatibilitySource(): string {
       if (message.type === "host-ready") {
         for (const hostEvent of webRequestHostEvents.values()) hostEvent.sync();
         sendTabsSubscriptions();
+        sendActionSubscriptions();
         return;
       }
       if (message.type === "webRequest-event" && message.eventName === "onBeforeRequest") {
@@ -2402,6 +2478,26 @@ function extensionCompatibilitySource(): string {
       if (message.type === "tabs-event" && Array.isArray(message.args)) {
         applyTabsEvent(message);
         tabsHostEvents.get(message.eventName)?.dispatch(message.args);
+        return;
+      }
+      if (message.type === "action-event" && message.eventName === "onClicked" && Array.isArray(message.args)) {
+        const eventId = typeof message.eventId === "string" ? message.eventId : "";
+        const acknowledge = () => extensionHostBridge.send({ type: "action-event-ack", eventId });
+        if (eventId && seenActionEventIds.has(eventId)) {
+          acknowledge();
+          return;
+        }
+        if (eventId && pendingActionEventIds.has(eventId)) return;
+        if (eventId) pendingActionEventIds.add(eventId);
+        makeActionHostEvent(message.namespace).dispatch(message.args, () => {
+          if (!eventId) return;
+          pendingActionEventIds.delete(eventId);
+          seenActionEventIds.add(eventId);
+          if (seenActionEventIds.size > 64) {
+            seenActionEventIds.delete(seenActionEventIds.values().next().value);
+          }
+          acknowledge();
+        });
         return;
       }
       if (message.type === "action-result" && typeof message.requestId === "string") {
@@ -2615,6 +2711,7 @@ function extensionCompatibilitySource(): string {
     if (extensionHostBridge) {
       for (const namespaceName of ["action", "browserAction", "pageAction"]) {
         const action = ensureNamespace(api, namespaceName);
+        setOverride(action, "onClicked", makeActionHostEvent(namespaceName));
         for (const method of [
           "enable", "disable", "isEnabled", "show", "hide",
           "setTitle", "getTitle", "setPopup", "getPopup", "setIcon",
@@ -2816,7 +2913,7 @@ function extensionCompatibilitySource(): string {
     }
 
     const permissions = ensureNamespace(api, "permissions");
-    const supportedPermissions = new Set(["scripting", "storage", "tabs", "webRequest"]);
+    const supportedPermissions = new Set(["activeTab", "scripting", "storage", "tabs", "webRequest"]);
     const declaredPermissions = () => {
       const manifest = api.runtime?.getManifest?.() ?? globalThis.chrome?.runtime?.getManifest?.() ?? {};
       const required = Array.isArray(manifest.permissions) ? manifest.permissions : [];

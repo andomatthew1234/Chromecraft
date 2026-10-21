@@ -30,6 +30,9 @@ ipcRenderer.on(extensionHostChannels.workerReady, () => {
     const message = queuedWorkerMessages.shift();
     if (message) ipcRenderer.send(extensionHostChannels.workerMessage, message);
   }
+  ipcRenderer.send(extensionHostChannels.workerMessage, {
+    type: "worker-ready",
+  } satisfies ExtensionWorkerMessage);
 });
 
 contextBridge.exposeInMainWorld("__chromecraftExtensionHost", {

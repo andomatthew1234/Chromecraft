@@ -69,6 +69,16 @@ is removed with its tab or extension, and is rendered from the active tab in
 the Browser Shell. MV3 workers and MV2 background pages use separate trusted
 transports; neither transport accepts a caller-supplied extension identity.
 
+Popup-less action clicks and Chromecraft's local `activeTab` ledger are covered
+by a deliberately stricter packaged conformance gate. The gate uses real CDP
+pointer input rather than a synthetic DOM click and requires popups and disabled
+or hidden actions to suppress `onClicked`. Stock Electron 44 has no public API
+for Chromium's native `ActiveTabPermissionGranter`, so the local ledger can
+expose the clicked tab to browser-owned snapshots but cannot authorize native
+`chrome.scripting`, extension CORS, or native webRequest checks. Those native
+grant and revocation rows deliberately remain red until Chromecraft carries a
+reviewed Electron patch; they are not papered over with unsafe script injection.
+
 Chromecraft applies a narrow compatibility bridge to classic and module-based
 Manifest V3 workers and popup pages. Module workers retain their declared
 module type and imports while the compatibility module runs before the original
@@ -154,3 +164,16 @@ security-sensitive flows still require a manual end-to-end check.
 ```powershell
 node scripts/validate-real-bitwarden-popup.mjs
 ```
+
+The action conformance harness covers browser-owned state, popups, popup-less
+click events, stopped-worker delivery attempts, and native `activeTab` scripting
+authority with disposable MV2 and MV3 extensions:
+
+```powershell
+pnpm test:extension-actions:win
+```
+
+Its machine-readable report is written to
+`.artifacts/extensions/extension-actions.json`. A failed row remains useful RED
+evidence for implementation work; the command exits nonzero until every
+required action behavior is observable in the packaged browser.

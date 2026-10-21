@@ -1043,11 +1043,7 @@ function Toolbar({
             className={`tool-button extension-action-button ${extensionActionSelected(extensions.popupExtensionId, extension.id) ? "selected" : ""}`}
             data-extension-action={extension.id}
             key={extension.id}
-            disabled={
-              !extension.action?.visible ||
-              !extension.action.enabled ||
-              !extension.action.popupUrl
-            }
+            disabled={!extension.action?.visible || !extension.action.enabled}
             onClick={(event) =>
               onToggleExtensionPopup(
                 extension,
@@ -1136,8 +1132,7 @@ function Toolbar({
                     extension.enabled &&
                     extension.ready &&
                     extension.action?.visible &&
-                    extension.action.enabled &&
-                    extension.action.popupUrl,
+                    extension.action.enabled,
                   );
                   return (
                     <button
@@ -1175,9 +1170,7 @@ function Toolbar({
                             ? "Open"
                             : extension.enabled
                               ? extension.ready
-                                ? extension.action?.popupUrl
-                                  ? "Ready"
-                                  : "No toolbar action"
+                                ? "Ready"
                                 : "Loading"
                               : "Off"}
                         </small>

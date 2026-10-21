@@ -132,6 +132,90 @@ describe("ExtensionActionHost", () => {
       "positive integer",
     );
   });
+
+  it("opens popups with a toolbar-gesture activeTab grant", () => {
+    const host = new ExtensionActionHost();
+    host.register({
+      id: ID,
+      name: "Popup fixture",
+      baseUrl: `chrome-extension://${ID}/`,
+      manifest: {
+        permissions: ["activeTab"],
+        action: { default_popup: "popup.html" },
+      },
+    });
+
+    expect(
+      host.invokeFromToolbar(ID, { id: 42, url: "https://example.com/a" }),
+    ).toEqual({
+      kind: "popup",
+      popupUrl: `chrome-extension://${ID}/popup.html`,
+    });
+    expect(host.hasActiveTabGrant(ID, 42, "https://example.com/a")).toBe(true);
+  });
+
+  it("dispatches popup-less clicks and scopes activeTab to tab and origin", () => {
+    const host = new ExtensionActionHost();
+    host.register({
+      id: ID,
+      name: "Click fixture",
+      baseUrl: `chrome-extension://${ID}/`,
+      manifest: { permissions: ["activeTab"], action: {} },
+    });
+
+    expect(
+      host.invokeFromToolbar(ID, {
+        id: 42,
+        url: "https://example.com/first",
+      }),
+    ).toEqual({ kind: "clicked" });
+    expect(host.hasActiveTabGrant(ID, 42, "https://example.com/second")).toBe(
+      true,
+    );
+    expect(host.hasActiveTabGrant(ID, 7, "https://example.com/second")).toBe(
+      false,
+    );
+
+    host.navigatedTab(42, "https://example.com/third");
+    expect(host.hasActiveTabGrant(ID, 42, "https://example.com/third")).toBe(
+      true,
+    );
+    host.navigatedTab(42, "https://other.example/path");
+    expect(host.hasActiveTabGrant(ID, 42, "https://example.com/third")).toBe(
+      false,
+    );
+  });
+
+  it("suppresses disabled and hidden toolbar invocations", async () => {
+    const host = new ExtensionActionHost();
+    host.register({
+      id: ID,
+      name: "Click fixture",
+      baseUrl: `chrome-extension://${ID}/`,
+      manifest: { action: {} },
+    });
+    await host.execute(ID, "disable", { tabId: 42 });
+    expect(() =>
+      host.invokeFromToolbar(ID, { id: 42, url: "https://example.com" }),
+    ).toThrow("disabled or hidden");
+    await host.execute(ID, "enable", { tabId: 42 });
+    await host.execute(ID, "hide", { tabId: 42 });
+    expect(() =>
+      host.invokeFromToolbar(ID, { id: 42, url: "https://example.com" }),
+    ).toThrow("disabled or hidden");
+  });
+
+  it("does not grant optional activeTab before permission consent exists", () => {
+    const host = new ExtensionActionHost();
+    host.register({
+      id: ID,
+      name: "Optional fixture",
+      baseUrl: `chrome-extension://${ID}/`,
+      manifest: { optional_permissions: ["activeTab"], action: {} },
+    });
+    host.invokeFromToolbar(ID, { id: 42, url: "https://example.com" });
+    expect(host.hasActiveTabGrant(ID, 42, "https://example.com")).toBe(false);
+  });
 });
 
 function registerAction(host: ExtensionActionHost): void {

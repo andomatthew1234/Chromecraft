@@ -60,6 +60,16 @@ export interface ExtensionActionCommandMessage {
   details?: unknown;
 }
 
+export interface ExtensionActionSubscriptionsMessage {
+  type: "action-subscriptions";
+  namespaces: ExtensionActionNamespace[];
+}
+
+export interface ExtensionActionEventAckMessage {
+  type: "action-event-ack";
+  eventId: string;
+}
+
 export type ExtensionTabsEventName =
   | "onCreated"
   | "onActivated"
@@ -74,6 +84,8 @@ export interface ExtensionTabsSubscriptionsMessage {
 export type ExtensionWorkerMessage =
   | ExtensionWebRequestSubscriptionsMessage
   | ExtensionTabsSubscriptionsMessage
+  | ExtensionActionSubscriptionsMessage
+  | ExtensionActionEventAckMessage
   | ExtensionActionCommandMessage
   | ExtensionWorkerReadyMessage;
 
@@ -118,9 +130,18 @@ export interface ExtensionActionResultMessage {
   error?: string;
 }
 
+export interface ExtensionActionEventMessage {
+  type: "action-event";
+  eventId: string;
+  namespace: ExtensionActionNamespace;
+  eventName: "onClicked";
+  args: unknown[];
+}
+
 export type ExtensionHostMessage =
   | ExtensionHostReadyMessage
   | ExtensionWebRequestEventMessage
   | ExtensionTabsEventMessage
   | ExtensionTabsSnapshotMessage
+  | ExtensionActionEventMessage
   | ExtensionActionResultMessage;

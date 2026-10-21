@@ -56,6 +56,12 @@ describe("ExtensionWebRequestHost", () => {
       ),
     );
     expect(host.resolveAction(EXTENSION_ID)?.title).toBe("Authenticated title");
+    await expect(
+      host.invokeActionFromToolbar(EXTENSION_ID, null),
+    ).resolves.toEqual({
+      kind: "popup",
+      popupUrl: `chrome-extension://${EXTENSION_ID}/popup.html`,
+    });
 
     fixture.workerIpc.emit(
       extensionHostChannels.workerMessage,
@@ -395,7 +401,10 @@ function createFixture(): {
       manifest_version: 3,
       permissions: ["webRequest"],
       host_permissions: ["https://allowed.example/*"],
-      action: { default_title: "Fixture action" },
+      action: {
+        default_title: "Fixture action",
+        default_popup: "popup.html",
+      },
     },
     name: "Fixture",
     path: "C:\\fixture",
@@ -411,15 +420,29 @@ function createFixture(): {
     version: "1.0.0",
   } satisfies Extension;
   const workerIpc = new EventEmitter();
-  const worker = {
+  let worker!: ServiceWorkerMain & { send: ReturnType<typeof vi.fn> };
+  let workerReadySent = false;
+  const send = vi.fn((channel: string) => {
+    if (channel !== extensionHostChannels.workerReady || workerReadySent)
+      return;
+    workerReadySent = true;
+    workerIpc.emit(
+      extensionHostChannels.workerMessage,
+      { serviceWorker: worker },
+      { type: "worker-ready" },
+    );
+  });
+  worker = {
     scope: `chrome-extension://${EXTENSION_ID}/`,
     versionId: 42,
     ipc: workerIpc,
-    send: vi.fn(),
+    send,
+    isDestroyed: vi.fn(() => false),
+    startTask: vi.fn(() => ({ end: vi.fn() })),
   } as unknown as ServiceWorkerMain & { send: ReturnType<typeof vi.fn> };
   const serviceWorkers = new EventEmitter();
   Object.assign(serviceWorkers, {
-    getAllRunning: () => ({}),
+    getAllRunning: () => ({ 42: { versionId: 42 } }),
     getWorkerFromVersionID: (versionId: number) =>
       versionId === 42 ? worker : undefined,
     startWorkerForScope: vi.fn(async () => worker),
