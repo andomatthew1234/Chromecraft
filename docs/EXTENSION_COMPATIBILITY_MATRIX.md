@@ -93,6 +93,22 @@ as password-manager autofill and passkeys.
   Electron's missing active/status fields, and wakes a stopped MV3 worker for a
   subscribed lifecycle event.
 
+- `test-packaged-extension-actions.mjs` is the focused packaged conformance
+  harness for MV3 `chrome.action` plus the MV2 `browserAction` and `pageAction`
+  aliases. Its disposable extensions verify manifest defaults, global and
+  per-tab title/popup/badge/colour state, enablement, live Browser Shell
+  rendering, programmatic `openPopup`, and state across a real MV3 worker
+  stop/restart. Legacy aliases are exercised from real MV2 background pages.
+  Run it after `pnpm package:win` with:
+
+  ```powershell
+  pnpm test:extension-actions:win
+  ```
+
+  Results are written to `.artifacts/extensions/extension-actions.json`. Each
+  row is independently reported so a native API that resolves successfully but
+  silently returns Electron's dummy value is still a conformance failure.
+
 - `diagnose-web-store-extension.mjs` uses a real signed Web Store package and
   records Electron warnings, but does not prove every feature of that package.
 - `validate-real-bitwarden-popup.mjs` and
