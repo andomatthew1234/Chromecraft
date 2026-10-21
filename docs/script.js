@@ -247,6 +247,325 @@ materialChip?.addEventListener("click", () => {
   materialChip.classList.toggle("is-selected", !isSelected);
 });
 
+const extensionsSection = document.querySelector(".extensions-showcase");
+const extensionsStage = document.querySelector(".extensions-stage");
+const extensionsRing = document.querySelector(".extensions-ring");
+const extensionTiles = [...document.querySelectorAll(".extension-tile")];
+const extensionTileStates = extensionTiles.map(() => ({
+  hover: 0,
+  tiltX: 0,
+  tiltY: 0,
+}));
+let extensionsFrame;
+let extensionsVisible = false;
+let extensionsProgress = reduceMotion ? 1 : 0;
+let extensionsTargetRotation = reduceMotion ? 18 : 0;
+let extensionsRotation = extensionsTargetRotation;
+let extensionsDragOffset = 0;
+let extensionsVelocity = 0;
+let extensionsLastTime = 0;
+let extensionsRadiusX = 440;
+let extensionsRadiusY = 290;
+let extensionsDepth = 170;
+let extensionsPointerId;
+let extensionsPointerAxis;
+let extensionsPointerStartX = 0;
+let extensionsPointerStartY = 0;
+let extensionsPointerLastX = 0;
+let extensionsPointerLastTime = 0;
+let extensionsDragging = false;
+
+function extensionEase(value) {
+  const resolved = clamp(value);
+  return resolved * resolved * (3 - 2 * resolved);
+}
+
+function extensionPhase(start, end) {
+  return extensionEase((extensionsProgress - start) / (end - start));
+}
+
+function updateExtensionsProgress() {
+  if (!extensionsSection || !extensionsStage) return;
+
+  if (reduceMotion) {
+    extensionsProgress = 1;
+    extensionsTargetRotation = 18;
+  } else {
+    const bounds = extensionsSection.getBoundingClientRect();
+    const scrollDistance = Math.max(1, bounds.height - window.innerHeight);
+    extensionsProgress =
+      bounds.top >= 0 ? 0 : clamp(-bounds.top / scrollDistance);
+    extensionsTargetRotation = extensionPhase(0.24, 1) * 540;
+  }
+
+  const copy = extensionPhase(0.04, 0.18);
+  const halo = extensionPhase(0.08, 0.3);
+  extensionsStage.style.setProperty(
+    "--extensions-copy-opacity",
+    copy.toFixed(4),
+  );
+  extensionsStage.style.setProperty(
+    "--extensions-copy-shift",
+    `${((1 - copy) * 24).toFixed(2)}px`,
+  );
+  extensionsStage.style.setProperty(
+    "--extensions-halo-opacity",
+    halo.toFixed(4),
+  );
+  extensionsStage.style.setProperty(
+    "--extensions-halo-scale",
+    (0.76 + halo * 0.24).toFixed(4),
+  );
+  extensionsStage.style.setProperty(
+    "--extensions-particles-opacity",
+    extensionPhase(0.12, 0.35).toFixed(4),
+  );
+}
+
+function resizeExtensionsShowcase() {
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+
+  if (width <= 720) {
+    extensionsRadiusX = Math.min(width * 0.4, 158);
+    extensionsRadiusY = Math.min(height * 0.31, 260);
+    extensionsDepth = 86;
+  } else if (width <= 1000) {
+    extensionsRadiusX = Math.min(width * 0.39, 360);
+    extensionsRadiusY = Math.min(height * 0.33, 285);
+    extensionsDepth = 135;
+  } else {
+    extensionsRadiusX = Math.min(width * 0.36, 500);
+    extensionsRadiusY = Math.min(height * 0.31, 300);
+    extensionsDepth = 180;
+  }
+
+  updateExtensionsProgress();
+}
+
+function renderExtensionsShowcase(time = 0, staticFrame = false) {
+  extensionsFrame = undefined;
+  if (!extensionsStage || !extensionTiles.length) return;
+
+  const delta = extensionsLastTime
+    ? Math.min(40, Math.max(0, time - extensionsLastTime))
+    : 16;
+  extensionsLastTime = time;
+
+  if (!reduceMotion && !extensionsDragging) {
+    extensionsDragOffset += extensionsVelocity * (delta / 16);
+    extensionsVelocity *= Math.pow(0.92, delta / 16);
+    if (Math.abs(extensionsVelocity) < 0.002) extensionsVelocity = 0;
+  }
+
+  const targetRotation = extensionsTargetRotation + extensionsDragOffset;
+  extensionsRotation +=
+    (targetRotation - extensionsRotation) * (staticFrame ? 1 : 0.095);
+
+  extensionTiles.forEach((tile, index) => {
+    const entranceStart = 0.08 + index * 0.022;
+    const assembled = reduceMotion
+      ? 1
+      : extensionEase((extensionsProgress - entranceStart) / 0.2);
+    const angle =
+      -90 + index * (360 / extensionTiles.length) + extensionsRotation;
+    const radians = (angle * Math.PI) / 180;
+    const depthPosition = (Math.sin(radians) + 1) * 0.5;
+    const state = extensionTileStates[index];
+    state.hover +=
+      ((tile.matches(":hover") || tile.matches(":focus-visible") ? 1 : 0) -
+        state.hover) *
+      0.16;
+
+    const orbitX = Math.cos(radians) * extensionsRadiusX * assembled;
+    const orbitY = Math.sin(radians) * extensionsRadiusY * assembled;
+    const orbitZ = Math.sin(radians) * extensionsDepth * assembled;
+    const idle = reduceMotion ? 0 : Math.sin(time * 0.0011 + index * 1.7) * 4;
+    const hoverLift = state.hover * 72;
+    const baseScale = 0.76 + depthPosition * 0.24;
+    const entranceScale = 0.38 + assembled * 0.62;
+    const scale = baseScale * entranceScale + state.hover * 0.1;
+    const orbitTiltY = Math.cos(radians) * -10;
+    const orbitTiltX = Math.sin(radians) * 4;
+
+    tile.style.opacity = assembled.toFixed(4);
+    tile.style.zIndex = String(Math.round(20 + depthPosition * 80));
+    tile.style.filter = `brightness(${(0.74 + depthPosition * 0.34 + state.hover * 0.14).toFixed(3)})`;
+    tile.style.transform = `translate3d(calc(-50% + ${orbitX.toFixed(2)}px), calc(-50% + ${(orbitY + idle).toFixed(2)}px), ${(orbitZ + hoverLift - (1 - assembled) * 360).toFixed(2)}px) rotateX(${(orbitTiltX + state.tiltX * state.hover).toFixed(2)}deg) rotateY(${(orbitTiltY + state.tiltY * state.hover).toFixed(2)}deg) rotateZ(${(Math.cos(radians) * 4).toFixed(2)}deg) scale(${scale.toFixed(4)})`;
+  });
+
+  if (!staticFrame && !reduceMotion && extensionsVisible) {
+    extensionsFrame = window.requestAnimationFrame(renderExtensionsShowcase);
+  }
+}
+
+function requestExtensionsFrame() {
+  if (extensionsFrame || reduceMotion || !extensionsVisible) return;
+  extensionsFrame = window.requestAnimationFrame(renderExtensionsShowcase);
+}
+
+function handleExtensionsScroll() {
+  updateExtensionsProgress();
+  requestExtensionsFrame();
+}
+
+function extensionTileFromEvent(event) {
+  const tile = event.target.closest?.(".extension-tile");
+  return tile && extensionsRing?.contains(tile) ? tile : null;
+}
+
+function handleExtensionPointerOver(event) {
+  const tile = extensionTileFromEvent(event);
+  if (!tile || tile.contains(event.relatedTarget)) return;
+  requestExtensionsFrame();
+}
+
+function handleExtensionPointerOut(event) {
+  const tile = extensionTileFromEvent(event);
+  if (!tile || tile.contains(event.relatedTarget)) return;
+  const state = extensionTileStates[extensionTiles.indexOf(tile)];
+  if (state && !tile.matches(":focus-visible")) {
+    state.tiltX = 0;
+    state.tiltY = 0;
+  }
+}
+
+function handleExtensionPointerDown(event) {
+  if (
+    !extensionsRing ||
+    (event.pointerType === "mouse" && event.button !== 0)
+  ) {
+    return;
+  }
+
+  extensionsPointerId = event.pointerId;
+  extensionsPointerAxis = undefined;
+  extensionsPointerStartX = event.clientX;
+  extensionsPointerStartY = event.clientY;
+  extensionsPointerLastX = event.clientX;
+  extensionsPointerLastTime = performance.now();
+  extensionsVelocity = 0;
+  extensionsRing.setPointerCapture(event.pointerId);
+}
+
+function handleExtensionPointerMove(event) {
+  const tile = extensionTileFromEvent(event);
+  if (tile && !extensionsDragging) {
+    const bounds = tile.getBoundingClientRect();
+    const state = extensionTileStates[extensionTiles.indexOf(tile)];
+    if (state) {
+      state.tiltX =
+        clamp((event.clientY - bounds.top) / bounds.height, 0, 1) * -12 + 6;
+      state.tiltY =
+        clamp((event.clientX - bounds.left) / bounds.width, 0, 1) * 12 - 6;
+    }
+  }
+
+  if (event.pointerId !== extensionsPointerId || !extensionsRing) return;
+  const totalX = event.clientX - extensionsPointerStartX;
+  const totalY = event.clientY - extensionsPointerStartY;
+
+  if (!extensionsPointerAxis && Math.hypot(totalX, totalY) > 7) {
+    extensionsPointerAxis = Math.abs(totalX) > Math.abs(totalY) ? "x" : "y";
+    extensionsDragging = extensionsPointerAxis === "x";
+    extensionsRing.classList.toggle("is-dragging", extensionsDragging);
+  }
+
+  if (extensionsPointerAxis !== "x") return;
+  event.preventDefault();
+  const now = performance.now();
+  const deltaX = event.clientX - extensionsPointerLastX;
+  const deltaTime = Math.max(8, now - extensionsPointerLastTime);
+  extensionsDragOffset += deltaX * 0.48;
+  extensionsVelocity = (deltaX / deltaTime) * 7.5;
+  extensionsPointerLastX = event.clientX;
+  extensionsPointerLastTime = now;
+  requestExtensionsFrame();
+}
+
+function releaseExtensionsPointer(event) {
+  if (event.pointerId !== extensionsPointerId || !extensionsRing) return;
+  if (extensionsRing.hasPointerCapture(event.pointerId)) {
+    extensionsRing.releasePointerCapture(event.pointerId);
+  }
+  extensionsPointerId = undefined;
+  extensionsPointerAxis = undefined;
+  extensionsDragging = false;
+  extensionsRing.classList.remove("is-dragging");
+  requestExtensionsFrame();
+}
+
+function handleExtensionFocus() {
+  requestExtensionsFrame();
+}
+
+function cleanupExtensionsShowcase() {
+  window.cancelAnimationFrame(extensionsFrame);
+  window.removeEventListener("scroll", handleExtensionsScroll);
+  window.removeEventListener("resize", resizeExtensionsShowcase);
+  extensionsRing?.removeEventListener(
+    "pointerover",
+    handleExtensionPointerOver,
+  );
+  extensionsRing?.removeEventListener("pointerout", handleExtensionPointerOut);
+  extensionsRing?.removeEventListener(
+    "pointerdown",
+    handleExtensionPointerDown,
+  );
+  extensionsRing?.removeEventListener(
+    "pointermove",
+    handleExtensionPointerMove,
+  );
+  extensionsRing?.removeEventListener("pointerup", releaseExtensionsPointer);
+  extensionsRing?.removeEventListener(
+    "pointercancel",
+    releaseExtensionsPointer,
+  );
+  extensionsRing?.removeEventListener("focusin", handleExtensionFocus);
+  extensionsRing?.removeEventListener("focusout", handleExtensionFocus);
+}
+
+if (
+  extensionsSection &&
+  extensionsStage &&
+  extensionsRing &&
+  extensionTiles.length
+) {
+  resizeExtensionsShowcase();
+  renderExtensionsShowcase(0, true);
+
+  if (!reduceMotion) {
+    window.addEventListener("scroll", handleExtensionsScroll, {
+      passive: true,
+    });
+    window.addEventListener("resize", resizeExtensionsShowcase);
+    extensionsRing.addEventListener("pointerover", handleExtensionPointerOver);
+    extensionsRing.addEventListener("pointerout", handleExtensionPointerOut);
+    extensionsRing.addEventListener("pointerdown", handleExtensionPointerDown);
+    extensionsRing.addEventListener("pointermove", handleExtensionPointerMove);
+    extensionsRing.addEventListener("pointerup", releaseExtensionsPointer);
+    extensionsRing.addEventListener("pointercancel", releaseExtensionsPointer);
+    extensionsRing.addEventListener("focusin", handleExtensionFocus);
+    extensionsRing.addEventListener("focusout", handleExtensionFocus);
+
+    const extensionsObserver = new IntersectionObserver(
+      ([entry]) => {
+        extensionsVisible = entry.isIntersecting;
+        updateExtensionsProgress();
+        if (extensionsVisible) {
+          extensionsLastTime = 0;
+          requestExtensionsFrame();
+        } else if (extensionsFrame) {
+          window.cancelAnimationFrame(extensionsFrame);
+          extensionsFrame = undefined;
+        }
+      },
+      { rootMargin: "120px", threshold: 0.01 },
+    );
+    extensionsObserver.observe(extensionsStage);
+  }
+}
+
 const hyperdriveSection = document.querySelector(".hyperdrive-feature");
 const hyperdriveStage = document.querySelector(".hyperdrive-stage");
 const hyperdriveCanvas = document.querySelector(".hyperdrive-field");
@@ -824,5 +1143,6 @@ window.addEventListener("beforeunload", () => {
   window.cancelAnimationFrame(animationFrame);
   window.cancelAnimationFrame(hyperdriveFrame);
   window.cancelAnimationFrame(hyperdriveScrollFrame);
+  cleanupExtensionsShowcase();
   clearSilenceTimers();
 });
