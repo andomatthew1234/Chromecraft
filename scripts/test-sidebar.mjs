@@ -191,6 +191,22 @@ try {
     Boolean,
     "the Updates and versions page",
   );
+  const versionsInitiallyHidden = await cdp.evaluate(`
+    !document.querySelector('#version-info') &&
+    Boolean([...document.querySelectorAll('button')].find(
+      (button) => button.textContent?.includes('Version info')
+    ))
+  `);
+  if (!versionsInitiallyHidden) {
+    throw new Error("Installed versions must stay hidden until requested.");
+  }
+  await cdp.evaluate(`([...document.querySelectorAll('button')]
+    .find((button) => button.textContent?.includes('Version info')))?.click()`);
+  const versionsRevealed = await poll(
+    () => cdp.evaluate("Boolean(document.querySelector('#version-info'))"),
+    Boolean,
+    "the installed version information",
+  );
   await cdp.evaluate(`([...document.querySelectorAll('button')]
     .find((button) => button.textContent?.includes('Check for updates')))?.click()`);
   const portableUpdateStatus = await poll(
@@ -198,7 +214,7 @@ try {
       cdp.evaluate(
         `document.querySelector('.update-status-card')?.getAttribute('data-status')`,
       ),
-    (status) => status === "unavailable",
+    (status) => status === "partial",
     "the portable-build update status",
   );
   const updatesScreenshot = await cdp.send("Page.captureScreenshot", {
@@ -295,6 +311,8 @@ try {
       {
         pass: true,
         updatesPageReady,
+        versionsInitiallyHidden,
+        versionsRevealed,
         portableUpdateStatus,
         toggledClosed,
         railCollapse,

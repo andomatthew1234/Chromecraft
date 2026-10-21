@@ -1349,6 +1349,81 @@ input::placeholder {
   background: var(--md-secondary-container);
 }
 
+.download-rail-indicator {
+  position: relative;
+}
+
+.download-rail-indicator[data-downloading="true"] .material-icon {
+  font-size: 16px;
+  line-height: 16px;
+  transform: scale(0.82);
+}
+
+.download-progress-ring {
+  position: absolute;
+  width: 40px;
+  height: 40px;
+  overflow: visible;
+  pointer-events: none;
+  transform: rotate(-90deg);
+}
+
+.download-progress-ring circle {
+  fill: none;
+  stroke-width: 3;
+}
+
+.download-ring-track {
+  stroke: color-mix(in srgb, var(--md-primary) 18%, transparent);
+}
+
+.download-ring-value {
+  stroke: var(--md-primary);
+  stroke-linecap: round;
+  transition: stroke-dashoffset 180ms ease-out;
+}
+
+.download-rail-indicator[data-progressing="true"] .download-progress-ring {
+  animation: none;
+}
+
+.download-rail-indicator[data-progressing="true"][data-indeterminate="true"]
+  .download-progress-ring {
+  animation: download-ring-spin 1.1s linear infinite;
+}
+
+@keyframes download-ring-spin {
+  to {
+    transform: rotate(270deg);
+  }
+}
+
+.download-rail-indicator[data-complete="true"] {
+  color: #188038;
+}
+
+.download-rail-indicator[data-complete="true"] .download-ring-value {
+  stroke: #188038;
+}
+
+.download-count-badge {
+  position: absolute;
+  right: -2px;
+  bottom: -4px;
+  min-width: 17px;
+  height: 17px;
+  display: grid;
+  place-items: center;
+  padding: 0 4px;
+  border: 2px solid var(--md-surface-low);
+  border-radius: var(--shape-full);
+  color: var(--md-on-primary);
+  background: var(--md-primary);
+  font:
+    700 9px/1 "Segoe UI Variable",
+    sans-serif;
+}
+
 .sidebar-rail .sidebar-collapse {
   margin-top: auto;
 }
@@ -2720,30 +2795,24 @@ input::placeholder {
   font: var(--type-body-medium);
 }
 
+.update-progress-wrap {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: var(--space-1);
+}
+
+.update-progress-wrap small {
+  color: var(--md-on-surface-variant);
+  font: var(--type-label-small);
+}
+
 .update-progress-track {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  height: 4px;
+  width: 100%;
+  height: 6px;
   overflow: hidden;
-  background: var(--md-surface-highest);
-}
-
-.update-progress-track::after {
-  content: "";
-  position: absolute;
-  inset: 0 auto 0 -35%;
-  width: 35%;
-  border-radius: inherit;
-  background: var(--md-primary);
-  animation: update-progress 1.15s ease-in-out infinite;
-}
-
-@keyframes update-progress {
-  to {
-    left: 100%;
-  }
+  border: 0;
+  border-radius: var(--shape-full);
+  accent-color: var(--md-primary);
 }
 
 .installed-versions,
@@ -2842,6 +2911,48 @@ input::placeholder {
   padding-left: 20px;
   color: var(--md-on-surface-variant);
   font: var(--type-body-small);
+}
+
+.update-result-detail {
+  display: grid;
+  align-content: center;
+  justify-items: start;
+  gap: var(--space-2);
+}
+
+.update-result-detail small {
+  color: var(--md-on-surface-variant);
+  font: var(--type-body-small);
+}
+
+.update-result-badge {
+  padding: 5px 12px;
+  border-radius: var(--shape-full);
+  color: var(--md-on-primary-container);
+  background: var(--md-primary-container);
+  font: var(--type-label-medium);
+}
+
+.update-result-badge[data-result="unavailable"],
+.update-result-badge[data-result="approval-required"],
+.update-result-badge[data-result="failed"] {
+  color: var(--md-on-error-container);
+  background: var(--md-error-container);
+}
+
+.version-info-toggle {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: var(--space-2);
+  padding: 0 var(--space-4);
+  border-radius: var(--shape-full);
+  font: var(--type-label-large);
+}
+
+.version-info-toggle .material-icon {
+  font-size: 19px;
 }
 
 .updates-actions {

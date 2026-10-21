@@ -114,31 +114,17 @@ let extensionSnapshotSendQueue: Promise<void> = Promise.resolve();
 let updateRestartPrepared = false;
 let updateShutdownPromise: Promise<void> | null = null;
 let ipcRegistered = false;
+let updateManager: UpdateManager | null = null;
 
-const updateManager = new UpdateManager({
-  adapter: new ElectronUpdateAdapter({
-    isPackaged: app.isPackaged,
-    platform: process.platform,
-    executablePath: process.execPath,
-    feedUrl: CHROMECRAFT_UPDATE_FEED_URL,
-  }),
-  installedVersions: [
-    { id: "chromecraft", label: "ChromeCraft", version: app.getVersion() },
-    {
-      id: "electron",
-      label: "Electron",
-      version: process.versions.electron,
-    },
-    { id: "chromium", label: "Chromium", version: process.versions.chrome },
-    { id: "node", label: "Node.js", version: process.versions.node },
-  ],
-  emit: sendUpdateSnapshot,
-  prepareForRestart: prepareForUpdateRestart,
-});
-
-function sendUpdateSnapshot(snapshot = updateManager.snapshot): void {
+function sendUpdateSnapshot(snapshot = updateManager?.snapshot): void {
+  if (!snapshot) return;
   if (!shellView || shellView.webContents.isDestroyed()) return;
   shellView.webContents.send(channels.updatesChanged, snapshot);
+}
+
+function requireUpdateManager(): UpdateManager {
+  if (!updateManager) throw new Error("The update service is unavailable.");
+  return updateManager;
 }
 
 function prepareForUpdateRestart(): Promise<void> {
@@ -515,15 +501,15 @@ function registerIpc(): void {
   );
   ipcMain.handle(channels.getUpdates, (event) => {
     requireTrusted(event);
-    return updateManager.snapshot;
+    return requireUpdateManager().snapshot;
   });
   ipcMain.handle(channels.checkForUpdates, async (event) => {
     requireTrusted(event);
-    return updateManager.check();
+    return requireUpdateManager().check();
   });
   ipcMain.handle(channels.restartToUpdate, async (event) => {
     requireTrusted(event);
-    await updateManager.restart();
+    await requireUpdateManager().restart();
   });
   ipcMain.handle(channels.createTab, (event, input?: unknown) =>
     requireManager(event).createTab(
@@ -1138,6 +1124,47 @@ async function createMainWindow(): Promise<void> {
     console.error("Extension initialization failed.", error);
   }
 
+  updateManager?.dispose();
+  updateManager = new UpdateManager({
+    adapter: new ElectronUpdateAdapter({
+      isPackaged: app.isPackaged,
+      platform: process.platform,
+      executablePath: process.execPath,
+      feedUrl: CHROMECRAFT_UPDATE_FEED_URL,
+    }),
+    extensions: {
+      checkAndInstallUpdates: (report) =>
+        runExtensionOperation("updating", null, () => {
+          if (!extensionService) {
+            throw new Error("The extension service did not initialize.");
+          }
+          return extensionService.checkAndInstallUpdates((progress) => {
+            report({
+              label: `${extensionProgressLabels[progress.stage].replace(/…$/u, "")} ${progress.name} (${progress.index}/${progress.total})`,
+              ...(progress.receivedBytes === undefined
+                ? {}
+                : { receivedBytes: progress.receivedBytes }),
+              ...(progress.totalBytes === undefined
+                ? {}
+                : { totalBytes: progress.totalBytes }),
+            });
+          });
+        }),
+    },
+    installedVersions: [
+      { id: "chromecraft", label: "ChromeCraft", version: app.getVersion() },
+      {
+        id: "electron",
+        label: "Electron",
+        version: process.versions.electron,
+      },
+      { id: "chromium", label: "Chromium", version: process.versions.chrome },
+      { id: "node", label: "Node.js", version: process.versions.node },
+    ],
+    emit: sendUpdateSnapshot,
+    prepareForRestart: prepareForUpdateRestart,
+  });
+
   const preferences = new PreferencesStore(
     path.join(app.getPath("userData"), "preferences.json"),
   );
@@ -1296,6 +1323,7 @@ async function createMainWindow(): Promise<void> {
     actionHost.dispose();
     if (extensionWebRequestHost === actionHost) extensionWebRequestHost = null;
     extensions.dispose();
+    updateManager?.dispose();
     nativeTheme.removeListener("updated", syncWindowChromeTheme);
     if (mainWindow === window) {
       mainWindow = null;
@@ -1306,6 +1334,7 @@ async function createMainWindow(): Promise<void> {
       downloadManager = null;
       searchSuggestionService = null;
       hyperdriveController = null;
+      updateManager = null;
     }
   });
 

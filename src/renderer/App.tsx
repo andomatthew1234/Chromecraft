@@ -41,6 +41,10 @@ import {
 } from "./ExtensionInstallBanner";
 import { ExpressiveLoadingIndicator } from "./ExpressiveLoadingIndicator";
 import {
+  deriveDownloadIndicator,
+  didAnyDownloadComplete,
+} from "./download-indicator";
+import {
   buildOmniboxSuggestions,
   createLocalOmniboxIndex,
   getInlineCompletion,
@@ -2115,6 +2119,14 @@ function Sidebar({
   requestClearHistory: (range: "hour" | "day" | "all") => void;
 }) {
   const [query, setQuery] = useState("");
+  const [downloadJustCompleted, setDownloadJustCompleted] = useState(false);
+  const priorDownloadStates = useRef<Map<
+    string,
+    DownloadSnapshot["items"][number]["state"]
+  > | null>(null);
+  const downloadCompletionTimer = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const open = snapshot.preferences.sidebarOpen;
   const navigate = (url: string) => void window.chromecraft.createTab(url);
   const needle = query.toLowerCase();
@@ -2131,6 +2143,36 @@ function Sidebar({
     ["extensions", "extension", "Extensions"],
     ["settings", "settings", "Settings"],
   ] as const;
+  const downloadIndicator = useMemo(
+    () => deriveDownloadIndicator(downloads.items),
+    [downloads.items],
+  );
+  useEffect(() => {
+    const nextStates = new Map(
+      downloads.items.map((item) => [item.id, item.state]),
+    );
+    const previous = priorDownloadStates.current;
+    priorDownloadStates.current = nextStates;
+    if (!previous) return;
+    const completed = didAnyDownloadComplete(previous, downloads.items);
+    if (!completed) return;
+    setDownloadJustCompleted(true);
+    if (downloadCompletionTimer.current) {
+      clearTimeout(downloadCompletionTimer.current);
+    }
+    downloadCompletionTimer.current = setTimeout(() => {
+      setDownloadJustCompleted(false);
+      downloadCompletionTimer.current = null;
+    }, 2_000);
+  }, [downloads.items]);
+  useEffect(
+    () => () => {
+      if (downloadCompletionTimer.current) {
+        clearTimeout(downloadCompletionTimer.current);
+      }
+    },
+    [],
+  );
   if (!snapshot.preferences.sidebarAttached) return null;
 
   return (
@@ -2139,26 +2181,86 @@ function Sidebar({
       aria-label="Browser sidebar"
     >
       <nav className="sidebar-rail">
-        {tools.map(([id, icon, label]) => (
-          <button
-            type="button"
-            key={id}
-            className={tool === id ? "active" : ""}
-            onClick={() => {
-              const nextTool = selectSidebarTool(tool, id);
-              setTool(nextTool);
-              void window.chromecraft.setSidebarOpen(Boolean(nextTool));
-            }}
-            title={label}
-            aria-label={label}
-            aria-current={tool === id ? "page" : undefined}
-            aria-controls="sidebar-panel"
-          >
-            <span className="rail-selection-indicator">
-              <Icon name={icon} />
-            </span>
-          </button>
-        ))}
+        {tools.map(([id, icon, label]) => {
+          const isDownloads = id === "downloads";
+          const activeDownloadCount = downloadIndicator.unfinishedCount;
+          const dynamicLabel =
+            isDownloads && activeDownloadCount > 0
+              ? `${label}, ${activeDownloadCount} active`
+              : label;
+          return (
+            <button
+              type="button"
+              key={id}
+              className={tool === id ? "active" : ""}
+              onClick={() => {
+                const nextTool = selectSidebarTool(tool, id);
+                setTool(nextTool);
+                void window.chromecraft.setSidebarOpen(Boolean(nextTool));
+              }}
+              title={dynamicLabel}
+              aria-label={dynamicLabel}
+              aria-current={tool === id ? "page" : undefined}
+              aria-controls="sidebar-panel"
+            >
+              <span
+                className={`rail-selection-indicator ${isDownloads ? "download-rail-indicator" : ""}`}
+                data-downloading={
+                  isDownloads && activeDownloadCount > 0 ? "true" : undefined
+                }
+                data-progressing={
+                  isDownloads && downloadIndicator.progressingCount > 0
+                    ? "true"
+                    : undefined
+                }
+                data-indeterminate={
+                  isDownloads &&
+                  activeDownloadCount > 0 &&
+                  downloadIndicator.percent === null
+                    ? "true"
+                    : undefined
+                }
+                data-complete={
+                  isDownloads && downloadJustCompleted ? "true" : undefined
+                }
+              >
+                {isDownloads && activeDownloadCount > 0 && (
+                  <svg
+                    className="download-progress-ring"
+                    viewBox="0 0 40 40"
+                    aria-hidden="true"
+                  >
+                    <circle
+                      className="download-ring-track"
+                      cx="20"
+                      cy="20"
+                      r="17"
+                    />
+                    <circle
+                      className="download-ring-value"
+                      cx="20"
+                      cy="20"
+                      r="17"
+                      pathLength="100"
+                      strokeDasharray="100"
+                      strokeDashoffset={
+                        downloadIndicator.percent === null
+                          ? 72
+                          : 100 - downloadIndicator.percent
+                      }
+                    />
+                  </svg>
+                )}
+                <Icon name={icon} />
+                {isDownloads && activeDownloadCount > 1 && (
+                  <span className="download-count-badge" aria-hidden="true">
+                    {activeDownloadCount > 99 ? "99+" : activeDownloadCount}
+                  </span>
+                )}
+              </span>
+            </button>
+          );
+        })}
         <button
           type="button"
           className="sidebar-collapse"
@@ -2956,13 +3058,19 @@ function UpdatesPage({
   close: () => void;
 }) {
   const [actionError, setActionError] = useState<string | null>(null);
+  const [versionInfoOpen, setVersionInfoOpen] = useState(false);
   const busy =
     snapshot.status === "checking" || snapshot.status === "downloading";
+  const visibleResults = snapshot.results.filter(
+    (result) => result.state !== "up-to-date",
+  );
   const statusTitle: Record<UpdateSnapshot["status"], string> = {
     idle: "Ready to check",
     checking: "Checking every shipped part",
     downloading: "Downloading the verified release",
     ready: "Update ready",
+    complete: "Updates installed",
+    partial: "Available updates checked",
     "up-to-date": "Everything is up to date",
     unavailable: "Updates unavailable here",
     error: "Update check failed",
@@ -3015,6 +3123,7 @@ function UpdatesPage({
                 snapshot.status === "error" || snapshot.status === "unavailable"
                   ? "warning"
                   : snapshot.status === "ready" ||
+                      snapshot.status === "complete" ||
                       snapshot.status === "up-to-date"
                     ? "shield"
                     : "reload"
@@ -3028,24 +3137,37 @@ function UpdatesPage({
                 "Check the complete packaged browser, including its engine and dependencies."}
             </small>
           </span>
-          {busy && (
-            <span className="update-progress-track" aria-hidden="true" />
+          {busy && snapshot.progress && (
+            <span className="update-progress-wrap">
+              <progress
+                className="update-progress-track"
+                max={100}
+                {...(snapshot.progress.percent === null
+                  ? {}
+                  : { value: snapshot.progress.percent })}
+                aria-label={snapshot.progress.label}
+              />
+              <small>
+                {snapshot.progress.percent === null
+                  ? snapshot.progress.label
+                  : `${snapshot.progress.label} · ${Math.round(snapshot.progress.percent)}%`}
+              </small>
+            </span>
           )}
         </section>
 
-        {snapshot.readyUpdates.length > 0 && (
+        {visibleResults.length > 0 && (
           <section
             className="ready-updates"
             aria-labelledby="ready-updates-title"
           >
             <div className="updates-section-heading">
               <span>
-                <small>Downloaded and verified</small>
-                <h2 id="ready-updates-title">Ready updates</h2>
+                <small>Check results</small>
+                <h2 id="ready-updates-title">Updates</h2>
               </span>
-              <span className="ready-badge">Ready</span>
             </div>
-            {snapshot.readyUpdates.map((update) => (
+            {visibleResults.map((update) => (
               <article className="ready-update-card" key={update.id}>
                 <div className="ready-update-title">
                   <span className="update-package-icon" aria-hidden="true">
@@ -3054,38 +3176,67 @@ function UpdatesPage({
                   <span>
                     <strong>{update.label}</strong>
                     <small>
-                      {update.fromVersion} → {update.toVersion}
+                      {update.fromVersion}
+                      {update.toVersion ? ` → ${update.toVersion}` : ""}
                     </small>
                   </span>
                 </div>
-                <ul>
-                  {update.includes.map((item) => (
-                    <li key={item}>{item}</li>
-                  ))}
-                </ul>
+                <div className="update-result-detail">
+                  <span
+                    className="update-result-badge"
+                    data-result={update.state}
+                  >
+                    {
+                      {
+                        installed: "Installed",
+                        ready: "Ready to restart",
+                        "up-to-date": "Up to date",
+                        unavailable: "Not available",
+                        "approval-required": "Needs review",
+                        failed: "Couldn't update",
+                      }[update.state]
+                    }
+                  </span>
+                  {update.detail ? (
+                    <small>{update.detail}</small>
+                  ) : (
+                    <ul>
+                      {update.includes.map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
               </article>
             ))}
           </section>
         )}
 
-        <section
-          className="installed-versions"
-          aria-labelledby="versions-title"
-        >
-          <div className="updates-section-heading">
-            <span>
-              <small>Currently installed</small>
-              <h2 id="versions-title">Versions</h2>
-            </span>
-          </div>
-          <div className="version-grid">
-            {snapshot.installedVersions.map((item) => (
-              <article className="version-card" key={item.id}>
-                <span>{item.label}</span>
-                <strong>{item.version}</strong>
-              </article>
-            ))}
-          </div>
+        <section className="installed-versions">
+          <button
+            type="button"
+            className="tonal-button version-info-toggle"
+            aria-expanded={versionInfoOpen}
+            aria-controls="version-info"
+            onClick={() => setVersionInfoOpen((open) => !open)}
+          >
+            Version info
+            <Icon name={versionInfoOpen ? "chevronUp" : "chevronDown"} />
+          </button>
+          {versionInfoOpen && (
+            <div
+              className="version-grid"
+              id="version-info"
+              aria-label="Currently installed versions"
+            >
+              {snapshot.installedVersions.map((item) => (
+                <article className="version-card" key={item.id}>
+                  <span>{item.label}</span>
+                  <strong>{item.version}</strong>
+                </article>
+              ))}
+            </div>
+          )}
         </section>
 
         {actionError && (
@@ -3117,8 +3268,10 @@ function UpdatesPage({
           )}
         </footer>
         <p className="updates-footnote">
-          Updates replace the complete signed application. Your tabs, history,
-          bookmarks, settings, and extensions remain in your local profile.
+          Extension updates are verified and installed in your local profile.
+          Application updates replace the complete signed runtime when this
+          build supports it. Your tabs, history, bookmarks, settings, and
+          extensions stay in place.
           {snapshot.checkedAt
             ? ` Last checked ${new Date(snapshot.checkedAt).toLocaleString()}.`
             : ""}
@@ -3319,6 +3472,7 @@ export function App() {
   const [omniboxExpanded, setOmniboxExpanded] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [dialog, setDialog] = useState<BrowserDialogState | null>(null);
+  const receivedDownloadEvent = useRef(false);
   const [tabMenu, setTabMenu] = useState<{
     x: number;
     y: number;
@@ -3346,7 +3500,7 @@ export function App() {
           setSnapshot(nextSnapshot);
           setTool(nextSnapshot.preferences.sidebarOpen ? "bookmarks" : null);
           setData(nextData);
-          setDownloads(nextDownloads);
+          if (!receivedDownloadEvent.current) setDownloads(nextDownloads);
           setHyperdrive(nextHyperdrive);
           setExtensions(nextExtensions);
           setUpdates(nextUpdates);
@@ -3356,7 +3510,10 @@ export function App() {
     const cleanups = [
       window.chromecraft.onSnapshot(setSnapshot),
       window.chromecraft.onBrowserData(setData),
-      window.chromecraft.onDownloads(setDownloads),
+      window.chromecraft.onDownloads((nextDownloads) => {
+        receivedDownloadEvent.current = true;
+        setDownloads(nextDownloads);
+      }),
       window.chromecraft.onHyperdriveSnapshot(setHyperdrive),
       window.chromecraft.onExtensions(setExtensions),
       window.chromecraft.onUpdateSnapshot(setUpdates),
