@@ -351,14 +351,17 @@ function hostLabel(url: string): string {
 const TabButton = memo(function TabButton({
   active,
   tab,
+  settings,
   onMenu,
   onHoverChange,
 }: {
   active: boolean;
   tab: BrowserTabSnapshot;
+  settings: boolean;
   onMenu: (event: MouseEvent, tab: BrowserTabSnapshot) => void;
   onHoverChange: (tab: BrowserTabSnapshot | null, anchor?: DOMRect) => void;
 }) {
+  const label = settings ? "Settings" : tabLabel(tab);
   return (
     <div
       className={`tab ${active ? "active" : ""}`}
@@ -380,6 +383,10 @@ const TabButton = memo(function TabButton({
       >
         {tab.isLoading ? (
           <ExpressiveLoadingIndicator compact />
+        ) : settings ? (
+          <span className="tab-favicon settings-favicon" aria-hidden="true">
+            <Icon name="settings" />
+          </span>
         ) : (
           <span
             className={`tab-favicon ${tab.isNewTab ? "brand-favicon" : ""}`}
@@ -388,7 +395,7 @@ const TabButton = memo(function TabButton({
             {tab.isNewTab ? "C" : hostLabel(tab.url).slice(0, 1).toUpperCase()}
           </span>
         )}
-        <span className="tab-title">{tabLabel(tab)}</span>
+        <span className="tab-title">{label}</span>
         {tab.isMuted && (
           <span className="tab-muted" title="Muted">
             <Icon name="volumeOff" />
@@ -403,7 +410,7 @@ const TabButton = memo(function TabButton({
           event.stopPropagation();
           void window.chromecraft.closeTab(tab.id);
         }}
-        aria-label={`Close ${tabLabel(tab)}`}
+        aria-label={`Close ${label}`}
       >
         <Icon name="close" />
       </button>
@@ -413,6 +420,7 @@ const TabButton = memo(function TabButton({
 
 function TabStrip({
   snapshot,
+  settingsTabId,
   onMenu,
   brandMenuOpen,
   onToggleBrandMenu,
@@ -421,6 +429,7 @@ function TabStrip({
   onHoverCardOpenChange,
 }: {
   snapshot: BrowserSnapshot;
+  settingsTabId: string | null;
   onMenu: (event: MouseEvent, tab: BrowserTabSnapshot) => void;
   brandMenuOpen: boolean;
   onToggleBrandMenu: () => void;
@@ -542,6 +551,7 @@ function TabStrip({
             active={tab.id === snapshot.activeTabId}
             key={tab.id}
             tab={tab}
+            settings={tab.id === settingsTabId}
             onMenu={onMenu}
             onHoverChange={updateHoverPreview}
           />
@@ -1661,6 +1671,350 @@ function HyperdriveSettings({
   );
 }
 
+export function QuickSettingsPanel({
+  snapshot,
+  open,
+  close,
+  openFullSettings,
+}: {
+  snapshot: BrowserSnapshot;
+  open: boolean;
+  close: () => void;
+  openFullSettings: () => void;
+}) {
+  const hyperdriveToggle = useRef<HTMLInputElement>(null);
+  const hyperdriveEnabled = snapshot.preferences.hyperdriveMode !== "off";
+  const ublockStatus = snapshot.ublock.initializing
+    ? "Starting protection"
+    : snapshot.ublock.enabled
+      ? "Blocking enabled"
+      : "Blocking paused";
+
+  useEffect(() => {
+    if (!open) return;
+    const frame = requestAnimationFrame(() =>
+      hyperdriveToggle.current?.focus(),
+    );
+    return () => cancelAnimationFrame(frame);
+  }, [open]);
+
+  return (
+    <div
+      className="quick-settings-layer"
+      data-open={open ? "true" : "false"}
+      aria-hidden={!open}
+      onClick={close}
+    >
+      <section
+        className="quick-settings-panel"
+        id="quick-settings-panel"
+        role="dialog"
+        aria-modal="false"
+        aria-labelledby="quick-settings-title"
+        aria-describedby="quick-settings-subtitle"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <header className="quick-settings-header">
+          <span className="quick-settings-header-icon">
+            <Icon name="tune" />
+          </span>
+          <span className="quick-settings-heading">
+            <h2 id="quick-settings-title">Quick settings</h2>
+            <small id="quick-settings-subtitle">Common browser controls</small>
+          </span>
+          <button
+            type="button"
+            className="quick-settings-close"
+            onClick={close}
+            aria-label="Close quick settings"
+            title="Close quick settings"
+          >
+            <Icon name="close" />
+          </button>
+        </header>
+
+        <div className="quick-settings-grid">
+          <label
+            className={`quick-setting-tile quick-setting-hero ${hyperdriveEnabled ? "active" : ""}`}
+          >
+            <span className="quick-setting-icon">
+              <Icon name="bolt" />
+            </span>
+            <span className="quick-setting-copy">
+              <strong>Hyperdrive</strong>
+              <small>
+                {hyperdriveEnabled
+                  ? `${humaniseHyperdriveValue(snapshot.preferences.hyperdriveMode)} mode`
+                  : "Preload likely destinations"}
+              </small>
+            </span>
+            <input
+              ref={hyperdriveToggle}
+              type="checkbox"
+              role="switch"
+              className="switch-input"
+              aria-label="Hyperdrive"
+              checked={hyperdriveEnabled}
+              onChange={(event) =>
+                void window.chromecraft.setHyperdriveMode(
+                  event.target.checked ? "balanced" : "off",
+                )
+              }
+            />
+          </label>
+
+          <label
+            className={`quick-setting-tile ${snapshot.preferences.bookmarkBarVisible ? "active" : ""}`}
+          >
+            <span className="quick-setting-icon">
+              <Icon name="bookmark" />
+            </span>
+            <span className="quick-setting-copy">
+              <strong>Bookmarks bar</strong>
+              <small>
+                {snapshot.preferences.bookmarkBarVisible ? "Visible" : "Hidden"}
+              </small>
+            </span>
+            <input
+              type="checkbox"
+              role="switch"
+              className="switch-input"
+              aria-label="Show bookmarks bar"
+              checked={snapshot.preferences.bookmarkBarVisible}
+              onChange={(event) =>
+                void window.chromecraft.setBookmarkBarVisible(
+                  event.target.checked,
+                )
+              }
+            />
+          </label>
+
+          <label
+            className={`quick-setting-tile ${snapshot.ublock.enabled ? "active" : ""}`}
+          >
+            <span className="quick-setting-icon quick-setting-shield">
+              <Icon name="shield" />
+            </span>
+            <span className="quick-setting-copy">
+              <strong>uBlock Origin</strong>
+              <small aria-live="polite">{ublockStatus}</small>
+            </span>
+            <input
+              type="checkbox"
+              role="switch"
+              className="switch-input"
+              aria-label="uBlock Origin"
+              checked={snapshot.ublock.enabled}
+              disabled={snapshot.ublock.initializing}
+              onChange={(event) =>
+                void window.chromecraft.setUblockEnabled(event.target.checked)
+              }
+            />
+          </label>
+
+          <label className="quick-setting-tile quick-setting-theme">
+            <span className="quick-setting-icon quick-setting-theme-icon">
+              <Icon name="tune" />
+            </span>
+            <span className="quick-setting-copy">
+              <strong>Theme</strong>
+              <small>New tab appearance</small>
+            </span>
+            <span className="quick-theme-select-wrap">
+              <select
+                value={snapshot.preferences.newTabTheme}
+                aria-label="Theme"
+                onChange={(event) =>
+                  void window.chromecraft.setNewTabTheme(
+                    event.target.value as NewTabTheme,
+                  )
+                }
+              >
+                <option value="overworld">Chromecraft blue</option>
+                <option value="nether">Soft violet</option>
+                <option value="end">Blue grey</option>
+                <option value="minimal">Minimal</option>
+              </select>
+              <Icon name="chevronDown" />
+            </span>
+          </label>
+
+          <button
+            type="button"
+            className="quick-setting-tile quick-setting-open-all"
+            onClick={openFullSettings}
+          >
+            <span className="quick-setting-icon">
+              <Icon name="settings" />
+            </span>
+            <span className="quick-setting-copy">
+              <strong>Open full settings</strong>
+              <small>All browser controls</small>
+            </span>
+            <Icon name="open" />
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+export function FullSettingsPage({
+  snapshot,
+  hyperdrive,
+}: {
+  snapshot: BrowserSnapshot;
+  hyperdrive: HyperdriveSnapshot;
+}) {
+  const heading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => heading.current?.focus(), []);
+
+  return (
+    <main className="full-settings-page" aria-labelledby="full-settings-title">
+      <div className="full-settings-content">
+        <header className="full-settings-header">
+          <span className="full-settings-mark">
+            <Icon name="settings" />
+          </span>
+          <span>
+            <h1 ref={heading} id="full-settings-title" tabIndex={-1}>
+              Settings
+            </h1>
+            <p>Shape Chromecraft around the way you browse.</p>
+          </span>
+        </header>
+        <div className="settings-list full-settings-list">
+          <section
+            className="settings-section"
+            aria-labelledby="settings-general"
+          >
+            <h2 className="settings-section-label" id="settings-general">
+              General
+            </h2>
+            <label className="setting-row">
+              <span className="setting-copy">
+                <span className="setting-title">Restore tabs on launch</span>
+                <small className="setting-description">
+                  Stored locally on this device
+                </small>
+              </span>
+              <input
+                type="checkbox"
+                role="switch"
+                className="switch-input"
+                checked={snapshot.preferences.restoreSession}
+                onChange={(event) =>
+                  void window.chromecraft.setRestoreSession(
+                    event.target.checked,
+                  )
+                }
+              />
+            </label>
+            <label className="setting-row">
+              <span className="setting-copy">
+                <span className="setting-title">Show bookmarks bar</span>
+                <small className="setting-description">
+                  Keep saved sites below the address bar
+                </small>
+              </span>
+              <input
+                type="checkbox"
+                role="switch"
+                className="switch-input"
+                checked={snapshot.preferences.bookmarkBarVisible}
+                onChange={(event) =>
+                  void window.chromecraft.setBookmarkBarVisible(
+                    event.target.checked,
+                  )
+                }
+              />
+            </label>
+          </section>
+          <section
+            className="settings-section"
+            aria-labelledby="settings-privacy"
+          >
+            <h2 className="settings-section-label" id="settings-privacy">
+              Privacy &amp; appearance
+            </h2>
+            <label className="setting-row">
+              <span className="setting-copy">
+                <span className="setting-title">uBlock Origin</span>
+                <small className="setting-description">
+                  {ublockLabel(snapshot.ublock)}
+                  {snapshot.ublock.version
+                    ? ` · Version ${snapshot.ublock.version}`
+                    : " · Preinstalled content blocking"}
+                </small>
+              </span>
+              <input
+                type="checkbox"
+                role="switch"
+                className="switch-input"
+                checked={snapshot.ublock.enabled}
+                disabled={snapshot.ublock.initializing}
+                onChange={(event) =>
+                  void window.chromecraft.setUblockEnabled(event.target.checked)
+                }
+              />
+            </label>
+            <label className="setting-row">
+              <span className="setting-copy">
+                <span className="setting-title">Live search suggestions</span>
+                <small className="setting-description">
+                  Share typed search text with DuckDuckGo for live suggestions.
+                  Local history and bookmark autocomplete always stays
+                  available.
+                </small>
+              </span>
+              <input
+                type="checkbox"
+                role="switch"
+                className="switch-input"
+                checked={snapshot.preferences.remoteSearchSuggestionsEnabled}
+                onChange={(event) =>
+                  void window.chromecraft.setRemoteSearchSuggestionsEnabled(
+                    event.target.checked,
+                  )
+                }
+              />
+            </label>
+            <label className="theme-setting setting-row">
+              <span className="setting-copy">
+                <span className="setting-title">New tab theme</span>
+                <small className="setting-description">
+                  Choose a restrained colour mood
+                </small>
+              </span>
+              <select
+                value={snapshot.preferences.newTabTheme}
+                onChange={(event) =>
+                  void window.chromecraft.setNewTabTheme(
+                    event.target.value as NewTabTheme,
+                  )
+                }
+              >
+                <option value="overworld">Chromecraft blue</option>
+                <option value="nether">Soft violet</option>
+                <option value="end">Blue grey</option>
+                <option value="minimal">Minimal</option>
+              </select>
+            </label>
+            <button
+              type="button"
+              className="tonal-button"
+              onClick={() => void window.chromecraft.openUblockDashboard()}
+            >
+              Open uBlock settings
+            </button>
+          </section>
+          <HyperdriveSettings snapshot={snapshot} hyperdrive={hyperdrive} />
+        </div>
+      </div>
+    </main>
+  );
+}
+
 function ExtensionIdentityIcon({
   extension,
   className,
@@ -2099,23 +2453,23 @@ export function ExtensionsPage({
 
 function Sidebar({
   snapshot,
-  hyperdrive,
   data,
   downloads,
   extensions,
   tool,
   setTool,
   openExtensionsPage,
+  openFullSettings,
   requestClearHistory,
 }: {
   snapshot: BrowserSnapshot;
-  hyperdrive: HyperdriveSnapshot;
   data: BrowserDataSnapshot;
   downloads: DownloadSnapshot;
   extensions: ExtensionsSnapshot;
   tool: SidebarTool | null;
   setTool: (tool: SidebarTool | null) => void;
   openExtensionsPage: () => void;
+  openFullSettings: () => void;
   requestClearHistory: (range: "hour" | "day" | "all") => void;
 }) {
   const [query, setQuery] = useState("");
@@ -2127,7 +2481,12 @@ function Sidebar({
   const downloadCompletionTimer = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
+  const settingsButton = useRef<HTMLButtonElement>(null);
+  const quickSettingsWasOpen = useRef(false);
+  const restoreSettingsFocus = useRef(true);
   const open = snapshot.preferences.sidebarOpen;
+  const quickSettingsOpen = tool === "settings";
+  const standardPanelOpen = open && Boolean(tool) && !quickSettingsOpen;
   const navigate = (url: string) => void window.chromecraft.createTab(url);
   const needle = query.toLowerCase();
   const bookmarks = data.bookmarks.filter((item) =>
@@ -2173,11 +2532,22 @@ function Sidebar({
     },
     [],
   );
+  useEffect(() => {
+    if (
+      quickSettingsWasOpen.current &&
+      !quickSettingsOpen &&
+      restoreSettingsFocus.current
+    ) {
+      settingsButton.current?.focus();
+    }
+    if (!quickSettingsOpen) restoreSettingsFocus.current = true;
+    quickSettingsWasOpen.current = quickSettingsOpen;
+  }, [quickSettingsOpen]);
   if (!snapshot.preferences.sidebarAttached) return null;
 
   return (
     <aside
-      className={`sidebar ${open && tool ? "panel-open" : "rail-only"}`}
+      className={`sidebar ${standardPanelOpen ? "panel-open" : "rail-only"} ${quickSettingsOpen ? "quick-settings-open" : ""}`}
       aria-label="Browser sidebar"
     >
       <nav className="sidebar-rail">
@@ -2192,16 +2562,22 @@ function Sidebar({
             <button
               type="button"
               key={id}
+              ref={id === "settings" ? settingsButton : undefined}
               className={tool === id ? "active" : ""}
               onClick={() => {
                 const nextTool = selectSidebarTool(tool, id);
                 setTool(nextTool);
-                void window.chromecraft.setSidebarOpen(Boolean(nextTool));
+                void window.chromecraft.setSidebarOpen(
+                  Boolean(nextTool && nextTool !== "settings"),
+                );
               }}
               title={dynamicLabel}
               aria-label={dynamicLabel}
               aria-current={tool === id ? "page" : undefined}
-              aria-controls="sidebar-panel"
+              aria-expanded={tool === id}
+              aria-controls={
+                id === "settings" ? "quick-settings-panel" : "sidebar-panel"
+              }
             >
               <span
                 className={`rail-selection-indicator ${isDownloads ? "download-rail-indicator" : ""}`}
@@ -2272,7 +2648,7 @@ function Sidebar({
           <Icon name="chevronLeft" />
         </button>
       </nav>
-      {open && tool && (
+      {standardPanelOpen && tool && (
         <section
           className="sidebar-panel"
           id="sidebar-panel"
@@ -2517,145 +2893,21 @@ function Sidebar({
               openPage={openExtensionsPage}
             />
           )}
-          {tool === "settings" && (
-            <div className="settings-list">
-              <section
-                className="settings-section"
-                aria-labelledby="settings-general"
-              >
-                <h3 className="settings-section-label" id="settings-general">
-                  General
-                </h3>
-                <label className="setting-row">
-                  <span className="setting-copy">
-                    <span className="setting-title">
-                      Restore tabs on launch
-                    </span>
-                    <small className="setting-description">
-                      Stored locally on this device
-                    </small>
-                  </span>
-                  <input
-                    type="checkbox"
-                    role="switch"
-                    className="switch-input"
-                    checked={snapshot.preferences.restoreSession}
-                    onChange={(event) =>
-                      void window.chromecraft.setRestoreSession(
-                        event.target.checked,
-                      )
-                    }
-                  />
-                </label>
-                <label className="setting-row">
-                  <span className="setting-copy">
-                    <span className="setting-title">Show bookmarks bar</span>
-                    <small className="setting-description">
-                      Keep saved sites below the address bar
-                    </small>
-                  </span>
-                  <input
-                    type="checkbox"
-                    role="switch"
-                    className="switch-input"
-                    checked={snapshot.preferences.bookmarkBarVisible}
-                    onChange={(event) =>
-                      void window.chromecraft.setBookmarkBarVisible(
-                        event.target.checked,
-                      )
-                    }
-                  />
-                </label>
-              </section>
-              <section
-                className="settings-section"
-                aria-labelledby="settings-privacy"
-              >
-                <h3 className="settings-section-label" id="settings-privacy">
-                  Privacy & appearance
-                </h3>
-                <label className="setting-row">
-                  <span className="setting-copy">
-                    <span className="setting-title">uBlock Origin</span>
-                    <small className="setting-description">
-                      {ublockLabel(snapshot.ublock)}
-                      {snapshot.ublock.version
-                        ? ` · Version ${snapshot.ublock.version}`
-                        : " · Preinstalled content blocking"}
-                    </small>
-                  </span>
-                  <input
-                    type="checkbox"
-                    role="switch"
-                    className="switch-input"
-                    checked={snapshot.ublock.enabled}
-                    disabled={snapshot.ublock.initializing}
-                    onChange={(event) =>
-                      void window.chromecraft.setUblockEnabled(
-                        event.target.checked,
-                      )
-                    }
-                  />
-                </label>
-                <label className="setting-row">
-                  <span className="setting-copy">
-                    <span className="setting-title">
-                      Live search suggestions
-                    </span>
-                    <small className="setting-description">
-                      Share typed search text with DuckDuckGo for live
-                      suggestions. Off by default; local history and bookmark
-                      autocomplete always stays available.
-                    </small>
-                  </span>
-                  <input
-                    type="checkbox"
-                    role="switch"
-                    className="switch-input"
-                    checked={
-                      snapshot.preferences.remoteSearchSuggestionsEnabled
-                    }
-                    onChange={(event) =>
-                      void window.chromecraft.setRemoteSearchSuggestionsEnabled(
-                        event.target.checked,
-                      )
-                    }
-                  />
-                </label>
-                <label className="theme-setting setting-row">
-                  <span className="setting-copy">
-                    <span className="setting-title">New tab theme</span>
-                    <small className="setting-description">
-                      Choose a restrained colour mood
-                    </small>
-                  </span>
-                  <select
-                    value={snapshot.preferences.newTabTheme}
-                    onChange={(event) =>
-                      void window.chromecraft.setNewTabTheme(
-                        event.target.value as NewTabTheme,
-                      )
-                    }
-                  >
-                    <option value="overworld">Chromecraft blue</option>
-                    <option value="nether">Soft violet</option>
-                    <option value="end">Blue grey</option>
-                    <option value="minimal">Minimal</option>
-                  </select>
-                </label>
-                <button
-                  type="button"
-                  className="tonal-button"
-                  onClick={() => void window.chromecraft.openUblockDashboard()}
-                >
-                  Open uBlock settings
-                </button>
-              </section>
-              <HyperdriveSettings snapshot={snapshot} hyperdrive={hyperdrive} />
-            </div>
-          )}
         </section>
       )}
+      <QuickSettingsPanel
+        snapshot={snapshot}
+        open={quickSettingsOpen}
+        close={() => {
+          restoreSettingsFocus.current = true;
+          setTool(null);
+          void window.chromecraft.setSidebarOpen(false);
+        }}
+        openFullSettings={() => {
+          restoreSettingsFocus.current = false;
+          openFullSettings();
+        }}
+      />
     </aside>
   );
 }
@@ -3463,6 +3715,9 @@ export function App() {
   const [extensions, setExtensions] = useState(emptyExtensions);
   const [updates, setUpdates] = useState<UpdateSnapshot | null>(null);
   const [tool, setTool] = useState<SidebarTool | null>(null);
+  const [fullSettingsTabId, setFullSettingsTabId] = useState<string | null>(
+    null,
+  );
   const [brandMenuOpen, setBrandMenuOpen] = useState(false);
   const [updatesOpen, setUpdatesOpen] = useState(false);
   const [extensionsPageOpen, setExtensionsPageOpen] = useState(false);
@@ -3529,6 +3784,15 @@ export function App() {
     () => snapshot?.tabs.find((tab) => tab.id === snapshot.activeTabId) ?? null,
     [snapshot],
   );
+  useEffect(() => {
+    if (
+      fullSettingsTabId &&
+      snapshot &&
+      !snapshot.tabs.some((tab) => tab.id === fullSettingsTabId)
+    ) {
+      setFullSettingsTabId(null);
+    }
+  }, [fullSettingsTabId, snapshot]);
   useEffect(() => setFindOpen(false), [activeTab?.id]);
   useEffect(() => {
     const open = Boolean(
@@ -3540,6 +3804,7 @@ export function App() {
       extensionsPageOpen ||
       extensionsMenuOpen ||
       tabHoverCardOpen ||
+      tool === "settings" ||
       tabMenu ||
       dialog,
     );
@@ -3557,6 +3822,7 @@ export function App() {
     paletteOpen,
     tabHoverCardOpen,
     tabMenu,
+    tool,
     updatesOpen,
   ]);
   useEffect(() => {
@@ -3581,11 +3847,15 @@ export function App() {
         setUpdatesOpen(false);
         setPaletteOpen(false);
         setTabMenu(null);
+        if (tool === "settings") {
+          setTool(null);
+          void window.chromecraft.setSidebarOpen(false);
+        }
       }
     };
     addEventListener("keydown", key);
     return () => removeEventListener("keydown", key);
-  }, []);
+  }, [tool]);
   useEffect(() => {
     const pointer = (event: PointerEvent) => {
       const target = event.target;
@@ -3664,9 +3934,23 @@ export function App() {
     }
     setDialog(null);
   };
+  const openFullSettings = () => {
+    void (async () => {
+      const existingTab = fullSettingsTabId
+        ? snapshot.tabs.find((tab) => tab.id === fullSettingsTabId)
+        : null;
+      if (existingTab) {
+        await window.chromecraft.activateTab(existingTab.id);
+      } else {
+        setFullSettingsTabId(await window.chromecraft.createTab());
+      }
+      setTool(null);
+      await window.chromecraft.setSidebarOpen(false);
+    })();
+  };
   return (
     <div
-      className={`app-shell ${!snapshot.preferences.sidebarAttached ? "sidebar-detached" : tool ? "sidebar-panel-open" : "sidebar-rail-only"} ${snapshot.preferences.hyperdriveMonitorOpen ? "hyperdrive-monitor-open" : ""}`}
+      className={`app-shell ${!snapshot.preferences.sidebarAttached ? "sidebar-detached" : tool && tool !== "settings" ? "sidebar-panel-open" : "sidebar-rail-only"} ${snapshot.preferences.hyperdriveMonitorOpen ? "hyperdrive-monitor-open" : ""}`}
       style={
         {
           "--base-chrome-height": `${snapshot.baseChromeHeight}px`,
@@ -3686,6 +3970,7 @@ export function App() {
       <header className="browser-chrome">
         <TabStrip
           snapshot={snapshot}
+          settingsTabId={fullSettingsTabId}
           brandMenuOpen={brandMenuOpen}
           onToggleBrandMenu={() => {
             setExtensionsMenuOpen(false);
@@ -3836,7 +4121,6 @@ export function App() {
       </header>
       <Sidebar
         snapshot={snapshot}
-        hyperdrive={hyperdrive}
         data={data}
         downloads={downloads}
         extensions={extensions}
@@ -3846,6 +4130,7 @@ export function App() {
           setUpdatesOpen(false);
           setExtensionsPageOpen(true);
         }}
+        openFullSettings={openFullSettings}
         requestClearHistory={(range) => {
           if (range === "all") {
             setDialog({ kind: "clear-history" });
@@ -3854,7 +4139,11 @@ export function App() {
           }
         }}
       />
-      <NewTabSurface tab={activeTab} snapshot={snapshot} data={data} />
+      {activeTab.id === fullSettingsTabId ? (
+        <FullSettingsPage snapshot={snapshot} hyperdrive={hyperdrive} />
+      ) : (
+        <NewTabSurface tab={activeTab} snapshot={snapshot} data={data} />
+      )}
       {updatesOpen && (
         <UpdatesPage snapshot={updates} close={() => setUpdatesOpen(false)} />
       )}
