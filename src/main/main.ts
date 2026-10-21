@@ -102,6 +102,7 @@ let downloadManager: DownloadManager | null = null;
 let searchSuggestionService: SearchSuggestionService | null = null;
 let hyperdriveController: HyperdriveController | null = null;
 let extensionService: ChromeWebStoreExtensionService | null = null;
+let extensionWebRequestHost: ExtensionWebRequestHost | null = null;
 let extensionOperation: ExtensionsSnapshot["operation"] = "idle";
 let extensionOperationId: string | null = null;
 let extensionError: string | null = null;
@@ -188,6 +189,11 @@ function requireExtensions(
 function mapExtension(
   extension: InstalledExtensionSnapshot,
 ): BrowserExtensionSnapshot {
+  const action =
+    extensionWebRequestHost?.resolveAction(
+      extension.id,
+      tabManager?.activeExtensionTabId ?? null,
+    ) ?? null;
   return {
     ...extension,
     sourceUrl: extension.sourceUrl || null,
@@ -198,6 +204,14 @@ function mapExtension(
         : extension.ready
           ? "ready"
           : "loading",
+    action: action
+      ? {
+          ...action,
+          iconUrl: action.iconUrl?.startsWith("data:")
+            ? action.iconUrl
+            : extension.iconDataUrl,
+        }
+      : null,
   };
 }
 
@@ -881,9 +895,18 @@ function registerIpc(): void {
     channels.toggleExtensionPopup,
     async (event, id: unknown, anchor: unknown) => {
       requireExtensions(event);
-      await requireManager(event).toggleExtensionPopup(
-        requireString(id, "id", 32),
+      const manager = requireManager(event);
+      const extensionId = requireString(id, "id", 32);
+      const action = extensionWebRequestHost?.resolveAction(
+        extensionId,
+        manager.activeExtensionTabId,
+      );
+      if (!action?.enabled || !action.visible || !action.popupUrl)
+        throw new Error("That extension action is unavailable.");
+      await manager.toggleExtensionPopup(
+        extensionId,
         requireExtensionPopupAnchor(anchor),
+        action.popupUrl,
       );
     },
   );
@@ -1032,7 +1055,7 @@ async function createMainWindow(): Promise<void> {
   );
   registerInternalProtocol(browserSession);
 
-  const extensionWebRequestHost = new ExtensionWebRequestHost(browserSession, {
+  const actionHost = new ExtensionWebRequestHost(browserSession, {
     serviceWorkerPreloadPath: path.join(
       __dirname,
       "extension-service-worker-preload.cjs",
@@ -1041,6 +1064,7 @@ async function createMainWindow(): Promise<void> {
       __dirname,
       "extension-network-observer-preload.cjs",
     ),
+    framePreloadPath: path.join(__dirname, "extension-frame-preload.cjs"),
     observerExtensionPath: app.isPackaged
       ? path.join(
           process.resourcesPath,
@@ -1053,8 +1077,14 @@ async function createMainWindow(): Promise<void> {
           "extensions",
           "chromecraft-network-observer",
         ),
+    onActionChanged: () => void sendExtensionsSnapshot(),
+    openActionPopup: async (extensionId, popupUrl) => {
+      if (!tabManager) throw new Error("The browser window is unavailable.");
+      await tabManager.openExtensionPopup(extensionId, popupUrl);
+    },
   });
-  await extensionWebRequestHost.start();
+  extensionWebRequestHost = actionHost;
+  await actionHost.start();
 
   const extensions = new ChromeWebStoreExtensionService(browserSession, {
     storagePath: path.join(app.getPath("userData"), "extensions"),
@@ -1191,7 +1221,7 @@ async function createMainWindow(): Promise<void> {
     () => void sendExtensionsSnapshot(),
   );
   tabManager = manager;
-  extensionWebRequestHost.attachTabs(manager);
+  actionHost.attachTabs(manager);
   manager.initialize();
   registerIpc();
 
@@ -1231,7 +1261,8 @@ async function createMainWindow(): Promise<void> {
     );
   });
   window.on("closed", () => {
-    extensionWebRequestHost.dispose();
+    actionHost.dispose();
+    if (extensionWebRequestHost === actionHost) extensionWebRequestHost = null;
     extensions.dispose();
     nativeTheme.removeListener("updated", syncWindowChromeTheme);
     if (mainWindow === window) {

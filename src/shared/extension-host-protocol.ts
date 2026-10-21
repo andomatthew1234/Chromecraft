@@ -3,6 +3,8 @@ export const extensionHostChannels = {
   workerMessage: "chromecraft:extension-host:worker-message",
   hostMessage: "chromecraft:extension-host:host-message",
   observerRequest: "chromecraft:extension-host:observer-request",
+  frameMessage: "chromecraft:extension-host:frame-message",
+  frameHostMessage: "chromecraft:extension-host:frame-host-message",
 } as const;
 
 export const EXTENSION_NETWORK_OBSERVER_ID = "goaacilmcfclhamijaapihfhmhahcjgj";
@@ -25,6 +27,39 @@ export interface ExtensionWorkerReadyMessage {
   type: "worker-ready";
 }
 
+export type ExtensionActionNamespace =
+  | "action"
+  | "browserAction"
+  | "pageAction";
+
+export type ExtensionActionMethod =
+  | "enable"
+  | "disable"
+  | "isEnabled"
+  | "show"
+  | "hide"
+  | "setTitle"
+  | "getTitle"
+  | "setPopup"
+  | "getPopup"
+  | "setBadgeText"
+  | "getBadgeText"
+  | "setBadgeBackgroundColor"
+  | "getBadgeBackgroundColor"
+  | "setBadgeTextColor"
+  | "getBadgeTextColor"
+  | "setIcon"
+  | "getUserSettings"
+  | "openPopup";
+
+export interface ExtensionActionCommandMessage {
+  type: "action-command";
+  requestId: string;
+  namespace: ExtensionActionNamespace;
+  method: ExtensionActionMethod;
+  details?: unknown;
+}
+
 export type ExtensionTabsEventName =
   | "onCreated"
   | "onActivated"
@@ -39,6 +74,7 @@ export interface ExtensionTabsSubscriptionsMessage {
 export type ExtensionWorkerMessage =
   | ExtensionWebRequestSubscriptionsMessage
   | ExtensionTabsSubscriptionsMessage
+  | ExtensionActionCommandMessage
   | ExtensionWorkerReadyMessage;
 
 export interface ExtensionHostReadyMessage {
@@ -74,8 +110,17 @@ export interface ExtensionTabsSnapshotMessage {
   tabs: Array<Record<string, unknown>>;
 }
 
+export interface ExtensionActionResultMessage {
+  type: "action-result";
+  requestId: string;
+  ok: boolean;
+  value?: unknown;
+  error?: string;
+}
+
 export type ExtensionHostMessage =
   | ExtensionHostReadyMessage
   | ExtensionWebRequestEventMessage
   | ExtensionTabsEventMessage
-  | ExtensionTabsSnapshotMessage;
+  | ExtensionTabsSnapshotMessage
+  | ExtensionActionResultMessage;

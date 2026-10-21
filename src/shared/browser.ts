@@ -175,6 +175,17 @@ export interface BrowserExtensionSnapshot {
   optionsUrl: string | null;
   popupUrl: string | null;
   iconDataUrl: string | null;
+  action: {
+    kind: "action" | "browserAction" | "pageAction";
+    title: string;
+    popupUrl: string | null;
+    enabled: boolean;
+    visible: boolean;
+    badgeText: string;
+    badgeBackgroundColor: [number, number, number, number];
+    badgeTextColor: [number, number, number, number];
+    iconUrl: string | null;
+  } | null;
 }
 
 export interface ExtensionPopupAnchor {

@@ -834,10 +834,26 @@ input::placeholder {
 }
 
 .extension-action-button {
+  position: relative;
   color: var(--md-on-surface-variant);
   background: transparent;
   font: var(--type-label-large);
   font-weight: 700;
+}
+
+.extension-action-badge {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border: 1px solid var(--md-surface);
+  border-radius: 999px;
+  font: var(--type-label-small);
+  font-size: 9px;
+  line-height: 12px;
+  text-align: center;
 }
 
 .extension-action-button:hover {

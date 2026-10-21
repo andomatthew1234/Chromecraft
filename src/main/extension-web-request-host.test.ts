@@ -22,6 +22,65 @@ import type {
 const EXTENSION_ID = "abcdefghijklmnopabcdefghijklmnop";
 
 describe("ExtensionWebRequestHost", () => {
+  it("authenticates action commands from the worker scope", async () => {
+    const fixture = createFixture();
+    const host = new ExtensionWebRequestHost(fixture.session, {
+      ...hostPaths(),
+      ipc: fixture.ipc,
+    });
+    await host.start();
+    fixture.serviceWorkers.emit("running-status-changed", {
+      versionId: 42,
+      runningStatus: "running",
+    });
+
+    fixture.workerIpc.emit(
+      extensionHostChannels.workerMessage,
+      { serviceWorker: fixture.worker },
+      {
+        type: "action-command",
+        requestId: "set-title",
+        namespace: "action",
+        method: "setTitle",
+        details: { title: "Authenticated title" },
+      },
+    );
+    await vi.waitFor(() =>
+      expect(fixture.worker.send).toHaveBeenCalledWith(
+        extensionHostChannels.hostMessage,
+        expect.objectContaining({
+          type: "action-result",
+          requestId: "set-title",
+          ok: true,
+        }),
+      ),
+    );
+    expect(host.resolveAction(EXTENSION_ID)?.title).toBe("Authenticated title");
+
+    fixture.workerIpc.emit(
+      extensionHostChannels.workerMessage,
+      { serviceWorker: fixture.worker },
+      {
+        type: "action-command",
+        requestId: "spoofed-namespace",
+        namespace: "browserAction",
+        method: "getTitle",
+        details: {},
+      },
+    );
+    await vi.waitFor(() =>
+      expect(fixture.worker.send).toHaveBeenCalledWith(
+        extensionHostChannels.hostMessage,
+        expect.objectContaining({
+          type: "action-result",
+          requestId: "spoofed-namespace",
+          ok: false,
+        }),
+      ),
+    );
+    host.dispose();
+  });
+
   it("authenticates an MV3 worker and delivers matching requests", async () => {
     const fixture = createFixture();
     const host = new ExtensionWebRequestHost(fixture.session, {
@@ -67,7 +126,7 @@ describe("ExtensionWebRequestHost", () => {
     );
 
     host.dispose();
-    expect(fixture.unregisterPreloadScript).toHaveBeenCalledTimes(2);
+    expect(fixture.unregisterPreloadScript).toHaveBeenCalledTimes(3);
   });
 
   it("does not deliver requests outside declared host permissions", async () => {
@@ -336,6 +395,7 @@ function createFixture(): {
       manifest_version: 3,
       permissions: ["webRequest"],
       host_permissions: ["https://allowed.example/*"],
+      action: { default_title: "Fixture action" },
     },
     name: "Fixture",
     path: "C:\\fixture",
@@ -456,6 +516,7 @@ function hostPaths() {
   return {
     serviceWorkerPreloadPath: "C:\\chromecraft\\extension-worker-preload.cjs",
     observerPreloadPath: "C:\\chromecraft\\observer-preload.cjs",
+    framePreloadPath: "C:\\chromecraft\\extension-frame-preload.cjs",
     observerExtensionPath: "C:\\chromecraft\\observer",
     readyTimeoutMs: 100,
   };

@@ -14,7 +14,7 @@ const MAX_ENTRY_BYTES = 32 * 1024 * 1024;
 const MAX_EXTRACTED_BYTES = 128 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES = 4_096;
 const EXTENSION_ID_PATTERN = /^[a-p]{32}$/;
-const COMPATIBILITY_REVISION = 10;
+const COMPATIBILITY_REVISION = 11;
 const COMPATIBILITY_DIRECTORY = "chromecraft-compat";
 const LEGACY_COMPATIBILITY_DIRECTORY = "__chromecraft";
 const COMPATIBILITY_SCRIPT_PATH = `${COMPATIBILITY_DIRECTORY}/extension-compat.js`;
@@ -144,13 +144,27 @@ interface ExtensionManifest {
   options_page?: unknown;
   options_ui?: { page?: unknown };
   icons?: Record<string, unknown>;
-  action?: { default_popup?: unknown; default_icon?: unknown };
-  browser_action?: { default_popup?: unknown; default_icon?: unknown };
-  page_action?: { default_popup?: unknown; default_icon?: unknown };
+  action?: {
+    default_popup?: unknown;
+    default_icon?: unknown;
+    default_title?: unknown;
+    default_state?: unknown;
+  };
+  browser_action?: {
+    default_popup?: unknown;
+    default_icon?: unknown;
+    default_title?: unknown;
+  };
+  page_action?: {
+    default_popup?: unknown;
+    default_icon?: unknown;
+    default_title?: unknown;
+  };
   background?: {
     service_worker?: unknown;
     scripts?: unknown;
     type?: unknown;
+    persistent?: unknown;
   };
   content_scripts?: Array<{
     matches?: unknown;
@@ -1372,7 +1386,7 @@ function compatibilityWarnings(manifest: ExtensionManifest): string[] {
     manifest.page_action?.default_popup
   ) {
     warnings.push(
-      "Chromecraft hosts this declared toolbar popup. Dynamic chrome.action features such as badges and per-tab overrides remain limited by Electron.",
+      "Chromecraft hosts this toolbar action through its compatibility bridge; APIs outside the implemented action, browserAction, and pageAction state surface may remain unavailable.",
     );
   }
   return warnings;
@@ -1380,9 +1394,9 @@ function compatibilityWarnings(manifest: ExtensionManifest): string[] {
 
 /**
  * Reconciles extensions installed by older Chromecraft builds. The migration is
- * deliberately limited to the same popup and classic MV3 worker surfaces used
- * for newly verified packages, and is idempotent so every startup can repair an
- * interrupted prior migration before Electron loads the extension.
+ * deliberately limited to popup, MV2 background-page, and MV3 worker surfaces
+ * used for newly verified packages. It is idempotent so every startup can
+ * repair an interrupted prior migration before Electron loads the extension.
  */
 async function migrateStoredElectronCompatibility(
   extensionPath: string,
@@ -1539,6 +1553,11 @@ async function migrateStoredElectronCompatibility(
     };
     compatibilityRequired = true;
     manifestChanged = declaredServiceWorker !== COMPATIBILITY_WORKER_PATH;
+  }
+
+  if (ensureCompatibilityBackgroundScript(manifest)) {
+    compatibilityRequired = true;
+    manifestChanged = true;
   }
 
   if (compatibilityRequired) {
@@ -1752,7 +1771,9 @@ function applyElectronCompatibility(
     }
   }
 
-  if (injectedPopup || wrappedServiceWorker) {
+  const injectedBackground = ensureCompatibilityBackgroundScript(manifest);
+
+  if (injectedPopup || wrappedServiceWorker || injectedBackground) {
     ensureCompatibilityWindowBridge(manifest);
     entries.push({
       name: COMPATIBILITY_SCRIPT_PATH,
@@ -1786,6 +1807,23 @@ function applyElectronCompatibility(
       "The extension exceeds the extracted size limit after compatibility resources are applied.",
     );
   }
+}
+
+function ensureCompatibilityBackgroundScript(
+  manifest: ExtensionManifest,
+): boolean {
+  const scripts = Array.isArray(manifest.background?.scripts)
+    ? manifest.background.scripts.filter(
+        (script): script is string => typeof script === "string",
+      )
+    : [];
+  if (manifest.manifest_version !== 2 || scripts.length === 0) return false;
+  if (scripts.includes(COMPATIBILITY_SCRIPT_PATH)) return false;
+  manifest.background = {
+    ...manifest.background,
+    scripts: [COMPATIBILITY_SCRIPT_PATH, ...scripts],
+  };
+  return true;
 }
 
 function ensureCompatibilityWindowBridge(manifest: ExtensionManifest): boolean {
@@ -2204,13 +2242,13 @@ function extensionCompatibilitySource(): string {
   const serviceWorkerContext =
     typeof globalThis.ServiceWorkerGlobalScope === "function" &&
     globalThis instanceof globalThis.ServiceWorkerGlobalScope;
-  const extensionHostBridge = serviceWorkerContext
-    ? globalThis.__chromecraftExtensionHost
-    : null;
+  const extensionHostBridge = globalThis.__chromecraftExtensionHost ?? null;
   const webRequestHostEvents = new Map();
   const tabsHostEvents = new Map();
   const hostTabs = new Map();
   let hostTabsReady = false;
+  const pendingActionCommands = new Map();
+  let nextActionRequestId = 1;
   const wildcardMatch = (pattern, candidate) => {
     let url;
     try { url = new URL(candidate); } catch { return false; }
@@ -2364,6 +2402,15 @@ function extensionCompatibilitySource(): string {
       if (message.type === "tabs-event" && Array.isArray(message.args)) {
         applyTabsEvent(message);
         tabsHostEvents.get(message.eventName)?.dispatch(message.args);
+        return;
+      }
+      if (message.type === "action-result" && typeof message.requestId === "string") {
+        const pending = pendingActionCommands.get(message.requestId);
+        if (!pending) return;
+        pendingActionCommands.delete(message.requestId);
+        clearTimeout(pending.timer);
+        if (message.ok) pending.resolve(message.value);
+        else pending.reject(new Error(message.error || "Extension action command failed."));
       }
     });
     extensionHostBridge.send({ type: "worker-ready" });
@@ -2387,6 +2434,35 @@ function extensionCompatibilitySource(): string {
       return undefined;
     }
     return Promise.resolve(operation);
+  };
+  const actionCommand = (namespace, method, args) => {
+    const values = [...args];
+    const callback = typeof values.at(-1) === "function" ? values.pop() : undefined;
+    let details = values[0];
+    if ((method === "enable" || method === "disable" || method === "isEnabled" ||
+         method === "show" || method === "hide") && Number.isInteger(details)) {
+      details = { tabId: details };
+    }
+    if (details === undefined) details = {};
+    if (!extensionHostBridge?.send) {
+      return completeAsync(callback, Promise.reject(new Error("The extension action host is unavailable.")));
+    }
+    const requestId = "action-" + Date.now().toString(36) + "-" + (nextActionRequestId++).toString(36);
+    const operation = new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pendingActionCommands.delete(requestId);
+        reject(new Error("The extension action command timed out."));
+      }, 15000);
+      pendingActionCommands.set(requestId, { resolve, reject, timer });
+      extensionHostBridge.send({
+        type: "action-command",
+        requestId,
+        namespace,
+        method,
+        details
+      });
+    });
+    return completeAsync(callback, operation);
   };
   let nextExtensionWindowId = 1000000;
   const extensionWindows = new Map();
@@ -2534,6 +2610,21 @@ function extensionCompatibilitySource(): string {
         });
         return completeAsync(callback, operation);
       });
+    }
+
+    if (extensionHostBridge) {
+      for (const namespaceName of ["action", "browserAction", "pageAction"]) {
+        const action = ensureNamespace(api, namespaceName);
+        for (const method of [
+          "enable", "disable", "isEnabled", "show", "hide",
+          "setTitle", "getTitle", "setPopup", "getPopup", "setIcon",
+          "setBadgeText", "getBadgeText", "setBadgeBackgroundColor",
+          "getBadgeBackgroundColor", "setBadgeTextColor", "getBadgeTextColor",
+          "getUserSettings", "openPopup"
+        ]) {
+          setOverride(action, method, (...args) => actionCommand(namespaceName, method, args));
+        }
+      }
     }
 
     const windows = ensureNamespace(api, "windows");

@@ -76,6 +76,7 @@ export class ExtensionPopupController {
   async toggle(
     extensionId: string,
     anchor: ExtensionPopupAnchor,
+    popupUrl?: string,
   ): Promise<void> {
     if (this.disposed) throw new Error("Extension popups are unavailable.");
     requireAnchor(anchor);
@@ -84,14 +85,37 @@ export class ExtensionPopupController {
       return;
     }
 
-    const popupUrl = this.extensions.getExtensionPage(extensionId, "popup");
-    if (!popupUrl) {
+    const resolvedPopupUrl =
+      popupUrl ?? this.extensions.getExtensionPage(extensionId, "popup");
+    if (
+      !resolvedPopupUrl ||
+      !this.extensions.isAllowedExtensionUrl(resolvedPopupUrl)
+    ) {
       throw new Error("That extension has no available toolbar popup.");
     }
+    const parsedPopup = new URL(resolvedPopupUrl);
+    if (parsedPopup.hostname !== extensionId)
+      throw new Error("The toolbar popup belongs to another extension.");
+    await this.open(extensionId, resolvedPopupUrl, anchor);
+  }
+
+  async open(
+    extensionId: string,
+    popupUrl: string,
+    anchor?: ExtensionPopupAnchor,
+  ): Promise<void> {
+    if (this.disposed) throw new Error("Extension popups are unavailable.");
+    if (!this.extensions.isAllowedExtensionUrl(popupUrl))
+      throw new Error("That extension popup is unavailable.");
+    const parsedPopup = new URL(popupUrl);
+    if (parsedPopup.hostname !== extensionId)
+      throw new Error("The toolbar popup belongs to another extension.");
+    const effectiveAnchor = anchor ?? defaultExtensionPopupAnchor(this.parent);
+    requireAnchor(effectiveAnchor);
     this.close();
     const generation = ++this.generation;
     this.extensionId = extensionId;
-    this.anchor = { ...anchor };
+    this.anchor = { ...effectiveAnchor };
 
     const popup = new WebContentsView({
       webPreferences: {
@@ -108,7 +132,9 @@ export class ExtensionPopupController {
     });
     this.popup = popup;
     popup.setBackgroundColor("#ffffff");
-    popup.setBounds(calculateExtensionPopupBounds(this.parent, anchor));
+    popup.setBounds(
+      calculateExtensionPopupBounds(this.parent, effectiveAnchor),
+    );
     popup.setVisible(false);
     this.parent.contentView.addChildView(popup);
     this.options.onStateChanged();
@@ -215,6 +241,13 @@ export class ExtensionPopupController {
     this.parent.removeListener("blur", this.closeOnParentBlur);
     this.close();
   }
+}
+
+function defaultExtensionPopupAnchor(
+  parent: Pick<BaseWindow, "getContentBounds">,
+): ExtensionPopupAnchor {
+  const bounds = parent.getContentBounds();
+  return { x: Math.max(0, bounds.width - 52), y: 50, width: 40, height: 40 };
 }
 
 export function calculateExtensionPopupBounds(

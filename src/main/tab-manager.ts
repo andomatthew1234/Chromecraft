@@ -354,6 +354,10 @@ export class TabManager {
     return this.extensionPopup?.openExtensionId ?? null;
   }
 
+  get activeExtensionTabId(): number | null {
+    return this.extensionTabSnapshots.find((tab) => tab.active)?.id ?? null;
+  }
+
   get extensionTabSnapshots(): ExtensionTabSnapshot[] {
     return this.order
       .map((browserTabId) => this.extensionTabs.idForBrowserTab(browserTabId))
@@ -846,9 +850,18 @@ export class TabManager {
   async toggleExtensionPopup(
     extensionId: string,
     anchor: ExtensionPopupAnchor,
+    popupUrl?: string,
   ): Promise<void> {
     if (!this.extensionPopup) throw new Error("Extensions are unavailable.");
-    await this.extensionPopup.toggle(extensionId, anchor);
+    await this.extensionPopup.toggle(extensionId, anchor, popupUrl);
+  }
+
+  async openExtensionPopup(
+    extensionId: string,
+    popupUrl: string,
+  ): Promise<void> {
+    if (!this.extensionPopup) throw new Error("Extensions are unavailable.");
+    await this.extensionPopup.open(extensionId, popupUrl);
   }
 
   closeExtensionPopup(): void {

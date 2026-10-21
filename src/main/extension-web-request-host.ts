@@ -1,3 +1,6 @@
+import { promises as fs } from "node:fs";
+import path from "node:path";
+
 import {
   ipcMain,
   type Extension,
@@ -9,12 +12,17 @@ import {
   EXTENSION_NETWORK_OBSERVER_ORIGIN,
   extensionHostChannels,
   type ExtensionHostMessage,
+  type ExtensionActionCommandMessage,
   type ExtensionTabsEventMessage,
   type ExtensionTabsEventName,
   type ExtensionWebRequestEventDetails,
   type ExtensionWebRequestFilter,
   type ExtensionWorkerMessage,
 } from "../shared/extension-host-protocol";
+import {
+  ExtensionActionHost,
+  type ResolvedExtensionAction,
+} from "./extension-action-host";
 import type {
   ExtensionTabSnapshot,
   ExtensionTabTransition,
@@ -54,9 +62,16 @@ interface BoundWorker {
 export interface ExtensionWebRequestHostOptions {
   serviceWorkerPreloadPath: string;
   observerPreloadPath: string;
+  framePreloadPath: string;
   observerExtensionPath: string;
   readyTimeoutMs?: number;
   ipc?: ExtensionObserverIpc;
+  onActionChanged?: (extensionId: string) => void;
+  openActionPopup?: (
+    extensionId: string,
+    popupUrl: string,
+    tabId: number | null,
+  ) => Promise<void>;
 }
 
 interface ExtensionObserverIpc {
@@ -88,6 +103,7 @@ export class ExtensionWebRequestHost {
   private readonly boundWorkers = new Map<number, BoundWorker>();
   private readonly ipc: ExtensionObserverIpc;
   private readonly preloadRegistrationIds: string[] = [];
+  private readonly actions: ExtensionActionHost;
   private observerExtension: Extension | null = null;
   private tabsSource: ExtensionTabsSource | null = null;
   private unsubscribeTabs: (() => void) | null = null;
@@ -110,6 +126,7 @@ export class ExtensionWebRequestHost {
   ): void => {
     this.subscriptions.delete(extension.id);
     this.tabsSubscriptions.delete(extension.id);
+    this.actions.unregister(extension.id);
   };
 
   private readonly onObserverRequest = (
@@ -128,6 +145,41 @@ export class ExtensionWebRequestHost {
     const eventDetails = parseObservedRequest(rawDetails);
     if (!eventDetails) return;
     this.dispatchRequest(eventDetails);
+  };
+
+  private readonly onFrameMessage = (
+    event: Electron.IpcMainEvent,
+    rawMessage: unknown,
+  ): void => {
+    if (event.sender.session !== this.browserSession || !event.senderFrame)
+      return;
+    let extensionId: string;
+    try {
+      const url = new URL(event.senderFrame.url);
+      if (
+        url.protocol !== "chrome-extension:" ||
+        !/^[a-p]{32}$/u.test(url.hostname)
+      )
+        return;
+      extensionId = url.hostname;
+    } catch {
+      return;
+    }
+    const extension = this.browserSession.extensions.getExtension(extensionId);
+    if (!extension) return;
+    const message = parseWorkerMessage(rawMessage);
+    if (!message || message.type !== "action-command") return;
+    this.registerAction(extension);
+    void this.executeActionCommand(extension, message).then((response) => {
+      try {
+        event.senderFrame?.send(
+          extensionHostChannels.frameHostMessage,
+          response,
+        );
+      } catch {
+        // The extension frame may have navigated while the command ran.
+      }
+    });
   };
 
   private dispatchRequest(eventDetails: ExtensionWebRequestEventDetails): void {
@@ -156,6 +208,25 @@ export class ExtensionWebRequestHost {
     private readonly options: ExtensionWebRequestHostOptions,
   ) {
     this.ipc = options.ipc ?? ipcMain;
+    this.actions = new ExtensionActionHost({
+      changed: options.onActionChanged,
+      activeTabId: () =>
+        this.tabsSource?.extensionTabSnapshots.find((tab) => tab.active)?.id ??
+        null,
+      openPopup: options.openActionPopup,
+      resolveIcon: (extensionId, iconUrl) =>
+        this.resolveActionIcon(extensionId, iconUrl),
+    });
+  }
+
+  resolveAction(
+    extensionId: string,
+    tabId: number | null = null,
+  ): ResolvedExtensionAction | null {
+    const extension = this.browserSession.extensions.getExtension(extensionId);
+    if (!extension) return null;
+    this.registerAction(extension);
+    return this.actions.resolve(extensionId, tabId);
   }
 
   async start(): Promise<void> {
@@ -170,6 +241,10 @@ export class ExtensionWebRequestHost {
         type: "frame",
         filePath: this.options.observerPreloadPath,
       }),
+      this.browserSession.registerPreloadScript({
+        type: "frame",
+        filePath: this.options.framePreloadPath,
+      }),
     );
     this.browserSession.serviceWorkers.on(
       "running-status-changed",
@@ -180,6 +255,7 @@ export class ExtensionWebRequestHost {
       this.onExtensionUnloaded,
     );
     this.ipc.on(extensionHostChannels.observerRequest, this.onObserverRequest);
+    this.ipc.on(extensionHostChannels.frameMessage, this.onFrameMessage);
     for (const versionId of Object.keys(
       this.browserSession.serviceWorkers.getAllRunning(),
     )) {
@@ -220,6 +296,10 @@ export class ExtensionWebRequestHost {
     this.ipc.removeListener(
       extensionHostChannels.observerRequest,
       this.onObserverRequest,
+    );
+    this.ipc.removeListener(
+      extensionHostChannels.frameMessage,
+      this.onFrameMessage,
     );
     for (const versionId of [...this.boundWorkers.keys()])
       this.unbindWorker(versionId);
@@ -290,7 +370,7 @@ export class ExtensionWebRequestHost {
     const listener = (
       event: Electron.IpcMainServiceWorkerEvent,
       message: unknown,
-    ) => this.receiveWorkerMessage(event.serviceWorker, message);
+    ) => void this.receiveWorkerMessage(event.serviceWorker, message);
     worker.ipc.on(extensionHostChannels.workerMessage, listener);
     this.boundWorkers.set(versionId, { worker, listener });
     worker.send(extensionHostChannels.workerReady);
@@ -306,10 +386,10 @@ export class ExtensionWebRequestHost {
     this.boundWorkers.delete(versionId);
   }
 
-  private receiveWorkerMessage(
+  private async receiveWorkerMessage(
     worker: ServiceWorkerMain,
     rawMessage: unknown,
-  ): void {
+  ): Promise<void> {
     const extensionId = extensionIdFromScope(worker.scope);
     if (!extensionId) return;
     const extension = this.browserSession.extensions.getExtension(extensionId);
@@ -328,6 +408,19 @@ export class ExtensionWebRequestHost {
       });
       return;
     }
+    if (message.type === "action-command") {
+      this.registerAction(extension);
+      const response: ExtensionHostMessage = await this.executeActionCommand(
+        extension,
+        message,
+      );
+      try {
+        worker.send(extensionHostChannels.hostMessage, response);
+      } catch {
+        // The worker may stop while the command is executing.
+      }
+      return;
+    }
     this.tabsSubscriptions.set(extensionId, {
       scope: worker.scope,
       events: new Set(message.events),
@@ -336,6 +429,13 @@ export class ExtensionWebRequestHost {
   }
 
   private dispatchTabTransition(transition: ExtensionTabTransition): void {
+    if (transition.type === "removed") this.actions.removeTab(transition.tabId);
+    if (transition.type === "updated" && transition.change.url !== undefined)
+      this.actions.navigatedTab(transition.tabId);
+    if (transition.type === "activated") {
+      for (const extensionId of this.actions.extensionIds)
+        this.options.onActionChanged?.(extensionId);
+    }
     const index =
       transition.type === "created" || transition.type === "updated"
         ? (this.tabsSource?.extensionTabSnapshots.findIndex(
@@ -354,6 +454,98 @@ export class ExtensionWebRequestHost {
       if (!subscription.events.has(event.eventName)) continue;
       const sanitized = sanitizeTabsEvent(extension, event);
       void this.deliver(extensionId, subscription.scope, sanitized);
+    }
+  }
+
+  private registerAction(extension: Extension): void {
+    this.actions.register({
+      id: extension.id,
+      name: extension.name,
+      baseUrl: extension.url,
+      manifest: extension.manifest as Record<string, unknown>,
+    });
+  }
+
+  private async resolveActionIcon(
+    extensionId: string,
+    iconUrl: string,
+  ): Promise<string | null> {
+    const extension = this.browserSession.extensions.getExtension(extensionId);
+    if (!extension) throw new Error("The extension is not loaded.");
+    const url = new URL(iconUrl);
+    if (url.protocol !== "chrome-extension:" || url.hostname !== extensionId)
+      throw new Error("The action icon belongs to another extension.");
+    const relative = decodeURIComponent(url.pathname).replace(/^\/+/, "");
+    const root = path.resolve(extension.path);
+    const target = path.resolve(root, relative);
+    if (target !== root && !target.startsWith(`${root}${path.sep}`))
+      throw new Error("The action icon path is unsafe.");
+    const file = await fs.open(target, "r");
+    try {
+      const stats = await file.stat();
+      if (!stats.isFile() || stats.size > 1024 * 1024)
+        throw new Error("The action icon is unavailable or too large.");
+      const extensionName = path.extname(target).toLowerCase();
+      const mime =
+        extensionName === ".png"
+          ? "image/png"
+          : extensionName === ".jpg" || extensionName === ".jpeg"
+            ? "image/jpeg"
+            : extensionName === ".gif"
+              ? "image/gif"
+              : extensionName === ".webp"
+                ? "image/webp"
+                : extensionName === ".svg"
+                  ? "image/svg+xml"
+                  : null;
+      if (!mime) throw new Error("The action icon format is unsupported.");
+      return `data:${mime};base64,${(await file.readFile()).toString("base64")}`;
+    } finally {
+      await file.close();
+    }
+  }
+
+  private async executeActionCommand(
+    extension: Extension,
+    message: ExtensionActionCommandMessage,
+  ): Promise<ExtensionHostMessage> {
+    const manifest = extension.manifest as Record<string, unknown>;
+    const declaredNamespace = manifest.action
+      ? "action"
+      : manifest.browser_action
+        ? "browserAction"
+        : manifest.page_action
+          ? "pageAction"
+          : null;
+    if (declaredNamespace !== message.namespace) {
+      return {
+        type: "action-result",
+        requestId: message.requestId,
+        ok: false,
+        error:
+          "The requested action namespace is not declared by the extension.",
+      };
+    }
+    try {
+      const value = await this.actions.execute(
+        extension.id,
+        message.method,
+        message.details,
+      );
+      return {
+        type: "action-result",
+        requestId: message.requestId,
+        ok: true,
+        ...(value === undefined ? {} : { value }),
+      };
+    } catch (error) {
+      return {
+        type: "action-result",
+        requestId: message.requestId,
+        ok: false,
+        error:
+          error instanceof Error ? error.message : "Action command failed.",
+      };
     }
   }
 
@@ -447,6 +639,50 @@ function parseWorkerMessage(raw: unknown): ExtensionWorkerMessage | null {
       ),
     ];
     return { type, events };
+  }
+  if (type === "action-command") {
+    const value = raw as Record<string, unknown>;
+    const requestId = value.requestId;
+    const namespace = value.namespace;
+    const method = value.method;
+    const namespaces = new Set(["action", "browserAction", "pageAction"]);
+    const methods = new Set([
+      "enable",
+      "disable",
+      "isEnabled",
+      "show",
+      "hide",
+      "setTitle",
+      "getTitle",
+      "setPopup",
+      "getPopup",
+      "setBadgeText",
+      "getBadgeText",
+      "setBadgeBackgroundColor",
+      "getBadgeBackgroundColor",
+      "setBadgeTextColor",
+      "getBadgeTextColor",
+      "setIcon",
+      "getUserSettings",
+      "openPopup",
+    ]);
+    if (
+      typeof requestId !== "string" ||
+      requestId.length < 1 ||
+      requestId.length > 128 ||
+      typeof namespace !== "string" ||
+      !namespaces.has(namespace) ||
+      typeof method !== "string" ||
+      !methods.has(method)
+    )
+      return null;
+    return {
+      type,
+      requestId,
+      namespace: namespace as ExtensionActionCommandMessage["namespace"],
+      method: method as ExtensionActionCommandMessage["method"],
+      ...(value.details === undefined ? {} : { details: value.details }),
+    };
   }
   if (type !== "webRequest-subscriptions") return null;
   const eventName = (raw as { eventName?: unknown }).eventName;

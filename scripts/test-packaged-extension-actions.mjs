@@ -1003,6 +1003,14 @@ try {
     : null;
   let pageActionVisibility = null;
   if (pageActionBackground) {
+    await shell.evaluate(
+      `window.chromecraft.activateTab(${JSON.stringify(firstBrowserTabId)})`,
+    );
+    await settledToolbarState(
+      shell,
+      ids.pageAction,
+      (state) => state?.title === "Per-tab action title",
+    );
     const hide = await pageActionBackground.evaluate(
       `globalThis.__chromecraftPageActionProbe?.hide(${JSON.stringify(firstExtensionTabId)})`,
     );

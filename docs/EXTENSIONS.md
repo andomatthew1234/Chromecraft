@@ -61,6 +61,14 @@ closed. Options pages continue to open as internal tabs. This host reproduces
 the desktop popup interaction, but it does not turn Electron into Chrome's
 native ExtensionHost implementation.
 
+Chromecraft also owns the action state Electron leaves as no-op stubs. The
+authenticated bridge implements manifest defaults plus global and per-tab
+titles, popup routes, icons, badges and colours, enablement, legacy page-action
+visibility, and programmatic `openPopup()`. State survives an MV3 worker stop,
+is removed with its tab or extension, and is rendered from the active tab in
+the Browser Shell. MV3 workers and MV2 background pages use separate trusted
+transports; neither transport accepts a caller-supplied extension identity.
+
 Chromecraft applies a narrow compatibility bridge to classic and module-based
 Manifest V3 workers and popup pages. Module workers retain their declared
 module type and imports while the compatibility module runs before the original

@@ -6,7 +6,9 @@ import {
 } from "../shared/extension-host-protocol";
 
 const queuedHostMessages: ExtensionHostMessage[] = [];
+const queuedWorkerMessages: ExtensionWorkerMessage[] = [];
 const listeners = new Set<(message: ExtensionHostMessage) => void>();
+let hostReady = false;
 
 function deliver(message: ExtensionHostMessage): void {
   if (listeners.size === 0) {
@@ -22,12 +24,21 @@ ipcRenderer.on(
 );
 
 ipcRenderer.on(extensionHostChannels.workerReady, () => {
+  hostReady = true;
   deliver({ type: "host-ready" });
+  while (queuedWorkerMessages.length > 0) {
+    const message = queuedWorkerMessages.shift();
+    if (message) ipcRenderer.send(extensionHostChannels.workerMessage, message);
+  }
 });
 
 contextBridge.exposeInMainWorld("__chromecraftExtensionHost", {
   send(message: ExtensionWorkerMessage): void {
     if (!message || typeof message !== "object") return;
+    if (!hostReady && message.type === "action-command") {
+      queuedWorkerMessages.push(message);
+      return;
+    }
     ipcRenderer.send(extensionHostChannels.workerMessage, message);
   },
   subscribe(listener: (message: ExtensionHostMessage) => void): void {

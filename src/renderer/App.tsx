@@ -964,11 +964,10 @@ function Toolbar({
   onOmniboxExpandedChange: (expanded: boolean) => void;
 }) {
   const canBookmark = /^https?:\/\//.test(tab.url);
-  const actionExtensions = extensions.items
-    .filter(
-      (extension) => extension.enabled && extension.ready && extension.popupUrl,
-    )
-    .slice(0, 4);
+  const actionExtensions = extensions.items.filter(
+    (extension) =>
+      extension.enabled && extension.ready && extension.action !== null,
+  );
   return (
     <div className="toolbar">
       <div className="toolbar-navigation">
@@ -1044,28 +1043,45 @@ function Toolbar({
             className={`tool-button extension-action-button ${extensionActionSelected(extensions.popupExtensionId, extension.id) ? "selected" : ""}`}
             data-extension-action={extension.id}
             key={extension.id}
+            disabled={
+              !extension.action?.visible ||
+              !extension.action.enabled ||
+              !extension.action.popupUrl
+            }
             onClick={(event) =>
               onToggleExtensionPopup(
                 extension,
                 event.currentTarget.getBoundingClientRect(),
               )
             }
-            aria-label={`${extensionActionSelected(extensions.popupExtensionId, extension.id) ? "Close" : "Open"} ${extension.name}`}
+            aria-label={`${extensionActionSelected(extensions.popupExtensionId, extension.id) ? "Close" : "Open"} ${extension.action?.title || extension.name}`}
             aria-expanded={extensionActionSelected(
               extensions.popupExtensionId,
               extension.id,
             )}
-            title={extension.name}
+            title={extension.action?.title || extension.name}
           >
-            {extension.iconDataUrl ? (
+            {extension.action?.iconUrl || extension.iconDataUrl ? (
               <img
                 className="extension-action-icon"
-                src={extension.iconDataUrl}
+                src={extension.action?.iconUrl ?? extension.iconDataUrl ?? ""}
                 alt=""
               />
             ) : (
               <span aria-hidden="true">
                 {extension.name.slice(0, 1).toUpperCase()}
+              </span>
+            )}
+            {extension.action?.badgeText && (
+              <span
+                className="extension-action-badge"
+                data-extension-action-badge
+                style={{
+                  backgroundColor: `rgba(${extension.action.badgeBackgroundColor.slice(0, 3).join(",")},${extension.action.badgeBackgroundColor[3] / 255})`,
+                  color: `rgba(${extension.action.badgeTextColor.slice(0, 3).join(",")},${extension.action.badgeTextColor[3] / 255})`,
+                }}
+              >
+                {extension.action.badgeText}
               </span>
             )}
           </button>
@@ -1117,7 +1133,11 @@ function Toolbar({
                     extension.id,
                   );
                   const actionable = Boolean(
-                    extension.enabled && extension.ready && extension.popupUrl,
+                    extension.enabled &&
+                    extension.ready &&
+                    extension.action?.visible &&
+                    extension.action.enabled &&
+                    extension.action.popupUrl,
                   );
                   return (
                     <button
@@ -1135,8 +1155,15 @@ function Toolbar({
                       }
                     >
                       <span className="extensions-menu-icon" aria-hidden="true">
-                        {extension.iconDataUrl ? (
-                          <img src={extension.iconDataUrl} alt="" />
+                        {extension.action?.iconUrl || extension.iconDataUrl ? (
+                          <img
+                            src={
+                              extension.action?.iconUrl ??
+                              extension.iconDataUrl ??
+                              ""
+                            }
+                            alt=""
+                          />
                         ) : (
                           extension.name.slice(0, 1).toUpperCase()
                         )}
@@ -1148,7 +1175,7 @@ function Toolbar({
                             ? "Open"
                             : extension.enabled
                               ? extension.ready
-                                ? extension.popupUrl
+                                ? extension.action?.popupUrl
                                   ? "Ready"
                                   : "No toolbar action"
                                 : "Loading"
