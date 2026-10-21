@@ -2,9 +2,87 @@ import { describe, expect, it } from "vitest";
 
 import {
   ExtensionTabLifecycle,
+  isWebsiteFullscreenPermissionAllowed,
   TabManager,
   type ExtensionTabTransition,
 } from "./tab-manager";
+
+describe("website fullscreen permissions", () => {
+  it("allows only user-initiated fullscreen on HTTP and HTTPS pages", () => {
+    expect(
+      isWebsiteFullscreenPermissionAllowed(
+        "fullscreen",
+        "https://video.example/watch",
+        "https://player.example/embed/1",
+      ),
+    ).toBe(true);
+    expect(
+      isWebsiteFullscreenPermissionAllowed(
+        "fullscreen",
+        "http://localhost:3000/watch",
+      ),
+    ).toBe(true);
+
+    expect(
+      isWebsiteFullscreenPermissionAllowed(
+        "automatic-fullscreen",
+        "https://video.example/watch",
+      ),
+    ).toBe(false);
+    expect(
+      isWebsiteFullscreenPermissionAllowed(
+        "fullscreen",
+        "chrome-extension://extension-id/player.html",
+      ),
+    ).toBe(false);
+    expect(
+      isWebsiteFullscreenPermissionAllowed(
+        "fullscreen",
+        "https://video.example/watch",
+        "file:///private/player.html",
+      ),
+    ).toBe(false);
+    expect(
+      isWebsiteFullscreenPermissionAllowed(
+        "geolocation",
+        "https://video.example/watch",
+      ),
+    ).toBe(false);
+  });
+
+  it("grants fullscreen only to the active browser-owned WebContents", () => {
+    const activeContents = {
+      getURL: () => "https://video.example/watch",
+      isDestroyed: () => false,
+    } as Electron.WebContents;
+    const inactiveContents = {
+      getURL: () => "https://other.example/",
+      isDestroyed: () => false,
+    } as Electron.WebContents;
+    const manager = Object.create(TabManager.prototype) as TabManager;
+    Object.assign(manager as unknown as Record<string, unknown>, {
+      activeTabId: "active",
+      tabs: new Map([
+        ["active", { view: { webContents: activeContents } }],
+        ["inactive", { view: { webContents: inactiveContents } }],
+      ]),
+    });
+
+    expect(
+      manager.canGrantWebsiteFullscreen(
+        activeContents,
+        "fullscreen",
+        "https://player.example/embed/1",
+      ),
+    ).toBe(true);
+    expect(
+      manager.canGrantWebsiteFullscreen(inactiveContents, "fullscreen"),
+    ).toBe(false);
+    expect(
+      manager.canGrantWebsiteFullscreen(activeContents, "automatic-fullscreen"),
+    ).toBe(false);
+  });
+});
 
 describe("ExtensionTabLifecycle", () => {
   it("uses stable Electron WebContents identifiers", () => {

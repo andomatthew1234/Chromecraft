@@ -9,6 +9,7 @@ import {
   type BrowserWindowConstructorOptions,
   type NativeImage,
   type Session,
+  type WebContents,
   WebContentsView,
 } from "electron";
 
@@ -53,6 +54,18 @@ const ZOOM_FACTORS = [
   0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4,
   5,
 ];
+
+export function isWebsiteFullscreenPermissionAllowed(
+  permission: string,
+  topLevelUrl: string,
+  requestingUrl?: string,
+): boolean {
+  return (
+    permission === "fullscreen" &&
+    isAllowedWebUrl(topLevelUrl) &&
+    (!requestingUrl || isAllowedWebUrl(requestingUrl))
+  );
+}
 
 interface TabRecord {
   id: TabId;
@@ -256,6 +269,7 @@ export class TabManager {
   private sessionTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly extensionPopup: ExtensionPopupController | null;
   private readonly extensionWindows = new Set<BrowserWindow>();
+  private htmlFullscreenTabId: TabId | null = null;
 
   constructor(
     private readonly window: BaseWindow,
@@ -555,6 +569,8 @@ export class TabManager {
       this.layoutActiveView();
       return;
     }
+    if (previous && this.htmlFullscreenTabId === previous.id)
+      this.exitWebsiteFullscreen(previous);
     this.extensionPopup?.close();
     previous?.view?.setVisible(false);
     this.activeTabId = tabId;
@@ -576,6 +592,7 @@ export class TabManager {
 
   closeTab(tabId: TabId): void {
     const tab = this.requireTab(tabId);
+    if (this.htmlFullscreenTabId === tab.id) this.exitWebsiteFullscreen(tab);
     const closingIndex = this.order.indexOf(tabId);
     this.tabs.delete(tabId);
     this.order.splice(closingIndex, 1);
@@ -723,7 +740,29 @@ export class TabManager {
 
   setFullscreen(fullscreen: boolean): void {
     this.extensionPopup?.close();
+    if (!fullscreen && this.htmlFullscreenTabId) {
+      const tab = this.tabs.get(this.htmlFullscreenTabId);
+      if (tab) this.exitWebsiteFullscreen(tab);
+      else this.htmlFullscreenTabId = null;
+    }
     this.window.setFullScreen(fullscreen);
+  }
+
+  canGrantWebsiteFullscreen(
+    contents: WebContents,
+    permission: string,
+    requestingUrl?: string,
+  ): boolean {
+    if (contents.isDestroyed()) return false;
+    const active = this.tabs.get(this.activeTabId);
+    return Boolean(
+      active?.view?.webContents === contents &&
+      isWebsiteFullscreenPermissionAllowed(
+        permission,
+        contents.getURL(),
+        requestingUrl,
+      ),
+    );
   }
 
   async setSidebarOpen(open: boolean): Promise<void> {
@@ -1094,10 +1133,37 @@ export class TabManager {
       status: tab.isLoading ? "loading" : "complete",
     });
     contents.once("destroyed", () => {
+      if (this.htmlFullscreenTabId === tab.id) {
+        this.htmlFullscreenTabId = null;
+        if (!this.window.isDestroyed()) {
+          this.window.setFullScreen(false);
+          this.layoutActiveView();
+        }
+      }
       this.extensionTabs.remove(tab.id, contents.id);
       if (tab.view === view) tab.view = null;
       if (this.tabs.has(tab.id) && tab.id === this.activeTabId)
         this.extensionTabs.activate(tab.id);
+    });
+    contents.on("enter-html-full-screen", () => {
+      if (
+        tab.id !== this.activeTabId ||
+        tab.view !== view ||
+        !this.canGrantWebsiteFullscreen(contents, "fullscreen")
+      ) {
+        this.requestDocumentFullscreenExit(contents);
+        return;
+      }
+      this.htmlFullscreenTabId = tab.id;
+      this.extensionPopup?.close();
+      this.layoutActiveView();
+      contents.focus();
+    });
+    contents.on("leave-html-full-screen", () => {
+      if (this.htmlFullscreenTabId !== tab.id) return;
+      this.htmlFullscreenTabId = null;
+      this.layoutActiveView();
+      if (!contents.isDestroyed()) contents.focus();
     });
     contents.ipc.on(channels.closeExtensionPopup, () => {
       if (tab.id !== this.activeTabId || contents.isDestroyed()) return;
@@ -1562,6 +1628,9 @@ export class TabManager {
       } else if (key === "f11") {
         event.preventDefault();
         this.setFullscreen(!this.window.isFullScreen());
+      } else if (key === "escape" && active?.id === this.htmlFullscreenTabId) {
+        event.preventDefault();
+        this.exitWebsiteFullscreen(active);
       } else if (key === "escape" && this.window.isFullScreen()) {
         event.preventDefault();
         this.setFullscreen(false);
@@ -1623,7 +1692,11 @@ export class TabManager {
 
   private currentPageBounds(): Electron.Rectangle {
     const { width, height } = this.window.getContentBounds();
-    if (this.window.isFullScreen()) return { x: 0, y: 0, width, height };
+    if (
+      this.window.isFullScreen() ||
+      this.htmlFullscreenTabId === this.activeTabId
+    )
+      return { x: 0, y: 0, width, height };
     const currentSidebarWidth = sidebarWidth(
       this.preferences.snapshot.sidebarAttached,
       this.preferences.snapshot.sidebarOpen,
@@ -1678,7 +1751,32 @@ export class TabManager {
     if (this.window.isDestroyed()) return;
     const { width, height } = this.window.getContentBounds();
     this.shellView.setBounds({ x: 0, y: 0, width, height });
+    this.shellView.setVisible(this.htmlFullscreenTabId !== this.activeTabId);
     this.tabs.get(this.activeTabId)?.view?.setBounds(this.currentPageBounds());
+  }
+
+  private exitWebsiteFullscreen(tab: TabRecord): void {
+    if (this.htmlFullscreenTabId !== tab.id) return;
+    this.htmlFullscreenTabId = null;
+    const contents = tab.view?.webContents;
+    if (contents && !contents.isDestroyed())
+      this.requestDocumentFullscreenExit(contents);
+    if (!this.window.isDestroyed()) {
+      this.window.setFullScreen(false);
+      this.layoutActiveView();
+    }
+  }
+
+  private requestDocumentFullscreenExit(contents: WebContents): void {
+    if (contents.isDestroyed()) return;
+    void contents
+      .executeJavaScript(
+        "document.fullscreenElement ? document.exitFullscreen() : undefined",
+        true,
+      )
+      .catch(() => {
+        // The document may navigate or be destroyed while fullscreen is closing.
+      });
   }
 
   private closeTabWithoutHistory(tabId: TabId): void {

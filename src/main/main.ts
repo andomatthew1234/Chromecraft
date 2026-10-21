@@ -1062,9 +1062,28 @@ async function createMainWindow(): Promise<void> {
   if (smokeTheme === "light" || smokeTheme === "dark")
     nativeTheme.themeSource = smokeTheme;
   const browserSession = session.fromPartition(profilePartition);
-  browserSession.setPermissionCheckHandler(() => false);
+  browserSession.setPermissionCheckHandler(
+    (contents, permission, requestingOrigin) =>
+      Boolean(
+        contents &&
+        tabManager?.canGrantWebsiteFullscreen(
+          contents,
+          permission,
+          requestingOrigin,
+        ),
+      ),
+  );
   browserSession.setPermissionRequestHandler(
-    (_contents, _permission, callback) => callback(false),
+    (contents, permission, callback, details) =>
+      callback(
+        Boolean(
+          tabManager?.canGrantWebsiteFullscreen(
+            contents,
+            permission,
+            details.requestingUrl,
+          ),
+        ),
+      ),
   );
   browserSession.setSpellCheckerEnabled(false);
   browserSession.setUserAgent(
