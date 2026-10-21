@@ -61,8 +61,10 @@ closed. Options pages continue to open as internal tabs. This host reproduces
 the desktop popup interaction, but it does not turn Electron into Chrome's
 native ExtensionHost implementation.
 
-Chromecraft applies a narrow compatibility bridge to classic Manifest V3
-workers and popup pages. It supplies only the small event/method surface needed
+Chromecraft applies a narrow compatibility bridge to classic and module-based
+Manifest V3 workers and popup pages. Module workers retain their declared
+module type and imports while the compatibility module runs before the original
+worker module. It supplies only the small event/method surface needed
 to let unsupported extensions fail more gracefully, never reports an
 unsupported permission as granted, and resets only the extension's service
 worker registration when the bridge changes. Compatibility warnings remain

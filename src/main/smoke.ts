@@ -671,8 +671,16 @@ export async function runSmokeTest(
       5_000,
       "the sidebar to detach",
     );
-    const sidebarFullyHidden = await manager.evaluateShell<boolean>(
-      '!document.querySelector(".sidebar")',
+    const sidebarFullyHidden = await retryUntil(
+      async () => {
+        const hidden = await manager.evaluateShell<boolean>(
+          '!document.querySelector(".sidebar")',
+        );
+        if (!hidden) throw new Error("The sidebar is still rendered.");
+        return true;
+      },
+      3_000,
+      "the detached sidebar DOM",
     );
     await manager.evaluateShell<boolean>(`(() => {
       const brand = document.querySelector('button[aria-label="Chromecraft menu"]');
@@ -694,9 +702,16 @@ export async function runSmokeTest(
       5_000,
       "the sidebar to reattach",
     );
-    await waitForShellPaint(manager);
-    const sidebarRestored = await manager.evaluateShell<boolean>(
-      'Boolean(document.querySelector(".sidebar"))',
+    const sidebarRestored = await retryUntil(
+      async () => {
+        const restored = await manager.evaluateShell<boolean>(
+          'Boolean(document.querySelector(".sidebar"))',
+        );
+        if (!restored) throw new Error("The sidebar is not rendered yet.");
+        return true;
+      },
+      3_000,
+      "the reattached sidebar DOM",
     );
     await manager.evaluateShell<boolean>(`(() => {
       const history = [...document.querySelectorAll("button")].find(
@@ -705,11 +720,23 @@ export async function runSmokeTest(
       history?.click();
       return Boolean(history);
     })()`);
-    await waitForShellPaint(manager);
-    const historyOpened = await manager.evaluateShell<boolean>(`(() => {
-      const history = document.querySelector('button[aria-label="History"]');
-      return Boolean(history?.classList.contains('active') && document.querySelector('#sidebar-panel'));
-    })()`);
+    await waitFor(
+      () => manager.snapshot.preferences.sidebarOpen,
+      5_000,
+      "the History sidebar tool to open",
+    );
+    const historyOpened = await retryUntil(
+      async () => {
+        const open = await manager.evaluateShell<boolean>(`(() => {
+          const history = document.querySelector('button[aria-label="History"]');
+          return Boolean(history?.classList.contains('active') && document.querySelector('#sidebar-panel'));
+        })()`);
+        if (!open) throw new Error("History is not visibly open yet.");
+        return true;
+      },
+      3_000,
+      "the History sidebar panel",
+    );
     await manager.evaluateShell<boolean>(`(() => {
       const history = document.querySelector('button[aria-label="History"]');
       history?.click();
@@ -720,15 +747,22 @@ export async function runSmokeTest(
       5_000,
       "the active sidebar tool to close",
     );
-    await waitForShellPaint(manager);
-    const historyClosed = await manager.evaluateShell<boolean>(`(() => {
-      const history = document.querySelector('button[aria-label="History"]');
-      return Boolean(
-        document.querySelector('.sidebar.rail-only') &&
-        !history?.classList.contains('active') &&
-        !document.querySelector('#sidebar-panel')
-      );
-    })()`);
+    const historyClosed = await retryUntil(
+      async () => {
+        const closed = await manager.evaluateShell<boolean>(`(() => {
+          const history = document.querySelector('button[aria-label="History"]');
+          return Boolean(
+            document.querySelector('.sidebar.rail-only') &&
+            !history?.classList.contains('active') &&
+            !document.querySelector('#sidebar-panel')
+          );
+        })()`);
+        if (!closed) throw new Error("History is not visibly closed yet.");
+        return true;
+      },
+      3_000,
+      "the closed History sidebar panel",
+    );
     await manager.evaluateShell<boolean>(`(() => {
       const history = document.querySelector('button[aria-label="History"]');
       history?.click();
@@ -744,7 +778,7 @@ export async function runSmokeTest(
       sidebarFullyHidden && sidebarRestored && historyOpened && historyClosed;
     if (!sidebarInteractionsWorked)
       throw new Error(
-        "The sidebar interaction state machine did not settle correctly.",
+        `The sidebar interaction state machine did not settle correctly (${JSON.stringify({ sidebarFullyHidden, sidebarRestored, historyOpened, historyClosed })}).`,
       );
     await manager.evaluateShell<boolean>(`(() => {
       const clearAll = [...document.querySelectorAll(".panel-actions button")].find(

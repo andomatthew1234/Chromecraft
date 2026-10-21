@@ -268,7 +268,9 @@ describe("ChromeWebStoreExtensionService", () => {
   });
 
   it("installs a signed Chrome Web Store CRX and restores it on restart", async () => {
-    const fixture = createCrxFixture();
+    const fixture = createCrxFixture({
+      manifest: { host_permissions: ["https://example.com/*"] },
+    });
     const storagePath = await makeTemporaryDirectory();
     const firstRuntime = createSessionDouble(fixture.id);
     const fetchExtension = vi.fn(async (input: string | URL | Request) => {
@@ -356,7 +358,7 @@ describe("ChromeWebStoreExtensionService", () => {
         "utf8",
       ),
     ).resolves.toMatch(
-      /setDefault\(tabs, "getCurrent"[\s\S]+setDefault\(permissions, "contains"/,
+      /setDefault\(tabs, "getCurrent"[\s\S]+actionPopupContext[\s\S]+setOverride\(tabs, "query"[\s\S]+setDefault\(permissions, "contains"/,
     );
     await expect(
       fs.readFile(
@@ -382,6 +384,7 @@ describe("ChromeWebStoreExtensionService", () => {
     };
     expect(installedManifest.content_scripts).toContainEqual(
       expect.objectContaining({
+        matches: ["https://example.com/*"],
         js: ["chromecraft-compat/window-bridge.js"],
       }),
     );
@@ -471,6 +474,7 @@ describe("ChromeWebStoreExtensionService", () => {
     ).resolves.not.toContain("/__chromecraft/");
     expect(migratedManifest.content_scripts).toContainEqual(
       expect.objectContaining({
+        matches: ["https://example.com/*"],
         js: ["chromecraft-compat/window-bridge.js"],
       }),
     );
@@ -528,6 +532,89 @@ describe("ChromeWebStoreExtensionService", () => {
     await expect(
       fs.access(path.join(storagePath, fixture.id)),
     ).rejects.toThrow();
+  });
+
+  it("wraps module-based Manifest V3 workers before loading the extension", async () => {
+    const fixture = createCrxFixture({
+      manifest: {
+        background: {
+          service_worker: "workers/background.mjs",
+          type: "module",
+        },
+        action: undefined,
+      },
+      extraFiles: {
+        "workers/background.mjs":
+          'import "./dependency.mjs"; globalThis.moduleWorkerStarted = true;\n',
+        "workers/dependency.mjs":
+          "globalThis.moduleWorkerDependencyLoaded = true;\n",
+      },
+    });
+    const storagePath = await makeTemporaryDirectory();
+    const runtime = createSessionDouble(fixture.id);
+    const service = new ChromeWebStoreExtensionService(runtime.session, {
+      storagePath,
+      fetch: async () => new Response(new Uint8Array(fixture.crx)),
+      chromiumVersion: "152.0.0.0",
+    });
+    await service.initialize();
+
+    await service.installFromWebStoreUrl(
+      `https://chromewebstore.google.com/detail/module-fixture/${fixture.id}`,
+    );
+
+    const loadedPath = runtime.loadExtension.mock.calls[0]?.[0];
+    const installedManifest = JSON.parse(
+      await fs.readFile(path.join(loadedPath!, "manifest.json"), "utf8"),
+    ) as {
+      background: { service_worker: string; type: string };
+      content_scripts?: Array<{ js?: string[]; matches?: string[] }>;
+    };
+    expect(installedManifest.background).toEqual({
+      service_worker: "chromecraft-background-v5.js",
+      type: "module",
+    });
+    expect(installedManifest.content_scripts).toBeUndefined();
+    await expect(
+      fs.readFile(
+        path.join(loadedPath!, "chromecraft-background-v5.js"),
+        "utf8",
+      ),
+    ).resolves.toBe(
+      '/* Chromecraft original worker: "workers/background.mjs" */\n' +
+        'import "./chromecraft-compat/extension-compat.js";\n' +
+        'import "./workers/background.mjs";\n',
+    );
+    await expect(
+      fs.readFile(
+        path.join(loadedPath!, "chromecraft-compat", "extension-compat.js"),
+        "utf8",
+      ),
+    ).resolves.toContain('setDefault(permissions, "contains"');
+
+    const restartedRuntime = createSessionDouble(fixture.id);
+    const restartedService = new ChromeWebStoreExtensionService(
+      restartedRuntime.session,
+      {
+        storagePath,
+        fetch: vi.fn(() => {
+          throw new Error("Restart must not redownload the extension.");
+        }),
+        chromiumVersion: "152.0.0.0",
+      },
+    );
+    await restartedService.initialize();
+    expect(restartedRuntime.loadExtension).toHaveBeenCalledTimes(1);
+    await expect(
+      fs.readFile(
+        path.join(loadedPath!, "chromecraft-background-v5.js"),
+        "utf8",
+      ),
+    ).resolves.toBe(
+      '/* Chromecraft original worker: "workers/background.mjs" */\n' +
+        'import "./chromecraft-compat/extension-compat.js";\n' +
+        'import "./workers/background.mjs";\n',
+    );
   });
 
   it.each([

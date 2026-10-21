@@ -233,6 +233,7 @@ async function seedExtension(profile) {
     description: "Deterministic local extension lifecycle fixture.",
     version: extensionVersion,
     key: extensionKey,
+    background: { service_worker: "background.mjs", type: "module" },
     action: { default_popup: "popup.html" },
     content_scripts: [
       {
@@ -250,7 +251,17 @@ async function seedExtension(profile) {
     ),
     fs.writeFile(
       path.join(extensionRoot, "content.js"),
-      `document.documentElement.dataset.chromecraftExtensionSmoke = chrome.runtime.id;\nconst marker = document.createElement("meta");\nmarker.id = "chromecraft-extension-smoke-marker";\nmarker.dataset.extensionId = chrome.runtime.id;\ndocument.head.append(marker);\n`,
+      `document.documentElement.dataset.chromecraftExtensionSmoke = chrome.runtime.id;\nconst marker = document.createElement("meta");\nmarker.id = "chromecraft-extension-smoke-marker";\nmarker.dataset.extensionId = chrome.runtime.id;\ndocument.head.append(marker);\nchrome.runtime.sendMessage({ type: "chromecraft-module-worker-probe" }, (response) => {\n  document.documentElement.dataset.chromecraftModuleWorker = response?.marker ?? "missing";\n  document.documentElement.dataset.chromecraftModuleCapabilities = JSON.stringify(response?.capabilities ?? {});\n});\n`,
+      "utf8",
+    ),
+    fs.writeFile(
+      path.join(extensionRoot, "background.mjs"),
+      `import { marker } from "./worker-dependency.mjs";\nchrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {\n  if (message?.type !== "chromecraft-module-worker-probe") return false;\n  sendResponse({\n    marker,\n    capabilities: {\n      actionSetBadgeText: typeof chrome.action?.setBadgeText,\n      alarmsCreate: typeof chrome.alarms?.create,\n      commandsGetAll: typeof chrome.commands?.getAll,\n      contextMenusCreate: typeof chrome.contextMenus?.create,\n      cookiesGet: typeof chrome.cookies?.get,\n      downloadsDownload: typeof chrome.downloads?.download,\n      idleQueryState: typeof chrome.idle?.queryState,\n      notificationsCreate: typeof chrome.notifications?.create,\n      offscreenCreateDocument: typeof chrome.offscreen?.createDocument,\n      scriptingExecuteScript: typeof chrome.scripting?.executeScript,\n      sidePanelSetOptions: typeof chrome.sidePanel?.setOptions,\n      webNavigationOnCommitted: typeof chrome.webNavigation?.onCommitted?.addListener\n    }\n  });\n  return false;\n});\n`,
+      "utf8",
+    ),
+    fs.writeFile(
+      path.join(extensionRoot, "worker-dependency.mjs"),
+      'export const marker = "module-worker-ready";\n',
       "utf8",
     ),
     fs.writeFile(
@@ -303,14 +314,20 @@ async function navigateAndInspect(shell, page, tabId, url, expectedInjection) {
         fixtureReady: Boolean(document.querySelector("#fixture-ready")),
         marker: document.documentElement.dataset.chromecraftExtensionSmoke ?? null,
         metaMarker: document.querySelector("#chromecraft-extension-smoke-marker")?.dataset.extensionId ?? null,
+        moduleWorker: document.documentElement.dataset.chromecraftModuleWorker ?? null,
+        moduleCapabilities: JSON.parse(document.documentElement.dataset.chromecraftModuleCapabilities ?? "{}"),
       }))()`),
     (value) =>
       value?.href === url &&
       value.ready === true &&
       value.fixtureReady === true &&
       (expectedInjection
-        ? value.marker === extensionId && value.metaMarker === extensionId
-        : value.marker === null && value.metaMarker === null),
+        ? value.marker === extensionId &&
+          value.metaMarker === extensionId &&
+          value.moduleWorker === "module-worker-ready"
+        : value.marker === null &&
+          value.metaMarker === null &&
+          value.moduleWorker === null),
     `${expectedInjection ? "extension injection" : "an uninjected fresh document"} at ${url}`,
   );
 }
@@ -396,12 +413,15 @@ try {
         href: location.href,
         marker: document.documentElement.dataset.chromecraftExtensionSmoke ?? null,
         metaMarker: document.querySelector("#chromecraft-extension-smoke-marker")?.dataset.extensionId ?? null,
+        moduleWorker: document.documentElement.dataset.chromecraftModuleWorker ?? null,
+        moduleCapabilities: JSON.parse(document.documentElement.dataset.chromecraftModuleCapabilities ?? "{}"),
       }))()`),
     (value) =>
       value?.href === enabledUrl &&
       value.marker === extensionId &&
-      value.metaMarker === extensionId,
-    "the content script marker",
+      value.metaMarker === extensionId &&
+      value.moduleWorker === "module-worker-ready",
+    "the content script and module worker markers",
   );
   checks.push({
     name: "content-script-executes",
@@ -606,6 +626,7 @@ const report = {
   extension: {
     id: extensionId,
     manifestVersion: 3,
+    backgroundWorkerType: "module",
     version: extensionVersion,
     fixtureOrigin: fixture.origin,
   },

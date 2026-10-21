@@ -14,7 +14,7 @@ const MAX_ENTRY_BYTES = 32 * 1024 * 1024;
 const MAX_EXTRACTED_BYTES = 128 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES = 4_096;
 const EXTENSION_ID_PATTERN = /^[a-p]{32}$/;
-const COMPATIBILITY_REVISION = 5;
+const COMPATIBILITY_REVISION = 7;
 const COMPATIBILITY_DIRECTORY = "chromecraft-compat";
 const LEGACY_COMPATIBILITY_DIRECTORY = "__chromecraft";
 const COMPATIBILITY_SCRIPT_PATH = `${COMPATIBILITY_DIRECTORY}/extension-compat.js`;
@@ -1262,7 +1262,7 @@ function compatibilityWarnings(manifest: ExtensionManifest): string[] {
     typeof manifest.background?.service_worker === "string"
   ) {
     warnings.push(
-      "Manifest V3 service-worker backgrounds are outside Electron's documented stable manifest subset.",
+      "Chromecraft loads this Manifest V3 service worker through its compatibility bridge; Chrome APIs outside Electron's implemented subset remain unavailable.",
     );
   }
   if (
@@ -1402,13 +1402,11 @@ async function migrateStoredElectronCompatibility(
     }
     serviceWorker = JSON.parse(originalWorker) as string;
   }
-  const classicServiceWorker =
-    typeof serviceWorker === "string" &&
-    serviceWorker.length > 0 &&
-    manifest.background?.type !== "module";
+  const hasServiceWorker =
+    typeof serviceWorker === "string" && serviceWorker.length > 0;
   let manifestChanged = false;
   if (
-    classicServiceWorker &&
+    hasServiceWorker &&
     typeof serviceWorker === "string" &&
     serviceWorker !== COMPATIBILITY_WORKER_PATH
   ) {
@@ -1422,6 +1420,7 @@ async function migrateStoredElectronCompatibility(
     const nextWorkerSource = compatibleWorkerSource(
       normalizedWorker,
       originalWorkerSource,
+      manifest.background?.type === "module" ? "module" : "classic",
     );
     let existingWorkerSource: string | null = null;
     try {
@@ -1442,7 +1441,10 @@ async function migrateStoredElectronCompatibility(
   }
 
   if (compatibilityRequired) {
-    if (removeLegacyCompatibilityWindowBridges(manifest)) {
+    if (
+      storedCompatibilityRevision < COMPATIBILITY_REVISION &&
+      removeOwnedCompatibilityWindowBridges(manifest)
+    ) {
       manifestChanged = true;
     }
     if (ensureCompatibilityWindowBridge(manifest)) manifestChanged = true;
@@ -1619,12 +1621,10 @@ function applyElectronCompatibility(
   }
 
   const serviceWorker = manifest.background?.service_worker;
-  const classicServiceWorker =
-    typeof serviceWorker === "string" &&
-    serviceWorker.length > 0 &&
-    manifest.background?.type !== "module";
+  const hasServiceWorker =
+    typeof serviceWorker === "string" && serviceWorker.length > 0;
   let wrappedServiceWorker = false;
-  if (classicServiceWorker) {
+  if (hasServiceWorker) {
     const normalized = normalizeManifestPath(serviceWorker);
     if (
       entries.some((entry) => !entry.directory && entry.name === normalized)
@@ -1638,6 +1638,7 @@ function applyElectronCompatibility(
             entries
               .find((entry) => !entry.directory && entry.name === normalized)!
               .data.toString("utf8"),
+            manifest.background?.type === "module" ? "module" : "classic",
           ),
           "utf8",
         ),
@@ -1690,16 +1691,29 @@ function ensureCompatibilityWindowBridge(manifest: ExtensionManifest): boolean {
   const contentScripts = Array.isArray(manifest.content_scripts)
     ? manifest.content_scripts
     : [];
-  const alreadyRegistered = contentScripts.some(
-    (entry) =>
-      Array.isArray(entry?.js) &&
-      entry.js.some((script) => script === COMPATIBILITY_WINDOW_BRIDGE_PATH),
-  );
-  if (alreadyRegistered) return false;
+  if (contentScripts.length > 0) {
+    let changed = false;
+    manifest.content_scripts = contentScripts.map((entry) => {
+      const scripts = Array.isArray(entry?.js)
+        ? entry.js.filter(
+            (script): script is string => typeof script === "string",
+          )
+        : [];
+      if (scripts.includes(COMPATIBILITY_WINDOW_BRIDGE_PATH)) return entry;
+      changed = true;
+      return {
+        ...entry,
+        js: [COMPATIBILITY_WINDOW_BRIDGE_PATH, ...scripts],
+      };
+    });
+    return changed;
+  }
+
+  const matches = declaredWebBridgeMatches(manifest);
+  if (matches.length === 0) return false;
   manifest.content_scripts = [
-    ...contentScripts,
     {
-      matches: ["http://*/*", "https://*/*"],
+      matches,
       js: [COMPATIBILITY_WINDOW_BRIDGE_PATH],
       run_at: "document_start",
       all_frames: false,
@@ -1708,7 +1722,28 @@ function ensureCompatibilityWindowBridge(manifest: ExtensionManifest): boolean {
   return true;
 }
 
-function removeLegacyCompatibilityWindowBridges(
+function declaredWebBridgeMatches(manifest: ExtensionManifest): string[] {
+  const declared = [
+    ...stringArray(manifest.host_permissions),
+    ...stringArray(manifest.permissions),
+  ];
+  const matches = new Set<string>();
+  for (const pattern of declared) {
+    if (pattern === "<all_urls>") {
+      matches.add("http://*/*");
+      matches.add("https://*/*");
+    } else if (
+      pattern.startsWith("http://") ||
+      pattern.startsWith("https://") ||
+      pattern.startsWith("*://")
+    ) {
+      matches.add(pattern);
+    }
+  }
+  return [...matches];
+}
+
+function removeOwnedCompatibilityWindowBridges(
   manifest: ExtensionManifest,
 ): boolean {
   if (!Array.isArray(manifest.content_scripts)) return false;
@@ -1716,7 +1751,9 @@ function removeLegacyCompatibilityWindowBridges(
   const contentScripts = manifest.content_scripts.flatMap((entry) => {
     if (!Array.isArray(entry?.js)) return [entry];
     const js = entry.js.filter(
-      (script) => !LEGACY_COMPATIBILITY_WINDOW_BRIDGE_PATHS.has(script),
+      (script) =>
+        script !== COMPATIBILITY_WINDOW_BRIDGE_PATH &&
+        !LEGACY_COMPATIBILITY_WINDOW_BRIDGE_PATHS.has(script),
     );
     if (js.length === entry.js.length) return [entry];
     changed = true;
@@ -1728,6 +1765,12 @@ function removeLegacyCompatibilityWindowBridges(
 
 function extensionWindowBridgeSource(): string {
   return `(() => {
+  if (globalThis.top !== globalThis) return;
+  if (globalThis.__chromecraftExtensionWindowBridgeInstalled) return;
+  Object.defineProperty(globalThis, "__chromecraftExtensionWindowBridgeInstalled", {
+    value: true,
+    configurable: false
+  });
   const marker = "chromecraft-extension-window-v1";
   const handles = new Map();
   const number = (value, fallback, minimum, maximum) =>
@@ -1948,7 +1991,14 @@ async function extensionIconDataUrlFromDirectory(
 function compatibleWorkerSource(
   originalWorkerPath: string,
   originalWorkerSource: string,
+  workerType: "classic" | "module",
 ): string {
+  if (workerType === "module") {
+    return `/* Chromecraft original worker: ${JSON.stringify(originalWorkerPath)} */
+import "./${COMPATIBILITY_SCRIPT_PATH}";
+import ${JSON.stringify(`./${originalWorkerPath}`)};
+`;
+  }
   return `/* Chromecraft original worker: ${JSON.stringify(originalWorkerPath)} */
 const __chromecraftWorkerGlobal = self;
 // Keep the real worker global identity. Native Web APIs validate their receiver,
@@ -2107,6 +2157,40 @@ function extensionCompatibilitySource(): string {
     setDefault(tabs, "getCurrent", (callback) => complete(callback, undefined));
     for (const name of ["onActivated", "onAttached", "onCreated", "onDetached", "onHighlighted", "onMoved", "onRemoved", "onReplaced", "onUpdated", "onZoomChange"]) {
       ensureEvent(tabs, name);
+    }
+    const nativeTabsQuery = typeof tabs.query === "function" ? tabs.query.bind(tabs) : null;
+    const actionPopupContext = typeof globalThis.document === "object" &&
+      globalThis.location?.protocol === "chrome-extension:" &&
+      (globalThis.location.pathname.includes("/popup/") || globalThis.location.pathname.endsWith("/popup.html"));
+    if (nativeTabsQuery && actionPopupContext) {
+      setOverride(tabs, "query", (queryInfo = {}, callback) => {
+        if (queryInfo?.active !== true) return nativeTabsQuery(queryInfo, callback);
+        const operation = new Promise((resolve, reject) => {
+          nativeTabsQuery({}, (items) => {
+            const error = runtime.lastError;
+            if (error) {
+              reject(new Error(error.message ?? String(error)));
+              return;
+            }
+            const regularTabs = (Array.isArray(items) ? items : []).filter((item) => {
+              if (!item || typeof item.url !== "string") return false;
+              return !item.url.startsWith("chrome-extension://") &&
+                !item.url.startsWith("devtools://");
+            });
+            const requestedWindowId = Number.isInteger(queryInfo.windowId)
+              ? queryInfo.windowId
+              : null;
+            const eligibleTabs = requestedWindowId === null
+              ? regularTabs
+              : regularTabs.filter((item) => item.windowId === requestedWindowId);
+            const selected = [...eligibleTabs].sort((left, right) =>
+              Number(right.lastAccessed ?? 0) - Number(left.lastAccessed ?? 0)
+            )[0];
+            resolve(selected ? [{ ...selected, active: true }] : []);
+          });
+        });
+        return completeAsync(callback, operation);
+      });
     }
 
     const windows = ensureNamespace(api, "windows");
