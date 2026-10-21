@@ -39,6 +39,7 @@ import {
   type PreparedExtensionPreview,
 } from "./chrome-web-store-extension-service";
 import { isExpectedExtensionCancellation } from "./extension-operation";
+import { ExtensionWebRequestHost } from "./extension-web-request-host";
 import {
   DownloadManager,
   type DownloadSnapshot as ManagerDownload,
@@ -1031,6 +1032,13 @@ async function createMainWindow(): Promise<void> {
   );
   registerInternalProtocol(browserSession);
 
+  const extensionWebRequestHost = new ExtensionWebRequestHost(browserSession, {
+    preloadPath: path.join(__dirname, "extension-service-worker-preload.cjs"),
+    resolveTabId: (webContentsId) =>
+      tabManager?.getExtensionTabIdForWebContents(webContentsId) ?? -1,
+  });
+  extensionWebRequestHost.start();
+
   const extensions = new ChromeWebStoreExtensionService(browserSession, {
     storagePath: path.join(app.getPath("userData"), "extensions"),
     fetch: (input, init) =>
@@ -1205,6 +1213,7 @@ async function createMainWindow(): Promise<void> {
     );
   });
   window.on("closed", () => {
+    extensionWebRequestHost.dispose();
     extensions.dispose();
     nativeTheme.removeListener("updated", syncWindowChromeTheme);
     if (mainWindow === window) {

@@ -64,11 +64,18 @@ native ExtensionHost implementation.
 Chromecraft applies a narrow compatibility bridge to classic and module-based
 Manifest V3 workers and popup pages. Module workers retain their declared
 module type and imports while the compatibility module runs before the original
-worker module. It supplies only the small event/method surface needed
-to let unsupported extensions fail more gracefully, never reports an
-unsupported permission as granted, and resets only the extension's service
-worker registration when the bridge changes. Compatibility warnings remain
-visible because synthetic events cannot replace real Chromium browser events.
+worker module. It never reports an unsupported permission as granted and resets
+only the extension's service-worker registration when the bridge changes.
+
+For Manifest V3 `webRequest.onBeforeRequest`, Chromecraft supplies a real
+browser-owned event path because Electron 44 exposes the API shape but does not
+route matching requests to the worker. A service-worker preload exposes only a
+small typed bridge; the main process derives the extension identity from the
+trusted worker scope, re-checks the `webRequest` and host permissions, filters
+requests, wakes a dormant worker, and dispatches the matching details. Ordinary
+website workers and caller-provided extension IDs are rejected. The current
+bridge is observation-only: it does not claim blocking, redirect, header, or
+request-body behavior that has not been implemented and behaviorally tested.
 
 For enabled extensions, the bridge also implements a deliberately narrow
 `chrome.windows.create`, `chrome.windows.update`, and `chrome.windows.remove`

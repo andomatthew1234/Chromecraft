@@ -42,21 +42,29 @@ not run.
 ## Current packaged evidence
 
 The latest 2026-10-21 run against
-`out/Chromecraft-win32-x64/chromecraft.exe` passed nine of ten rows, including
-the lifecycle, content-script, storage, runtime-message, MV3-worker, tab-query,
-scripting, toolbar-popup, and popup API checks. Chromecraft's popup
-compatibility layer now resolves `tabs.query({ active: true })` to the active
-website tab rather than the popup's own WebContents target.
+`out/Chromecraft-win32-x64/chromecraft.exe` passed all ten rows. The packaged
+test now proves lifecycle, content-script, storage, runtime-message, MV3-worker,
+tab-query, scripting, MV3 network-observation, toolbar-popup, and popup API
+behavior. Chromecraft's popup compatibility layer resolves
+`tabs.query({ active: true })` to the active website tab rather than the popup's
+own WebContents target.
 
-One concrete gap remains: an MV3 `webRequest.onBeforeRequest` listener did not
-observe a fetch from the matching page, even though the request reached the
-local server. This is a failure, not a skip or inferred warning. The JSON report
-keeps the raw evidence for regression work. Passing this deterministic matrix would
-prove only these named behaviors; broad Chrome Web Store compatibility still
-requires more matrices for bookmarks, downloads, context menus, commands,
-notifications, identity/authentication, native messaging, devtools, offscreen
-documents, side panels, declarative APIs, and security-sensitive end-to-end
-flows such as password-manager autofill and passkeys.
+The network row is backed by a browser-owned MV3 bridge rather than a reported
+namespace alone. Electron 44.7.2 and 44.9.3 expose a listener-shaped API in MV3
+workers but do not route matching requests to it. Chromecraft now authenticates
+the worker from its `ServiceWorkerMain` scope, validates `webRequest` and host
+permissions in the main process, owns one Session request observer, wakes a
+suspended worker, and dispatches the real matching request to its registered
+listener. MV2 stays on Electron's native path. This first slice is observational
+`onBeforeRequest`; blocking responses, header stages, request-body access, and
+the remaining event family are not yet claimed.
+
+Passing this deterministic matrix proves only these named behaviors; broad
+Chrome Web Store compatibility still requires more matrices for bookmarks,
+downloads, context menus, commands, notifications, identity/authentication,
+native messaging, devtools, offscreen documents, side panels, declarative APIs,
+the remaining `webRequest` stages, and security-sensitive end-to-end flows such
+as password-manager autofill and passkeys.
 
 ## Relationship to the other validators
 

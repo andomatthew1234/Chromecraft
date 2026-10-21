@@ -14,7 +14,7 @@ const MAX_ENTRY_BYTES = 32 * 1024 * 1024;
 const MAX_EXTRACTED_BYTES = 128 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES = 4_096;
 const EXTENSION_ID_PATTERN = /^[a-p]{32}$/;
-const COMPATIBILITY_REVISION = 7;
+const COMPATIBILITY_REVISION = 9;
 const COMPATIBILITY_DIRECTORY = "chromecraft-compat";
 const LEGACY_COMPATIBILITY_DIRECTORY = "__chromecraft";
 const COMPATIBILITY_SCRIPT_PATH = `${COMPATIBILITY_DIRECTORY}/extension-compat.js`;
@@ -1355,7 +1355,7 @@ function compatibilityWarnings(manifest: ExtensionManifest): string[] {
   }
   if (permissions.includes("webRequest")) {
     warnings.push(
-      "This extension requests webRequest; Electron warns that extension handlers can conflict with browser-level request handlers such as uBlock Origin.",
+      "Chromecraft bridges Manifest V3 onBeforeRequest observation with host-permission checks. Other webRequest stages, blocking responses, and header modification remain limited by Electron.",
     );
   }
   if (
@@ -2201,6 +2201,97 @@ function extensionCompatibilitySource(): string {
       }
     }
   };
+  const serviceWorkerContext =
+    typeof globalThis.ServiceWorkerGlobalScope === "function" &&
+    globalThis instanceof globalThis.ServiceWorkerGlobalScope;
+  const extensionHostBridge = serviceWorkerContext
+    ? globalThis.__chromecraftExtensionHost
+    : null;
+  const hostEvents = new Map();
+  const wildcardMatch = (pattern, candidate) => {
+    let url;
+    try { url = new URL(candidate); } catch { return false; }
+    if (pattern === "<all_urls>") {
+      return ["http:", "https:", "ws:", "wss:", "ftp:", "file:"].includes(url.protocol);
+    }
+    const match = /^(\\*|http|https|ws|wss|ftp|file):\\/\\/([^/]*)(\\/.*)$/.exec(pattern);
+    if (!match) return false;
+    const [, scheme, hostPattern, pathPattern] = match;
+    if (scheme === "*") {
+      if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+    } else if (url.protocol !== scheme + ":") {
+      return false;
+    }
+    if (scheme !== "file") {
+      const host = url.hostname.toLowerCase();
+      const expected = hostPattern.toLowerCase();
+      if (expected !== "*" && !(expected.startsWith("*.")
+        ? host === expected.slice(2) || host.endsWith(expected.slice(1))
+        : host === expected)) return false;
+    }
+    const escaped = pathPattern
+      .split("*")
+      .map((part) => part.replace(/[|\\\\{}()[\\]^$+?.]/g, "\\\\$&"))
+      .join(".*");
+    return new RegExp("^" + escaped + "$").test(url.pathname + url.search);
+  };
+  const matchesHostFilter = (filter, details) => {
+    if (!filter || !Array.isArray(filter.urls) ||
+        !filter.urls.some((pattern) => typeof pattern === "string" && wildcardMatch(pattern, details.url))) {
+      return false;
+    }
+    if (Array.isArray(filter.types) && filter.types.length > 0 && !filter.types.includes(details.type)) return false;
+    if (Number.isInteger(filter.tabId) && filter.tabId !== details.tabId) return false;
+    return true;
+  };
+  const sendHostSubscriptions = (eventName, listeners) => {
+    if (!extensionHostBridge?.send) return;
+    extensionHostBridge.send({
+      type: "webRequest-subscriptions",
+      eventName,
+      filters: [...listeners.values()].map((entry) => entry.filter)
+    });
+  };
+  const makeHostEvent = (eventName) => {
+    const listeners = new Map();
+    const event = {
+      addListener(listener, filter = { urls: ["<all_urls>"] }, extraInfoSpec = []) {
+        if (typeof listener !== "function") return;
+        listeners.set(listener, { filter, extraInfoSpec });
+        sendHostSubscriptions(eventName, listeners);
+      },
+      removeListener(listener) {
+        if (!listeners.delete(listener)) return;
+        sendHostSubscriptions(eventName, listeners);
+      },
+      hasListener(listener) { return listeners.has(listener); },
+      hasListeners() { return listeners.size > 0; },
+      dispatch(details) {
+        for (const [listener, registration] of listeners) {
+          if (!matchesHostFilter(registration.filter, details)) continue;
+          try { listener(details); } catch (error) {
+            console.error("Chromecraft extension webRequest listener failed.", error);
+          }
+        }
+      },
+      sync() { sendHostSubscriptions(eventName, listeners); }
+    };
+    hostEvents.set(eventName, event);
+    return event;
+  };
+  if (extensionHostBridge?.subscribe) {
+    extensionHostBridge.subscribe((message) => {
+      if (!message) return;
+      if (message.type === "host-ready") {
+        for (const hostEvent of hostEvents.values()) hostEvent.sync();
+        return;
+      }
+      if (message.type === "webRequest-event" && message.eventName === "onBeforeRequest") {
+        hostEvents.get(message.eventName)?.dispatch(message.details);
+      }
+    });
+    extensionHostBridge.send({ type: "worker-ready" });
+  }
   const complete = (callback, value) => {
     if (typeof callback === "function") {
       queueMicrotask(() => callback(value));
@@ -2253,6 +2344,11 @@ function extensionCompatibilitySource(): string {
     }
     setDefault(webNavigation, "getFrame", (_details, callback) => complete(callback, null));
     setDefault(webNavigation, "getAllFrames", (_details, callback) => complete(callback, []));
+
+    if (serviceWorkerContext) {
+      const webRequest = ensureNamespace(api, "webRequest");
+      setOverride(webRequest, "onBeforeRequest", makeHostEvent("onBeforeRequest"));
+    }
 
     const tabs = ensureNamespace(api, "tabs");
     setDefault(tabs, "getCurrent", (callback) => complete(callback, undefined));
