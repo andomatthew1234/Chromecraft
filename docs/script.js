@@ -247,6 +247,7 @@ materialChip?.addEventListener("click", () => {
   materialChip.classList.toggle("is-selected", !isSelected);
 });
 
+const hyperdriveSection = document.querySelector(".hyperdrive-feature");
 const hyperdriveStage = document.querySelector(".hyperdrive-stage");
 const hyperdriveCanvas = document.querySelector(".hyperdrive-field");
 const hyperdriveContext = hyperdriveCanvas?.getContext("2d");
@@ -263,14 +264,54 @@ let hyperdriveFrame;
 let hyperdriveLastTime = 0;
 let hyperdriveVisible = false;
 let hyperdriveStars = [];
+let hyperdriveProgress = reduceMotion ? 1 : 0;
+let hyperdriveScrollFrame;
 
-function createHyperdriveStar(initial = true) {
+function createHyperdriveStar(mode = "intro") {
   return {
     angle: Math.random() * Math.PI * 2,
-    depth: initial ? Math.random() : 0.015 + Math.random() * 0.025,
+    depth:
+      mode === "stable"
+        ? Math.random()
+        : mode === "respawn"
+          ? 0.015 + Math.random() * 0.025
+          : 0.008 + Math.random() * 0.12,
     speed: 0.7 + Math.random() * 0.75,
     tone: hyperdriveTones[Math.floor(Math.random() * hyperdriveTones.length)],
   };
+}
+
+function smoothstep(value) {
+  const resolved = clamp(value);
+  return resolved * resolved * (3 - 2 * resolved);
+}
+
+function hyperdrivePhase(start, end) {
+  return smoothstep((hyperdriveProgress - start) / (end - start));
+}
+
+function setHyperdriveReveal(name, value, shift) {
+  if (!hyperdriveStage) return;
+  hyperdriveStage.style.setProperty(
+    `--hyperdrive-${name}-opacity`,
+    value.toFixed(4),
+  );
+  hyperdriveStage.style.setProperty(
+    `--hyperdrive-${name}-shift`,
+    `${((1 - value) * shift).toFixed(2)}px`,
+  );
+}
+
+function seedHyperdriveStars(mode = "intro") {
+  const starCount = hyperdriveWidth < 721 ? 92 : 180;
+
+  if (hyperdriveStars.length > starCount) {
+    hyperdriveStars.length = starCount;
+  }
+
+  while (hyperdriveStars.length < starCount) {
+    hyperdriveStars.push(createHyperdriveStar(mode));
+  }
 }
 
 function resizeHyperdrive() {
@@ -285,11 +326,74 @@ function resizeHyperdrive() {
   hyperdriveCanvas.width = Math.round(hyperdriveWidth * hyperdriveRatio);
   hyperdriveCanvas.height = Math.round(hyperdriveHeight * hyperdriveRatio);
   hyperdriveContext.setTransform(hyperdriveRatio, 0, 0, hyperdriveRatio, 0, 0);
-  const starCount = hyperdriveWidth < 721 ? 92 : 180;
-  hyperdriveStars = Array.from({ length: starCount }, () =>
-    createHyperdriveStar(true),
+  seedHyperdriveStars(
+    reduceMotion || hyperdriveProgress >= 0.67 ? "stable" : "intro",
   );
   renderHyperdrive(0, true);
+}
+
+function getHyperdriveMotion() {
+  if (reduceMotion) {
+    return {
+      alpha: 0.58,
+      speed: 0,
+      trailBase: 0.018,
+      trailDepth: 0.075,
+      travel: 0,
+    };
+  }
+
+  if (hyperdriveProgress < 0.12) {
+    return {
+      alpha: 0,
+      speed: 0,
+      trailBase: 0.001,
+      trailDepth: 0.002,
+      travel: 0,
+    };
+  }
+
+  if (hyperdriveProgress < 0.29) {
+    const ignition = hyperdrivePhase(0.12, 0.29);
+    return {
+      alpha: easeOutCubic(ignition),
+      speed: 0.05 + Math.pow(ignition, 3) * 0.6,
+      trailBase: 0.001 + ignition * 0.004,
+      trailDepth: 0.002 + ignition * 0.014,
+      travel: ignition * 0.02,
+    };
+  }
+
+  if (hyperdriveProgress < 0.52) {
+    const jump = hyperdrivePhase(0.29, 0.52);
+    const acceleration = Math.pow(jump, 3);
+    return {
+      alpha: 1,
+      speed: 0.65 + acceleration * 5.35,
+      trailBase: 0.005 + easeOutCubic(jump) * 0.012,
+      trailDepth: 0.016 + easeOutCubic(jump) * 0.2,
+      travel: 0.02 + easeOutCubic(jump) * 0.8,
+    };
+  }
+
+  if (hyperdriveProgress < 0.67) {
+    const settle = easeOutCubic(hyperdrivePhase(0.52, 0.67));
+    return {
+      alpha: 1,
+      speed: 6 - settle * 5,
+      trailBase: 0.017 + settle * 0.001,
+      trailDepth: 0.216 - settle * 0.141,
+      travel: 0.82 + settle * 0.18,
+    };
+  }
+
+  return {
+    alpha: 1,
+    speed: 1,
+    trailBase: 0.018,
+    trailDepth: 0.075,
+    travel: 0,
+  };
 }
 
 function renderHyperdrive(time, staticFrame = false) {
@@ -300,57 +404,113 @@ function renderHyperdrive(time, staticFrame = false) {
     ? Math.min(40, Math.max(0, time - hyperdriveLastTime))
     : 16;
   hyperdriveLastTime = time;
-  hyperdriveContext.fillStyle = "#050509";
+  const spaceTone = Math.round(5 * hyperdrivePhase(0.5, 0.67));
+  const spaceBlue = Math.round(9 * hyperdrivePhase(0.5, 0.67));
+  hyperdriveContext.fillStyle = `rgb(${spaceTone}, ${spaceTone}, ${spaceBlue})`;
   hyperdriveContext.fillRect(0, 0, hyperdriveWidth, hyperdriveHeight);
 
+  const motion = getHyperdriveMotion();
   const centerX = hyperdriveWidth * 0.5;
   const centerY = hyperdriveHeight * 0.5;
   const maxRadius = Math.hypot(hyperdriveWidth, hyperdriveHeight) * 0.62;
   hyperdriveContext.lineCap = "round";
 
-  hyperdriveStars.forEach((star, index) => {
-    if (!staticFrame && !reduceMotion) {
-      star.depth += delta * 0.00019 * star.speed * (0.72 + star.depth * 2.4);
-    }
-    if (star.depth > 1) {
-      hyperdriveStars[index] = createHyperdriveStar(false);
-      return;
-    }
+  if (motion.alpha > 0) {
+    hyperdriveStars.forEach((star, index) => {
+      if (!staticFrame && !reduceMotion) {
+        star.depth +=
+          delta *
+          0.00019 *
+          star.speed *
+          motion.speed *
+          (0.72 + star.depth * 2.4);
+      }
+      if (star.depth > 1) {
+        hyperdriveStars[index] = createHyperdriveStar("respawn");
+        return;
+      }
 
-    const headRadius = 12 + Math.pow(star.depth, 2.05) * maxRadius;
-    const tailDepth = Math.max(0, star.depth - (0.018 + star.depth * 0.075));
-    const tailRadius = 12 + Math.pow(tailDepth, 2.05) * maxRadius;
-    const verticalScale = 0.72;
-    const headX = centerX + Math.cos(star.angle) * headRadius;
-    const headY = centerY + Math.sin(star.angle) * headRadius * verticalScale;
-    const tailX = centerX + Math.cos(star.angle) * tailRadius;
-    const tailY = centerY + Math.sin(star.angle) * tailRadius * verticalScale;
-    const opacity = 0.16 + star.depth * 0.78;
+      const visualDepth = (star.depth + motion.travel) % 1;
+      const headRadius = 12 + Math.pow(visualDepth, 2.05) * maxRadius;
+      const tailDepth = Math.max(
+        0,
+        visualDepth - (motion.trailBase + visualDepth * motion.trailDepth),
+      );
+      const tailRadius = 12 + Math.pow(tailDepth, 2.05) * maxRadius;
+      const verticalScale = 0.72;
+      const headX = centerX + Math.cos(star.angle) * headRadius;
+      const headY = centerY + Math.sin(star.angle) * headRadius * verticalScale;
+      const tailX = centerX + Math.cos(star.angle) * tailRadius;
+      const tailY = centerY + Math.sin(star.angle) * tailRadius * verticalScale;
+      const opacity = (0.16 + visualDepth * 0.78) * motion.alpha;
 
-    hyperdriveContext.strokeStyle = `rgba(${star.tone}, ${opacity})`;
-    hyperdriveContext.lineWidth = 0.6 + star.depth * 2.4;
-    hyperdriveContext.beginPath();
-    hyperdriveContext.moveTo(tailX, tailY);
-    hyperdriveContext.lineTo(headX, headY);
-    hyperdriveContext.stroke();
-  });
+      hyperdriveContext.strokeStyle = `rgba(${star.tone}, ${opacity})`;
+      hyperdriveContext.lineWidth =
+        (0.6 + visualDepth * 2.4) * (1 + Math.max(0, motion.speed - 1) * 0.055);
+      hyperdriveContext.beginPath();
+      hyperdriveContext.moveTo(tailX, tailY);
+      hyperdriveContext.lineTo(headX, headY);
+      hyperdriveContext.stroke();
+    });
+  }
 
   if (!staticFrame && !reduceMotion && hyperdriveVisible) {
     hyperdriveFrame = window.requestAnimationFrame(renderHyperdrive);
   }
 }
 
-if (hyperdriveCanvas && hyperdriveContext && hyperdriveStage) {
-  resizeHyperdrive();
-  window.addEventListener("resize", resizeHyperdrive);
+function updateHyperdriveScroll() {
+  hyperdriveScrollFrame = undefined;
+  if (!hyperdriveSection || !hyperdriveStage) return;
 
   if (reduceMotion) {
-    hyperdriveStage.classList.add("is-engaged");
+    hyperdriveProgress = 1;
   } else {
+    const bounds = hyperdriveSection.getBoundingClientRect();
+    const scrollDistance = Math.max(1, bounds.height - window.innerHeight);
+    hyperdriveProgress =
+      bounds.top >= 0 ? 0 : clamp(-bounds.top / scrollDistance);
+  }
+
+  setHyperdriveReveal("kicker", hyperdrivePhase(0.67, 0.74), 12);
+  setHyperdriveReveal("title", hyperdrivePhase(0.72, 0.82), 24);
+  setHyperdriveReveal("summary", hyperdrivePhase(0.78, 0.88), 18);
+  setHyperdriveReveal("privacy", hyperdrivePhase(0.84, 0.94), 14);
+  setHyperdriveReveal("path", hyperdrivePhase(0.9, 1), 12);
+
+  const flashDistance = Math.abs(hyperdriveProgress - 0.5) / 0.055;
+  const flash = reduceMotion ? 0 : Math.max(0, 1 - flashDistance) * 0.13;
+  hyperdriveStage.style.setProperty("--hyperdrive-flash", flash.toFixed(4));
+}
+
+function requestHyperdriveScroll() {
+  if (hyperdriveScrollFrame) return;
+  hyperdriveScrollFrame = window.requestAnimationFrame(updateHyperdriveScroll);
+}
+
+function handleHyperdriveResize() {
+  resizeHyperdrive();
+  updateHyperdriveScroll();
+}
+
+if (
+  hyperdriveSection &&
+  hyperdriveCanvas &&
+  hyperdriveContext &&
+  hyperdriveStage
+) {
+  updateHyperdriveScroll();
+  resizeHyperdrive();
+  window.addEventListener("resize", handleHyperdriveResize);
+
+  if (!reduceMotion) {
+    window.addEventListener("scroll", requestHyperdriveScroll, {
+      passive: true,
+    });
     const hyperdriveObserver = new IntersectionObserver(
       ([entry]) => {
         hyperdriveVisible = entry.isIntersecting;
-        hyperdriveStage.classList.toggle("is-engaged", hyperdriveVisible);
+        requestHyperdriveScroll();
         if (hyperdriveVisible && !hyperdriveFrame) {
           hyperdriveLastTime = 0;
           hyperdriveFrame = window.requestAnimationFrame(renderHyperdrive);
@@ -663,5 +823,6 @@ if (canvas && context) {
 window.addEventListener("beforeunload", () => {
   window.cancelAnimationFrame(animationFrame);
   window.cancelAnimationFrame(hyperdriveFrame);
+  window.cancelAnimationFrame(hyperdriveScrollFrame);
   clearSilenceTimers();
 });
