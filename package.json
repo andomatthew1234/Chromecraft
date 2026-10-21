@@ -17,6 +17,7 @@
     "test:web-store-banner:win": "node scripts/validate-web-store-banner.mjs",
     "test:settings-scroll": "node scripts/test-settings-scroll.mjs",
     "test:sidebar": "node scripts/test-sidebar.mjs",
+    "test:toolbar": "node scripts/test-toolbar.mjs",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "lint": "pnpm typecheck && prettier --check .",

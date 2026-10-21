@@ -22,6 +22,39 @@ afterEach(async () => {
 });
 
 describe("ChromeWebStoreExtensionService", () => {
+  it("uses the signed package action icon for toolbar snapshots", async () => {
+    const fixture = createCrxFixture({
+      manifest: {
+        action: {
+          default_popup: "popup.html",
+          default_icon: { 16: "../unsafe.webp", 38: "images/icon38.webp" },
+        },
+        icons: { 48: "images/fallback.webp" },
+      },
+      extraFiles: {
+        "images/icon38.webp": "RIFF0000WEBPofficial-toolbar-icon",
+        "images/fallback.webp": "RIFF0000WEBPfallback-icon",
+      },
+    });
+    const service = new ChromeWebStoreExtensionService(
+      createSessionDouble(fixture.id).session,
+      {
+        storagePath: await makeTemporaryDirectory(),
+        fetch: async () => new Response(new Uint8Array(fixture.crx)),
+        chromiumVersion: "152.0.0.0",
+      },
+    );
+    await service.initialize();
+
+    const installed = await service.installFromWebStoreUrl(
+      `https://chromewebstore.google.com/detail/${fixture.id}`,
+    );
+
+    expect(installed.iconDataUrl).toBe(
+      `data:image/webp;base64,${Buffer.from("RIFF0000WEBPofficial-toolbar-icon").toString("base64")}`,
+    );
+  });
+
   it("resolves localized manifest names and descriptions for the verified review", async () => {
     const fixture = createCrxFixture({
       manifest: {

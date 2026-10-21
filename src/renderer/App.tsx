@@ -3,6 +3,7 @@ import {
   type CSSProperties,
   type FormEvent,
   type MouseEvent,
+  type PointerEvent as ReactPointerEvent,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -48,6 +49,12 @@ import {
   type InlineCompletion,
   type OmniboxSuggestion,
 } from "./omnibox-model";
+import {
+  clampFloatingPosition,
+  extensionActionSelected,
+  isHyperdriveEnabled,
+  tabHoverCardContent,
+} from "./toolbar-model";
 
 const emptyData: BrowserDataSnapshot = {
   bookmarks: [],
@@ -340,15 +347,21 @@ const TabButton = memo(function TabButton({
   active,
   tab,
   onMenu,
+  onHoverChange,
 }: {
   active: boolean;
   tab: BrowserTabSnapshot;
   onMenu: (event: MouseEvent, tab: BrowserTabSnapshot) => void;
+  onHoverChange: (tab: BrowserTabSnapshot | null, anchor?: DOMRect) => void;
 }) {
   return (
     <div
       className={`tab ${active ? "active" : ""}`}
       onContextMenu={(event) => onMenu(event, tab)}
+      onPointerEnter={(event) =>
+        onHoverChange(tab, event.currentTarget.getBoundingClientRect())
+      }
+      onPointerLeave={() => onHoverChange(null)}
       role="presentation"
     >
       <button
@@ -357,7 +370,6 @@ const TabButton = memo(function TabButton({
         role="tab"
         aria-selected={active}
         onClick={() => void window.chromecraft.activateTab(tab.id)}
-        title={tab.title}
         tabIndex={active ? 0 : -1}
         aria-busy={tab.isLoading}
       >
@@ -409,6 +421,38 @@ function TabStrip({
 }) {
   const sidebarAttached = snapshot.preferences.sidebarAttached;
   const sidebarAction = sidebarMenuActionLabel(sidebarAttached);
+  const [hoverPreview, setHoverPreview] = useState<{
+    tab: BrowserTabSnapshot;
+    x: number;
+    y: number;
+  } | null>(null);
+  const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const updateHoverPreview = (
+    tab: BrowserTabSnapshot | null,
+    anchor?: DOMRect,
+  ) => {
+    if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    if (!tab || !anchor) {
+      setHoverPreview(null);
+      onHoverCardOpenChange(false);
+      return;
+    }
+    hoverTimer.current = setTimeout(() => {
+      const width = 280;
+      setHoverPreview({
+        tab,
+        x: Math.max(8, Math.min(anchor.left, window.innerWidth - width - 8)),
+        y: anchor.bottom + 8,
+      });
+      onHoverCardOpenChange(true);
+    }, 320);
+  };
+  useEffect(
+    () => () => {
+      if (hoverTimer.current) clearTimeout(hoverTimer.current);
+    },
+    [],
+  );
   return (
     <div className="tab-strip">
       <div className="brand-menu-anchor">
@@ -478,19 +522,35 @@ function TabStrip({
             key={tab.id}
             tab={tab}
             onMenu={onMenu}
+            onHoverChange={updateHoverPreview}
           />
         ))}
+        <button
+          type="button"
+          className="new-tab-button"
+          onClick={() => void window.chromecraft.createTab()}
+          aria-label="New tab"
+          title="New tab (Ctrl+T)"
+        >
+          <Icon name="add" />
+        </button>
       </div>
-      <button
-        type="button"
-        className="new-tab-button"
-        onClick={() => void window.chromecraft.createTab()}
-        aria-label="New tab"
-        title="New tab (Ctrl+T)"
-      >
-        <Icon name="add" />
-      </button>
       <span className="window-drag-region" aria-hidden="true" />
+      {hoverPreview && (
+        <aside
+          className="tab-hover-card"
+          role="tooltip"
+          style={{ left: hoverPreview.x, top: hoverPreview.y }}
+        >
+          <span className="tab-hover-card-preview" aria-hidden="true">
+            {hostLabel(hoverPreview.tab.url).slice(0, 1).toUpperCase() || "C"}
+          </span>
+          <span className="tab-hover-card-copy">
+            <strong>{tabHoverCardContent(hoverPreview.tab).title}</strong>
+            <small>{tabHoverCardContent(hoverPreview.tab).host}</small>
+          </span>
+        </aside>
+      )}
     </div>
   );
 }
@@ -864,7 +924,9 @@ function Toolbar({
   bookmarked,
   onFind,
   extensions,
-  onOpenExtensions,
+  extensionsMenuOpen,
+  onToggleExtensionsMenu,
+  onManageExtensions,
   onToggleExtensionPopup,
   onOmniboxExpandedChange,
 }: {
@@ -875,7 +937,9 @@ function Toolbar({
   bookmarked: boolean;
   onFind: () => void;
   extensions: ExtensionsSnapshot;
-  onOpenExtensions: () => void;
+  extensionsMenuOpen: boolean;
+  onToggleExtensionsMenu: () => void;
+  onManageExtensions: () => void;
   onToggleExtensionPopup: (
     extension: BrowserExtensionSnapshot,
     anchor: DOMRect,
@@ -960,7 +1024,7 @@ function Toolbar({
         {actionExtensions.map((extension) => (
           <button
             type="button"
-            className={`tool-button extension-action-button ${extensions.popupExtensionId === extension.id ? "selected" : ""}`}
+            className={`tool-button extension-action-button ${extensionActionSelected(extensions.popupExtensionId, extension.id) ? "selected" : ""}`}
             data-extension-action={extension.id}
             key={extension.id}
             onClick={(event) =>
@@ -969,33 +1033,137 @@ function Toolbar({
                 event.currentTarget.getBoundingClientRect(),
               )
             }
-            aria-label={`Open ${extension.name}`}
-            aria-expanded={extensions.popupExtensionId === extension.id}
+            aria-label={`${extensionActionSelected(extensions.popupExtensionId, extension.id) ? "Close" : "Open"} ${extension.name}`}
+            aria-expanded={extensionActionSelected(
+              extensions.popupExtensionId,
+              extension.id,
+            )}
             title={extension.name}
           >
-            <span aria-hidden="true">
-              {extension.name.slice(0, 1).toUpperCase()}
-            </span>
+            {extension.iconDataUrl ? (
+              <img
+                className="extension-action-icon"
+                src={extension.iconDataUrl}
+                alt=""
+              />
+            ) : (
+              <span aria-hidden="true">
+                {extension.name.slice(0, 1).toUpperCase()}
+              </span>
+            )}
           </button>
         ))}
-        <button
-          type="button"
-          className="tool-button extensions-button"
-          onClick={onOpenExtensions}
-          aria-label={`Manage extensions. ${extensions.items.filter((item) => item.enabled).length} enabled`}
-          title="Extensions"
-        >
-          <Icon name="extension" />
-          {extensions.items.length > 0 && (
-            <span className="extensions-count" aria-hidden="true">
-              {Math.min(99, extensions.items.length)}
-            </span>
+        <div className="extensions-menu-anchor">
+          <button
+            type="button"
+            className={`tool-button extensions-button ${extensionsMenuOpen ? "selected" : ""}`}
+            onClick={(event) => {
+              event.stopPropagation();
+              onToggleExtensionsMenu();
+            }}
+            aria-label={`Extensions. ${extensions.items.length} installed`}
+            aria-haspopup="menu"
+            aria-expanded={extensionsMenuOpen}
+            title="Extensions"
+          >
+            <Icon name="extension" />
+            {extensions.items.length > 0 && (
+              <span className="extensions-count" aria-hidden="true">
+                {Math.min(99, extensions.items.length)}
+              </span>
+            )}
+          </button>
+          {extensionsMenuOpen && (
+            <section
+              className="extensions-menu"
+              role="menu"
+              aria-label="Extensions"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <header className="extensions-menu-header">
+                <span className="extensions-menu-mark" aria-hidden="true">
+                  <Icon name="extension" />
+                </span>
+                <span>
+                  <strong>Extensions</strong>
+                  <small>
+                    {extensions.items.length
+                      ? `${extensions.items.length} installed`
+                      : "No extensions installed"}
+                  </small>
+                </span>
+              </header>
+              <div className="extensions-menu-list">
+                {extensions.items.map((extension) => {
+                  const selected = extensionActionSelected(
+                    extensions.popupExtensionId,
+                    extension.id,
+                  );
+                  const actionable = Boolean(
+                    extension.enabled && extension.ready && extension.popupUrl,
+                  );
+                  return (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className={`extensions-menu-item ${selected ? "selected" : ""}`}
+                      key={extension.id}
+                      disabled={!actionable}
+                      onClick={(event) =>
+                        actionable &&
+                        onToggleExtensionPopup(
+                          extension,
+                          event.currentTarget.getBoundingClientRect(),
+                        )
+                      }
+                    >
+                      <span className="extensions-menu-icon" aria-hidden="true">
+                        {extension.iconDataUrl ? (
+                          <img src={extension.iconDataUrl} alt="" />
+                        ) : (
+                          extension.name.slice(0, 1).toUpperCase()
+                        )}
+                      </span>
+                      <span className="extensions-menu-copy">
+                        <strong>{extension.name}</strong>
+                        <small>
+                          {selected
+                            ? "Open"
+                            : extension.enabled
+                              ? extension.ready
+                                ? extension.popupUrl
+                                  ? "Ready"
+                                  : "No toolbar action"
+                                : "Loading"
+                              : "Off"}
+                        </small>
+                      </span>
+                      <span
+                        className={`extensions-menu-state ${selected ? "open" : ""}`}
+                        aria-hidden="true"
+                      />
+                    </button>
+                  );
+                })}
+              </div>
+              <button
+                type="button"
+                className="extensions-menu-manage"
+                role="menuitem"
+                onClick={onManageExtensions}
+              >
+                <Icon name="settings" />
+                Manage extensions
+              </button>
+            </section>
           )}
-        </button>
+        </div>
         <button
           type="button"
           className={`tool-button hyperdrive-button ${snapshot.preferences.hyperdriveMonitorOpen ? "selected" : ""}`}
-          data-status={hyperdrive.status}
+          data-enabled={isHyperdriveEnabled(
+            snapshot.preferences.hyperdriveMode,
+          )}
           onClick={() =>
             void window.chromecraft.setHyperdriveMonitorOpen(
               !snapshot.preferences.hyperdriveMonitorOpen,
@@ -1006,7 +1174,7 @@ function Toolbar({
           title={`Hyperdrive: ${hyperdrive.status.replace("-", " ")}`}
         >
           <Icon name="bolt" />
-          <span className="hyperdrive-status-dot" aria-hidden="true" />
+          <span className="toolbar-status-dot" aria-hidden="true" />
         </button>
         <button
           type="button"
@@ -1028,6 +1196,7 @@ function Toolbar({
           aria-label={`${ublockLabel(snapshot.ublock)}. Open uBlock Origin dashboard`}
         >
           <Icon name="shield" />
+          <span className="toolbar-status-dot" aria-hidden="true" />
         </button>
       </div>
     </div>
@@ -1056,7 +1225,11 @@ function BookmarkBar({ data }: { data: BrowserDataSnapshot }) {
 function FindBar({ tabId, onClose }: { tabId: string; onClose: () => void }) {
   const [value, setValue] = useState("");
   const [result, setResult] = useState({ active: 0, matches: 0 });
+  const [position, setPosition] = useState<{ x: number; y: number } | null>(
+    null,
+  );
   const ref = useRef<HTMLInputElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
   useEffect(() => {
     ref.current?.focus();
     ref.current?.select();
@@ -1074,11 +1247,50 @@ function FindBar({ tabId, onClose }: { tabId: string; onClose: () => void }) {
   const find = (forward: boolean) => {
     if (value) void window.chromecraft.findInPage(tabId, value, forward);
   };
+  const beginDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (!formRef.current) return;
+    event.preventDefault();
+    const rect = formRef.current.getBoundingClientRect();
+    const offset = {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+    };
+    const move = (moveEvent: PointerEvent) => {
+      setPosition(
+        clampFloatingPosition(
+          { x: moveEvent.clientX - offset.x, y: moveEvent.clientY - offset.y },
+          { width: rect.width, height: rect.height },
+          { width: window.innerWidth, height: window.innerHeight },
+        ),
+      );
+    };
+    const finish = () => {
+      removeEventListener("pointermove", move);
+      removeEventListener("pointerup", finish);
+    };
+    addEventListener("pointermove", move);
+    addEventListener("pointerup", finish, { once: true });
+  };
   return (
-    <form className="find-bar" onSubmit={(event) => event.preventDefault()}>
-      <span className="find-leading" aria-hidden="true">
+    <form
+      ref={formRef}
+      className="find-bar"
+      aria-label="Find in page"
+      style={
+        position ? { left: position.x, top: position.y, right: "auto" } : {}
+      }
+      onSubmit={(event) => event.preventDefault()}
+    >
+      <button
+        type="button"
+        className="find-drag-handle"
+        aria-label="Drag Find in page"
+        title="Drag Find in page"
+        onPointerDown={beginDrag}
+      >
         <Icon name="find" />
-      </span>
+        <span>Find</span>
+      </button>
       <input
         ref={ref}
         value={value}
@@ -2811,6 +3023,7 @@ export function App() {
       }
       onClick={() => {
         setBrandMenuOpen(false);
+        setExtensionsMenuOpen(false);
         setTabMenu(null);
       }}
     >
@@ -2818,7 +3031,11 @@ export function App() {
         <TabStrip
           snapshot={snapshot}
           brandMenuOpen={brandMenuOpen}
-          onToggleBrandMenu={() => setBrandMenuOpen((open) => !open)}
+          onToggleBrandMenu={() => {
+            setExtensionsMenuOpen(false);
+            setBrandMenuOpen((open) => !open);
+          }}
+          onHoverCardOpenChange={setTabHoverCardOpen}
           onSetSidebarAttached={(attached) => {
             void window.chromecraft.setSidebarAttached(attached);
             setBrandMenuOpen(false);
@@ -2837,19 +3054,26 @@ export function App() {
           bookmarked={bookmarked}
           onFind={() => setFindOpen(true)}
           extensions={extensions}
-          onOpenExtensions={() => {
+          extensionsMenuOpen={extensionsMenuOpen}
+          onToggleExtensionsMenu={() => {
+            setBrandMenuOpen(false);
+            setExtensionsMenuOpen((open) => !open);
+          }}
+          onManageExtensions={() => {
+            setExtensionsMenuOpen(false);
             setTool("extensions");
             void window.chromecraft.setSidebarOpen(true);
             void window.chromecraft.setSidebarAttached(true);
           }}
-          onToggleExtensionPopup={(extension, rect) =>
+          onToggleExtensionPopup={(extension, rect) => {
+            setExtensionsMenuOpen(false);
             void window.chromecraft.toggleExtensionPopup(extension.id, {
               x: rect.x,
               y: rect.y,
               width: rect.width,
               height: rect.height,
-            })
-          }
+            });
+          }}
           onOmniboxExpandedChange={setOmniboxExpanded}
         />
         {snapshot.preferences.bookmarkBarVisible && <BookmarkBar data={data} />}

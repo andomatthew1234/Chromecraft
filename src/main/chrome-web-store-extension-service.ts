@@ -49,6 +49,7 @@ export interface InstalledExtensionSnapshot {
   sourceUrl: string;
   optionsUrl: string | null;
   popupUrl: string | null;
+  iconDataUrl: string | null;
 }
 
 export type ExtensionInstallProgressStage =
@@ -139,9 +140,10 @@ interface ExtensionManifest {
   optional_permissions?: unknown;
   options_page?: unknown;
   options_ui?: { page?: unknown };
-  action?: { default_popup?: unknown };
-  browser_action?: { default_popup?: unknown };
-  page_action?: { default_popup?: unknown };
+  icons?: Record<string, unknown>;
+  action?: { default_popup?: unknown; default_icon?: unknown };
+  browser_action?: { default_popup?: unknown; default_icon?: unknown };
+  page_action?: { default_popup?: unknown; default_icon?: unknown };
   background?: {
     service_worker?: unknown;
     scripts?: unknown;
@@ -355,6 +357,10 @@ export class ChromeWebStoreExtensionService {
         sourceUrl,
       };
       const runtime = this.runtimeFromManifest(stored, manifest);
+      runtime.snapshot.iconDataUrl = extensionIconDataUrlFromEntries(
+        entries,
+        manifest,
+      );
       try {
         await this.loadRuntime(runtime, true);
         this.runtimes.set(extensionId, runtime);
@@ -577,7 +583,12 @@ export class ChromeWebStoreExtensionService {
           storages: ["serviceworkers"],
         });
       }
-      return this.runtimeFromManifest(stored, manifest);
+      const runtime = this.runtimeFromManifest(stored, manifest);
+      runtime.snapshot.iconDataUrl = await extensionIconDataUrlFromDirectory(
+        extensionPath,
+        manifest,
+      );
+      return runtime;
     } catch (error) {
       return {
         stored,
@@ -596,6 +607,7 @@ export class ChromeWebStoreExtensionService {
           sourceUrl: stored.sourceUrl,
           optionsUrl: null,
           popupUrl: null,
+          iconDataUrl: null,
         },
       };
     }
@@ -635,6 +647,7 @@ export class ChromeWebStoreExtensionService {
             manifest.browser_action?.default_popup ??
             manifest.page_action?.default_popup,
         ),
+        iconDataUrl: null,
       },
     };
   }
@@ -1831,6 +1844,105 @@ function normalizeManifestPath(value: string): string {
   const normalized = value.replace(/^\/+/, "");
   validateArchivePath(normalized);
   return normalized;
+}
+
+const MAX_EXTENSION_ICON_BYTES = 256 * 1024;
+
+function extensionIconCandidates(manifest: ExtensionManifest): string[] {
+  const candidates: string[] = [];
+  const add = (value: unknown) => {
+    if (typeof value === "string") {
+      candidates.push(value);
+      return;
+    }
+    if (!value || typeof value !== "object" || Array.isArray(value)) return;
+    Object.entries(value)
+      .filter(([, iconPath]) => typeof iconPath === "string")
+      .sort(([left], [right]) => {
+        const leftSize = Number(left);
+        const rightSize = Number(right);
+        const leftDistance = Number.isFinite(leftSize)
+          ? Math.abs(leftSize - 38)
+          : Number.MAX_SAFE_INTEGER;
+        const rightDistance = Number.isFinite(rightSize)
+          ? Math.abs(rightSize - 38)
+          : Number.MAX_SAFE_INTEGER;
+        return leftDistance - rightDistance || rightSize - leftSize;
+      })
+      .forEach(([, iconPath]) => candidates.push(iconPath as string));
+  };
+  add(manifest.action?.default_icon);
+  add(manifest.browser_action?.default_icon);
+  add(manifest.page_action?.default_icon);
+  add(manifest.icons);
+  return [...new Set(candidates)];
+}
+
+function extensionIconDataUrl(data: Buffer): string | null {
+  if (data.length === 0 || data.length > MAX_EXTENSION_ICON_BYTES) return null;
+  let mime: string | null = null;
+  if (
+    data.length >= 8 &&
+    data.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+  ) {
+    mime = "image/png";
+  } else if (data.length >= 3 && data[0] === 0xff && data[1] === 0xd8) {
+    mime = "image/jpeg";
+  } else if (data.length >= 6 && data.subarray(0, 3).toString() === "GIF") {
+    mime = "image/gif";
+  } else if (
+    data.length >= 12 &&
+    data.subarray(0, 4).toString() === "RIFF" &&
+    data.subarray(8, 12).toString() === "WEBP"
+  ) {
+    mime = "image/webp";
+  }
+  return mime ? `data:${mime};base64,${data.toString("base64")}` : null;
+}
+
+function extensionIconDataUrlFromEntries(
+  entries: ArchiveEntry[],
+  manifest: ExtensionManifest,
+): string | null {
+  for (const candidate of extensionIconCandidates(manifest)) {
+    try {
+      const normalized = normalizeManifestPath(candidate);
+      const entry = entries.find(
+        (item) => !item.directory && item.name === normalized,
+      );
+      if (!entry) continue;
+      const dataUrl = extensionIconDataUrl(entry.data);
+      if (dataUrl) return dataUrl;
+    } catch {
+      // Invalid manifest paths are ignored and fall back to the next icon.
+    }
+  }
+  return null;
+}
+
+async function extensionIconDataUrlFromDirectory(
+  extensionPath: string,
+  manifest: ExtensionManifest,
+): Promise<string | null> {
+  for (const candidate of extensionIconCandidates(manifest)) {
+    try {
+      const normalized = normalizeManifestPath(candidate);
+      const iconPath = path.resolve(extensionPath, normalized);
+      assertChildPath(extensionPath, iconPath);
+      const file = await fs.open(iconPath, "r");
+      try {
+        const stats = await file.stat();
+        if (!stats.isFile() || stats.size > MAX_EXTENSION_ICON_BYTES) continue;
+        const dataUrl = extensionIconDataUrl(await file.readFile());
+        if (dataUrl) return dataUrl;
+      } finally {
+        await file.close();
+      }
+    } catch {
+      // Missing and unsafe icon candidates fall back without breaking loading.
+    }
+  }
+  return null;
 }
 
 function compatibleWorkerSource(

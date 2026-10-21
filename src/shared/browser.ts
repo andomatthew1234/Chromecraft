@@ -172,6 +172,7 @@ export interface BrowserExtensionSnapshot {
   sourceUrl: string | null;
   optionsUrl: string | null;
   popupUrl: string | null;
+  iconDataUrl: string | null;
 }
 
 export interface ExtensionPopupAnchor {
