@@ -353,6 +353,28 @@ export class TabManager {
     return this.extensionTabs.idForBrowserTab(browserTabId);
   }
 
+  getExtensionTabIdForWebContents(
+    webContentsId: number | null | undefined,
+  ): number | null {
+    if (
+      typeof webContentsId !== "number" ||
+      !Number.isSafeInteger(webContentsId) ||
+      webContentsId < 1
+    )
+      return null;
+    for (const browserTabId of this.order) {
+      const contents = this.tabs.get(browserTabId)?.view?.webContents;
+      if (
+        contents &&
+        !contents.isDestroyed() &&
+        contents.id === webContentsId
+      ) {
+        return this.extensionTabs.idForBrowserTab(browserTabId);
+      }
+    }
+    return null;
+  }
+
   subscribeExtensionTabTransitions(
     listener: ExtensionTabTransitionListener,
   ): () => void {

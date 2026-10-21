@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   ExtensionTabLifecycle,
+  TabManager,
   type ExtensionTabTransition,
 } from "./tab-manager";
 
@@ -118,5 +119,41 @@ describe("ExtensionTabLifecycle", () => {
 
     expect(transitions).toHaveLength(countAfterRemoval);
     expect(lifecycle.snapshots).toEqual([]);
+  });
+
+  it("resolves live Electron contents IDs without exposing WebContents", () => {
+    const lifecycle = new ExtensionTabLifecycle();
+    const tab = lifecycle.create("browser-a", {
+      title: "Example",
+      url: "https://example.test/",
+      status: "complete",
+    });
+    let destroyed = false;
+    const manager = Object.create(TabManager.prototype) as TabManager;
+    Object.assign(manager as unknown as Record<string, unknown>, {
+      tabs: new Map([
+        [
+          "browser-a",
+          {
+            view: {
+              webContents: {
+                id: 42,
+                isDestroyed: () => destroyed,
+              },
+            },
+          },
+        ],
+      ]),
+      order: ["browser-a"],
+      extensionTabs: lifecycle,
+    });
+
+    expect(manager.getExtensionTabIdForWebContents(42)).toBe(tab.id);
+    expect(manager.getExtensionTabIdForWebContents(41)).toBeNull();
+    expect(manager.getExtensionTabIdForWebContents(Number.NaN)).toBeNull();
+    expect(manager.getExtensionTabIdForWebContents(undefined)).toBeNull();
+
+    destroyed = true;
+    expect(manager.getExtensionTabIdForWebContents(42)).toBeNull();
   });
 });
