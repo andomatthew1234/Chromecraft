@@ -1,13 +1,18 @@
 const words = ["Browse", "Play", "Stream", "Ask", "Call", "Work"];
 const wordElement = document.querySelector(".rotating-word");
+const reducedMotionQuery = window.matchMedia(
+  "(prefers-reduced-motion: reduce)",
+);
+const reduceMotion = reducedMotionQuery.matches;
+
+if (!reduceMotion) {
+  document.documentElement.classList.add("motion-ready");
+}
 
 let wordIndex = 0;
 
 function rotateWord() {
-  if (
-    !wordElement ||
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches
-  ) {
+  if (!wordElement || reduceMotion) {
     return;
   }
 
@@ -21,12 +26,161 @@ function rotateWord() {
   }, 190);
 }
 
-window.setInterval(rotateWord, 1000);
+if (!reduceMotion) {
+  window.setInterval(rotateWord, 1000);
+}
 
+const root = document.documentElement;
+const hero = document.querySelector(".hero");
+const motionSections = [...document.querySelectorAll(".feature")];
+const progressBar = document.querySelector(".scroll-progress span");
+const materialSection = document.querySelector(".feature-material");
 const colorSlider = document.querySelector(".appearance-slider");
 const sliderValue = document.querySelector(".slider-value");
+let sliderTouched = false;
+let scrollFrame;
+
+function clamp(value, min = 0, max = 1) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function easeOutCubic(value) {
+  return 1 - Math.pow(1 - value, 3);
+}
+
+function updateScrollMotion() {
+  scrollFrame = undefined;
+  if (reduceMotion) return;
+
+  const viewportHeight = window.innerHeight;
+  const documentHeight = document.documentElement.scrollHeight - viewportHeight;
+  const pageProgress = documentHeight > 0 ? window.scrollY / documentHeight : 0;
+  progressBar?.style.setProperty(
+    "--page-progress",
+    String(clamp(pageProgress)),
+  );
+
+  if (hero) {
+    const heroProgress = clamp(
+      window.scrollY / Math.max(hero.offsetHeight * 0.78, 1),
+    );
+    root.style.setProperty("--hero-opacity", String(1 - heroProgress * 0.72));
+    root.style.setProperty("--hero-shift", `${heroProgress * -72}px`);
+    root.style.setProperty("--hero-scale", String(1 - heroProgress * 0.035));
+    root.style.setProperty("--header-shift", `${heroProgress * -28}px`);
+    root.style.setProperty("--dots-opacity", String(1 - heroProgress * 0.4));
+    root.style.setProperty("--dots-shift", `${heroProgress * 90}px`);
+    root.style.setProperty("--dots-scale", String(1 + heroProgress * 0.08));
+  }
+
+  motionSections.forEach((section) => {
+    const bounds = section.getBoundingClientRect();
+    const entry = clamp(
+      (viewportHeight * 0.92 - bounds.top) / (viewportHeight * 0.72),
+    );
+    const easedEntry = easeOutCubic(entry);
+    const travel = clamp(
+      (viewportHeight - bounds.top) / (viewportHeight + bounds.height),
+    );
+    const departure = clamp(
+      (-bounds.top - bounds.height * 0.55) / (bounds.height * 0.35),
+    );
+    const opacity = clamp(easedEntry - departure * 0.5);
+    const depth = (0.5 - travel) * 2;
+    const isActive =
+      bounds.top < viewportHeight * 1.2 &&
+      bounds.bottom > -viewportHeight * 0.2;
+
+    section.classList.toggle("is-motion-active", isActive);
+
+    section.style.setProperty("--section-opacity", opacity.toFixed(3));
+    section.style.setProperty("--section-line", easedEntry.toFixed(3));
+    section.style.setProperty("--copy-x", `${(1 - easedEntry) * -34}px`);
+    section.style.setProperty(
+      "--copy-y",
+      `${(1 - easedEntry) * 64 + departure * -18}px`,
+    );
+    section.style.setProperty("--visual-x", `${(1 - easedEntry) * 44}px`);
+    section.style.setProperty(
+      "--visual-y",
+      `${(1 - easedEntry) * 84 + depth * 16}px`,
+    );
+    section.style.setProperty(
+      "--visual-tilt",
+      `${(1 - easedEntry) * 4 + depth * 1.2}deg`,
+    );
+    section.style.setProperty("--visual-turn", `${(1 - easedEntry) * -3}deg`);
+    section.style.setProperty(
+      "--visual-scale",
+      String(0.92 + easedEntry * 0.08 - departure * 0.015),
+    );
+    section.style.setProperty("--accent-size", `${easedEntry * 100}%`);
+    section.style.setProperty(
+      "--privacy-core-scale",
+      String(0.72 + easedEntry * 0.28),
+    );
+    section.style.setProperty("--preview-dot-shift", `${depth * -34}px`);
+
+    const scanResolved = easeOutCubic(clamp((travel - 0.16) / 0.34));
+    const scanRed = Math.round(241 + (25 - 241) * scanResolved);
+    const scanGreen = Math.round(135 + (115 - 135) * scanResolved);
+    const scanBlue = Math.round(111 + (85 - 111) * scanResolved);
+    section.style.setProperty(
+      "--scan-alert",
+      `rgb(${scanRed}, ${scanGreen}, ${scanBlue})`,
+    );
+    section.style.setProperty(
+      "--scan-status-opacity",
+      String(0.2 + scanResolved * 0.8),
+    );
+    section.style.setProperty(
+      "--scan-status-shift",
+      `${(1 - scanResolved) * 10}px`,
+    );
+
+    const queueProgress = easeOutCubic(clamp((entry - 0.3) / 0.7));
+    section.style.setProperty(
+      "--queue-opacity",
+      String(0.22 + queueProgress * 0.78),
+    );
+    section.style.setProperty("--queue-shift", `${(1 - queueProgress) * 28}px`);
+
+    if (
+      section === materialSection &&
+      colorSlider &&
+      sliderValue &&
+      !sliderTouched
+    ) {
+      const value = Math.round(
+        22 + easeOutCubic(clamp((entry - 0.12) / 0.88)) * 46,
+      );
+      colorSlider.value = String(value);
+      sliderValue.value = `${value}%`;
+      sliderValue.textContent = `${value}%`;
+    }
+  });
+}
+
+function requestScrollMotion() {
+  if (!scrollFrame) {
+    scrollFrame = window.requestAnimationFrame(updateScrollMotion);
+  }
+}
+
+if (!reduceMotion) {
+  updateScrollMotion();
+  window.addEventListener("scroll", requestScrollMotion, { passive: true });
+  window.addEventListener("resize", requestScrollMotion);
+  document.fonts?.ready.then(requestScrollMotion);
+}
 
 if (colorSlider && sliderValue) {
+  colorSlider.addEventListener("pointerdown", () => {
+    sliderTouched = true;
+  });
+  colorSlider.addEventListener("keydown", () => {
+    sliderTouched = true;
+  });
   colorSlider.addEventListener("input", () => {
     sliderValue.value = `${colorSlider.value}%`;
     sliderValue.textContent = `${colorSlider.value}%`;
@@ -66,12 +220,13 @@ let width = 0;
 let height = 0;
 let pixelRatio = 1;
 let animationFrame;
+let canvasVisible = true;
 
 function resizeCanvas() {
   if (!canvas || !context) return;
 
   const bounds = canvas.getBoundingClientRect();
-  pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+  pixelRatio = Math.min(window.devicePixelRatio || 1, width < 721 ? 1.5 : 2);
   width = bounds.width;
   height = bounds.height;
   canvas.width = Math.round(width * pixelRatio);
@@ -113,9 +268,11 @@ function drawDot(x, y, radius, stretch, color, alpha, time) {
 }
 
 function render(time) {
+  animationFrame = undefined;
   if (!context || !width || !height) return;
 
   context.clearRect(0, 0, width, height);
+  const animationTime = reduceMotion ? 0 : time;
   const isMobile = width < 721;
   const baseline = height * (isMobile ? 0.77 : 0.62);
   const minDimension = Math.min(width, height);
@@ -124,9 +281,10 @@ function render(time) {
   for (let index = 0; index < count; index += 1) {
     const progress = index / (count - 1);
     const x = -minDimension * 0.06 + progress * (width + minDimension * 0.12);
-    const wave = Math.sin(progress * Math.PI * 2.3 + time * 0.00045);
+    const wave = Math.sin(progress * Math.PI * 2.3 + animationTime * 0.00045);
     const radiusBase = minDimension * (0.014 + progress * 0.095);
-    const radius = radiusBase * (1 + Math.sin(time * 0.0011 + index) * 0.06);
+    const radius =
+      radiusBase * (1 + Math.sin(animationTime * 0.0011 + index) * 0.06);
     const y = baseline - radius * 0.54 + wave * minDimension * 0.075;
     const stretch = 0.62 + (index % 4) * 0.12;
 
@@ -137,7 +295,7 @@ function render(time) {
       stretch,
       palette[(index + 1) % palette.length],
       0.5,
-      time,
+      animationTime,
     );
     drawDot(
       x - radius * 0.12,
@@ -146,7 +304,7 @@ function render(time) {
       stretch,
       palette[index % palette.length],
       0.78,
-      time,
+      animationTime,
     );
     drawDot(
       x + radius * 0.13,
@@ -155,17 +313,35 @@ function render(time) {
       stretch,
       palette[(index + 3) % palette.length],
       0.48,
-      time,
+      animationTime,
     );
   }
 
-  animationFrame = window.requestAnimationFrame(render);
+  if (!reduceMotion && canvasVisible) {
+    animationFrame = window.requestAnimationFrame(render);
+  }
 }
 
 if (canvas && context) {
   resizeCanvas();
   window.addEventListener("resize", resizeCanvas);
   animationFrame = window.requestAnimationFrame(render);
+
+  if (!reduceMotion) {
+    const canvasObserver = new IntersectionObserver(
+      ([entry]) => {
+        canvasVisible = entry.isIntersecting;
+        if (canvasVisible && !animationFrame) {
+          animationFrame = window.requestAnimationFrame(render);
+        } else if (!canvasVisible && animationFrame) {
+          window.cancelAnimationFrame(animationFrame);
+          animationFrame = undefined;
+        }
+      },
+      { rootMargin: "120px" },
+    );
+    canvasObserver.observe(canvas);
+  }
 }
 
 window.addEventListener("beforeunload", () =>
