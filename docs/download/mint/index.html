@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Choose a platform for Chromecraft Mint."
+    />
+    <title>Download Chromecraft Mint</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../download.css" />
+  </head>
+  <body class="platform-page mint" data-edition="Chromecraft Mint">
+    <header class="download-header">
+      <a class="download-wordmark" href="../../index.html"
+        >Chromecraft <span>Mint</span></a
+      >
+      <a class="back-link" href="../index.html">All editions</a>
+    </header>
+
+    <main class="platform-main">
+      <div class="platform-intro">
+        <p class="download-kicker">Calm focus / clear momentum</p>
+        <h1>Chromecraft Mint</h1>
+        <p>
+          The Chromecraft experience for ultimate productivity. Choose your
+          platform to see availability.
+        </p>
+      </div>
+
+      <div class="platform-grid">
+        <button
+          class="platform-option"
+          type="button"
+          data-platform="macOS"
+          aria-pressed="false"
+        >
+          <span class="platform-logo"
+            ><img src="https://cdn.simpleicons.org/apple/000000" alt="Apple"
+          /></span>
+          <h2>macOS</h2>
+          <p>Requires macOS Big Sur 11 or later.</p>
+          <span class="coming-badge">Coming soon</span>
+        </button>
+        <button
+          class="platform-option"
+          type="button"
+          data-platform="Windows"
+          aria-pressed="false"
+        >
+          <span class="platform-logo" aria-hidden="true">
+            <span class="windows-mark">
+              <span></span><span></span><span></span><span></span>
+            </span>
+          </span>
+          <h2>Windows</h2>
+          <p>Requires Windows 10 or later.</p>
+          <span class="coming-badge">Coming soon</span>
+        </button>
+        <button
+          class="platform-option"
+          type="button"
+          data-platform="Linux"
+          aria-pressed="false"
+        >
+          <span class="platform-logo"
+            ><img src="https://cdn.simpleicons.org/linux/000000" alt="Linux"
+          /></span>
+          <h2>Linux</h2>
+          <p>Requires a compatible Linux distribution.</p>
+          <span class="coming-badge">Coming soon</span>
+        </button>
+      </div>
+
+      <p class="coming-notice">
+        All versions for every operating system are coming soon.
+      </p>
+      <p class="download-status" role="status" aria-live="polite"></p>
+    </main>
+    <script src="../download.js"></script>
+  </body>
+</html>

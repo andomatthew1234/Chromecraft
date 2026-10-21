@@ -189,13 +189,54 @@ if (colorSlider && sliderValue) {
 
 const materialTabs = document.querySelectorAll(".material-tabs button");
 const materialChip = document.querySelector(".material-chip");
+const materialPanel = document.querySelector(".material-content");
+const materialPanelTitle = document.querySelector(".m3-panel-title");
+const materialOverline = document.querySelector(".m3-overline");
+const segmentedButtons = document.querySelectorAll(".m3-segmented button");
+const materialModes = {
+  color: ["Dynamic theme", "Make it yours"],
+  shape: ["Shape system", "Express every surface"],
+  type: ["Type scale", "Tune your rhythm"],
+};
+
+function selectMaterialTab(tab) {
+  materialTabs.forEach((candidate) => {
+    const isActive = candidate === tab;
+    candidate.classList.toggle("active", isActive);
+    candidate.setAttribute("aria-selected", String(isActive));
+    candidate.tabIndex = isActive ? 0 : -1;
+  });
+
+  const mode = tab.dataset.mode || "color";
+  const [overline, title] = materialModes[mode];
+  if (materialPanel) {
+    materialPanel.dataset.mode = mode;
+    materialPanel.setAttribute("aria-labelledby", tab.id);
+  }
+  if (materialPanelTitle) materialPanelTitle.textContent = title;
+  if (materialOverline) materialOverline.textContent = overline;
+}
 
 materialTabs.forEach((tab) => {
-  tab.addEventListener("click", () => {
-    materialTabs.forEach((candidate) => {
-      const isActive = candidate === tab;
-      candidate.classList.toggle("active", isActive);
-      candidate.setAttribute("aria-pressed", String(isActive));
+  tab.addEventListener("click", () => selectMaterialTab(tab));
+  tab.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    const direction = event.key === "ArrowDown" ? 1 : -1;
+    const currentIndex = [...materialTabs].indexOf(tab);
+    const nextIndex =
+      (currentIndex + direction + materialTabs.length) % materialTabs.length;
+    materialTabs[nextIndex].focus();
+    selectMaterialTab(materialTabs[nextIndex]);
+  });
+});
+
+segmentedButtons.forEach((button) => {
+  button.addEventListener("click", () => {
+    segmentedButtons.forEach((candidate) => {
+      const isSelected = candidate === button;
+      candidate.classList.toggle("selected", isSelected);
+      candidate.setAttribute("aria-pressed", String(isSelected));
     });
   });
 });

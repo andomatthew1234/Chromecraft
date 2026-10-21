@@ -14,6 +14,10 @@ body {
   margin: 0;
 }
 
+html {
+  scroll-behavior: smooth;
+}
+
 body {
   background: #fbfbf8;
 }
@@ -626,6 +630,328 @@ button {
   width: 25px;
 }
 
+/* Material 3 specimen */
+.material-demo {
+  background: #fff7f2;
+  border-color: #efc7b8;
+  box-shadow:
+    0 26px 65px rgba(155, 65, 38, 0.13),
+    inset 0 1px rgba(255, 255, 255, 0.8);
+  color: #3a211b;
+  min-height: 510px;
+}
+
+.material-symbols-rounded {
+  font-family: "Material Symbols Rounded";
+  font-size: 19px;
+  font-style: normal;
+  font-variation-settings:
+    "FILL" 0,
+    "wght" 400,
+    "GRAD" 0,
+    "opsz" 24;
+  letter-spacing: 0;
+  line-height: 1;
+}
+
+.m3-topbar {
+  align-items: center;
+  background: #fff7f2;
+  display: flex;
+  gap: 14px;
+  min-height: 64px;
+  padding: 0 16px;
+}
+
+.m3-icon-button {
+  align-items: center;
+  border-radius: 50%;
+  color: #68443a;
+  display: inline-flex;
+  height: 40px;
+  justify-content: center;
+  width: 40px;
+}
+
+.m3-icon-button:last-child {
+  margin-left: auto;
+}
+
+.m3-topbar-title {
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.m3-workspace {
+  border-bottom: 1px solid #efc7b8;
+  border-top: 1px solid #f3d8cd;
+  display: grid;
+  grid-template-columns: 76px 1fr;
+  min-height: 372px;
+}
+
+.material-tabs {
+  align-items: center;
+  background: #fae7df;
+  border: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 15px 8px;
+}
+
+.material-tabs button {
+  align-items: center;
+  background: none;
+  border: 0;
+  border-radius: 18px;
+  color: #77594f;
+  display: flex;
+  flex-direction: column;
+  font-family: "Manrope", Arial, sans-serif;
+  font-size: 9px;
+  gap: 4px;
+  min-height: 60px;
+  padding: 8px 5px;
+  width: 60px;
+}
+
+.material-tabs button .material-symbols-rounded {
+  align-items: center;
+  border-radius: 18px;
+  display: flex;
+  height: 30px;
+  justify-content: center;
+  width: 52px;
+}
+
+.material-tabs button.active {
+  color: #6d2d1e;
+  font-weight: 700;
+}
+
+.material-tabs button.active::after {
+  display: none;
+}
+
+.material-tabs button.active .material-symbols-rounded {
+  background: #f3bdaa;
+  font-variation-settings:
+    "FILL" 1,
+    "wght" 400,
+    "GRAD" 0,
+    "opsz" 24;
+}
+
+.material-tabs button:focus-visible,
+.m3-segmented button:focus-visible,
+.material-chip:focus-visible,
+.m3-switch input:focus-visible {
+  outline: 2px solid #6d2d1e;
+  outline-offset: 2px;
+}
+
+.material-content {
+  display: block;
+  padding: 18px 22px 16px;
+}
+
+.material-content[data-mode="shape"] {
+  --m3-panel-accent: #6651a1;
+}
+
+.material-content[data-mode="type"] {
+  --m3-panel-accent: #197355;
+}
+
+.m3-content-heading {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.m3-content-heading > div:first-child {
+  display: grid;
+  gap: 2px;
+}
+
+.m3-content-heading strong {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.m3-overline {
+  color: #8f665a;
+  font-family: "DM Mono", monospace;
+  font-size: 9px;
+  text-transform: uppercase;
+}
+
+.m3-segmented {
+  display: flex;
+  margin-bottom: 13px;
+  width: 100%;
+}
+
+.m3-segmented button {
+  background: transparent;
+  border: 1px solid #a77b6d;
+  border-right: 0;
+  color: #66463d;
+  cursor: pointer;
+  flex: 1;
+  font-size: 10px;
+  min-height: 34px;
+}
+
+.m3-segmented button:first-child {
+  border-radius: 18px 0 0 18px;
+}
+
+.m3-segmented button:last-child {
+  border-radius: 0 18px 18px 0;
+  border-right: 1px solid #a77b6d;
+}
+
+.m3-segmented button.selected {
+  background: var(--m3-panel-accent, #f3bdaa);
+  color: #31120b;
+  font-weight: 700;
+}
+
+.m3-seed-row {
+  align-items: center;
+  display: flex;
+  gap: 9px;
+  margin-bottom: 12px;
+}
+
+.m3-seed {
+  border: 3px solid #fff7f2;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px #bd9789;
+  height: 24px;
+  width: 24px;
+}
+
+.seed-coral {
+  background: #b04a2f;
+}
+
+.seed-purple {
+  background: #6651a1;
+}
+
+.seed-teal {
+  background: #197355;
+}
+
+.material-chip {
+  align-items: center;
+  background: #fff7f2;
+  border-radius: 18px;
+  display: inline-flex;
+  gap: 4px;
+  margin-left: auto;
+  min-height: 34px;
+  padding: 0 12px;
+}
+
+.material-slider-row {
+  margin-bottom: 8px;
+  min-width: 0;
+}
+
+.appearance-slider {
+  margin: 7px 0 0;
+}
+
+.material-loader {
+  border-width: 3px;
+  height: 28px;
+  width: 28px;
+}
+
+.m3-setting-row {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+  min-height: 49px;
+}
+
+.m3-setting-row > .material-symbols-rounded {
+  align-items: center;
+  background: #f6d9cd;
+  border-radius: 50%;
+  color: #8e4431;
+  display: flex;
+  height: 32px;
+  justify-content: center;
+  width: 32px;
+}
+
+.m3-setting-row > span:nth-child(2) {
+  display: grid;
+  flex: 1;
+}
+
+.m3-setting-row strong {
+  font-size: 11px;
+}
+
+.m3-setting-row small {
+  color: #886d65;
+  font-size: 9px;
+}
+
+.m3-setting-row .m3-switch {
+  margin-left: auto;
+}
+
+.material-preview {
+  background: #f9ded3;
+  display: flex;
+  gap: 8px;
+  min-height: 72px;
+  padding: 0 18px;
+}
+
+.material-preview > .material-symbols-rounded:first-child {
+  align-items: center;
+  background: #b04a2f;
+  border-radius: 50%;
+  color: #fff;
+  display: flex;
+  font-size: 14px;
+  height: 25px;
+  justify-content: center;
+  width: 25px;
+}
+
+.material-preview strong {
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.preview-dot {
+  height: 18px;
+  width: 18px;
+}
+
+.m3-fab {
+  align-items: center;
+  background: #f3bdaa;
+  border-radius: 16px;
+  box-shadow: 0 5px 12px rgba(94, 36, 20, 0.18);
+  color: #5d2113;
+  display: flex;
+  height: 48px;
+  justify-content: center;
+  margin-left: auto;
+  width: 48px;
+}
+
 .feature-agent {
   background: #20171d;
   color: #fbfbf8;
@@ -843,12 +1169,16 @@ h1 {
 }
 
 .button {
+  align-items: center;
   border-radius: 5px;
   cursor: pointer;
+  display: inline-flex;
   font-family: "DM Mono", monospace;
   font-size: 14px;
+  justify-content: center;
   min-height: 48px;
   padding: 0 28px;
+  text-decoration: none;
   transition:
     background-color 150ms ease,
     color 150ms ease,

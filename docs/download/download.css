@@ -1,0 +1,593 @@
+:root {
+  color: #211919;
+  background: #fbfbf8;
+  font-family: "Manrope", Arial, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+}
+
+body {
+  background: #fbfbf8;
+}
+
+a {
+  color: inherit;
+}
+
+button {
+  font: inherit;
+}
+
+.download-header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  padding: 28px 4.5vw;
+}
+
+.download-wordmark {
+  font-size: 20px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.download-wordmark span {
+  color: #6c0d42;
+  font-family: "DM Mono", monospace;
+  font-size: 11px;
+  margin-left: 4px;
+}
+
+.back-link {
+  font-family: "DM Mono", monospace;
+  font-size: 11px;
+  text-underline-offset: 4px;
+}
+
+.selector-main {
+  padding: 10vh 4.5vw 8vh;
+}
+
+.selector-intro {
+  margin-bottom: 58px;
+  max-width: 780px;
+}
+
+.download-kicker {
+  color: #6c0d42;
+  font-family: "DM Mono", monospace;
+  font-size: 11px;
+  margin: 0 0 18px;
+  text-transform: uppercase;
+}
+
+.selector-intro h1,
+.platform-intro h1 {
+  font-size: 58px;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1.08;
+  margin: 0;
+}
+
+.selector-intro > p:last-child,
+.platform-intro > p:last-child {
+  font-size: 16px;
+  line-height: 1.7;
+  margin: 22px 0 0;
+  max-width: 560px;
+}
+
+.edition-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.edition-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 510px;
+  overflow: hidden;
+  padding: 20px;
+  text-decoration: none;
+  transition: transform 260ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.edition-card:hover {
+  transform: translateY(-8px);
+}
+
+.edition-card:focus-visible,
+.platform-option:focus-visible,
+.back-link:focus-visible,
+.download-wordmark:focus-visible {
+  outline: 3px solid currentColor;
+  outline-offset: 4px;
+}
+
+.edition-art {
+  height: 220px;
+  margin: -20px -20px 25px;
+  overflow: hidden;
+  position: relative;
+}
+
+.edition-number {
+  font-family: "DM Mono", monospace;
+  font-size: 10px;
+  opacity: 0.65;
+}
+
+.edition-card h2 {
+  font-size: 25px;
+  line-height: 1.18;
+  margin: 15px 0 12px;
+}
+
+.edition-card p {
+  font-size: 14px;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.choose-edition {
+  align-items: center;
+  display: flex;
+  font-family: "DM Mono", monospace;
+  font-size: 11px;
+  justify-content: space-between;
+  margin-top: auto;
+  padding-top: 25px;
+}
+
+.choose-edition b {
+  font-size: 18px;
+  font-weight: 400;
+}
+
+.vanilla-card {
+  background: #ffe9df;
+  border: 1px solid #efc5b2;
+  border-radius: 28px;
+  color: #4b241b;
+}
+
+.vanilla-art {
+  background: #f7d8cb;
+}
+
+.vanilla-search {
+  background: #fff7f2;
+  border-radius: 30px;
+  height: 48px;
+  left: 28px;
+  position: absolute;
+  right: 28px;
+  top: 45px;
+}
+
+.vanilla-search::after {
+  background: #c59685;
+  border-radius: 20px;
+  content: "";
+  height: 7px;
+  left: 19px;
+  position: absolute;
+  top: 21px;
+  width: 46%;
+}
+
+.vanilla-fab {
+  align-items: center;
+  background: #b04a2f;
+  border-radius: 17px;
+  bottom: 28px;
+  color: #fff;
+  display: flex;
+  font-size: 26px;
+  height: 58px;
+  justify-content: center;
+  position: absolute;
+  right: 28px;
+  width: 58px;
+}
+
+.vanilla-chip {
+  background: #f3bdaa;
+  border-radius: 18px;
+  bottom: 39px;
+  height: 35px;
+  left: 28px;
+  position: absolute;
+  width: 112px;
+}
+
+.nitro-card {
+  background: #050505;
+  border: 1px solid #ff2d2d;
+  border-radius: 0;
+  color: #f5f5f5;
+}
+
+.nitro-card h2,
+.nitro-card .choose-edition {
+  text-transform: uppercase;
+}
+
+.nitro-art {
+  background:
+    linear-gradient(rgba(255, 37, 37, 0.13) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 37, 37, 0.13) 1px, transparent 1px),
+    #090909;
+  background-size: 26px 26px;
+  border-bottom: 1px solid #ff2d2d;
+}
+
+.nitro-line {
+  background: #ff2d2d;
+  height: 2px;
+  position: absolute;
+  transform: skewX(-35deg);
+}
+
+.line-one {
+  left: 0;
+  top: 62px;
+  width: 78%;
+}
+
+.line-two {
+  right: 0;
+  top: 144px;
+  width: 58%;
+}
+
+.nitro-stat {
+  color: #fff;
+  font-family: "DM Mono", monospace;
+  font-size: 58px;
+  font-weight: 500;
+  left: 28px;
+  position: absolute;
+  top: 76px;
+}
+
+.nitro-label {
+  color: #ff2d2d;
+  font-family: "DM Mono", monospace;
+  font-size: 11px;
+  left: 31px;
+  position: absolute;
+  top: 144px;
+}
+
+.mint-card {
+  background: #e9f8f1;
+  border: 1px solid #91c9ad;
+  border-radius: 8px;
+  color: #173d2d;
+}
+
+.mint-art {
+  background: #d3f0e1;
+}
+
+.mint-check {
+  align-items: center;
+  background: #197355;
+  border-radius: 50%;
+  color: #fff;
+  display: flex;
+  font-size: 23px;
+  height: 52px;
+  justify-content: center;
+  left: 28px;
+  position: absolute;
+  top: 37px;
+  width: 52px;
+}
+
+.mint-row {
+  background: #f7fffb;
+  border-left: 4px solid #34a375;
+  height: 32px;
+  left: 28px;
+  position: absolute;
+  right: 28px;
+}
+
+.mint-row::after {
+  background: #8bbba5;
+  border-radius: 10px;
+  content: "";
+  height: 6px;
+  left: 15px;
+  position: absolute;
+  top: 13px;
+  width: 48%;
+}
+
+.row-one {
+  top: 106px;
+}
+
+.row-two {
+  top: 145px;
+}
+
+.row-three {
+  top: 184px;
+}
+
+/* Platform pages */
+.platform-page {
+  --page-bg: #fbfbf8;
+  --page-fg: #211919;
+  --page-muted: #665b5b;
+  --page-accent: #6c0d42;
+  --page-surface: #fff;
+  --page-border: #d9cece;
+  --page-radius: 18px;
+  background: var(--page-bg);
+  color: var(--page-fg);
+}
+
+.platform-main {
+  padding: 8vh 8vw 10vh;
+}
+
+.platform-intro {
+  margin-bottom: 54px;
+  max-width: 760px;
+}
+
+.platform-intro .download-kicker {
+  color: var(--page-accent);
+}
+
+.platform-intro > p:last-child {
+  color: var(--page-muted);
+}
+
+.platform-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.platform-option {
+  align-items: flex-start;
+  background: var(--page-surface);
+  border: 1px solid var(--page-border);
+  border-radius: var(--page-radius);
+  color: var(--page-fg);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  min-height: 290px;
+  padding: 24px;
+  text-align: left;
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    background-color 180ms ease;
+}
+
+.platform-option:hover {
+  transform: translateY(-5px);
+}
+
+.platform-option.selected {
+  border-color: var(--page-accent);
+}
+
+.platform-logo {
+  align-items: center;
+  display: flex;
+  height: 80px;
+  justify-content: center;
+  margin-bottom: 32px;
+  width: 80px;
+}
+
+.platform-logo img {
+  display: block;
+  height: 58px;
+  width: 58px;
+}
+
+.windows-mark {
+  color: var(--ink);
+  display: grid;
+  gap: 4px;
+  grid-template-columns: repeat(2, 1fr);
+  height: 54px;
+  width: 54px;
+}
+
+.windows-mark span {
+  background: currentColor;
+}
+
+.platform-option h2 {
+  font-size: 23px;
+  margin: 0 0 8px;
+}
+
+.platform-option p {
+  color: var(--page-muted);
+  font-size: 12px;
+  line-height: 1.55;
+  margin: 0;
+}
+
+.coming-badge {
+  color: var(--page-accent);
+  font-family: "DM Mono", monospace;
+  font-size: 10px;
+  margin-top: auto;
+  padding-top: 25px;
+  text-transform: uppercase;
+}
+
+.coming-notice {
+  border-top: 1px solid var(--page-border);
+  color: var(--page-muted);
+  font-family: "DM Mono", monospace;
+  font-size: 11px;
+  margin: 55px 0 0;
+  padding-top: 20px;
+  text-align: center;
+}
+
+.download-status {
+  background: var(--page-fg);
+  bottom: 24px;
+  color: var(--page-bg);
+  font-size: 12px;
+  left: 50%;
+  opacity: 0;
+  padding: 13px 18px;
+  pointer-events: none;
+  position: fixed;
+  transform: translate(-50%, 18px);
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease;
+  z-index: 5;
+}
+
+.download-status.visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.platform-page.vanilla {
+  --page-bg: #fff8f3;
+  --page-fg: #3f211a;
+  --page-muted: #7c5e55;
+  --page-accent: #b04a2f;
+  --page-surface: #ffe9df;
+  --page-border: #e5b9a8;
+  --page-radius: 28px;
+}
+
+.platform-page.vanilla .platform-logo {
+  background: #f3bdaa;
+  border-radius: 24px;
+}
+
+.platform-page.nitro {
+  --page-bg: #030303;
+  --page-fg: #f6f6f6;
+  --page-muted: #aaa;
+  --page-accent: #ff2d2d;
+  --page-surface: #080808;
+  --page-border: #4c1414;
+  --page-radius: 0;
+  background-image:
+    linear-gradient(rgba(255, 45, 45, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 45, 45, 0.06) 1px, transparent 1px);
+  background-size: 40px 40px;
+  font-family: "DM Mono", monospace;
+}
+
+.platform-page.nitro .download-wordmark,
+.platform-page.nitro h1,
+.platform-page.nitro h2 {
+  text-transform: uppercase;
+}
+
+.platform-page.nitro .download-wordmark span,
+.platform-page.nitro .download-kicker,
+.platform-page.nitro .back-link {
+  color: #ff2d2d;
+}
+
+.platform-page.nitro .platform-option {
+  border-top-color: #ff2d2d;
+}
+
+.platform-page.nitro .platform-logo img {
+  filter: invert(1);
+}
+
+.platform-page.mint {
+  --page-bg: #eff9f3;
+  --page-fg: #153a2b;
+  --page-muted: #547263;
+  --page-accent: #197355;
+  --page-surface: #f9fffb;
+  --page-border: #a8d1bc;
+  --page-radius: 8px;
+}
+
+.platform-page.mint .platform-logo {
+  background: #d3f0e1;
+  border-radius: 50%;
+}
+
+@media (max-width: 820px) {
+  .selector-intro h1,
+  .platform-intro h1 {
+    font-size: 42px;
+  }
+
+  .edition-grid,
+  .platform-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .edition-card {
+    min-height: 470px;
+  }
+
+  .platform-option {
+    min-height: 240px;
+  }
+}
+
+@media (max-width: 520px) {
+  .download-header {
+    padding: 24px;
+  }
+
+  .selector-main,
+  .platform-main {
+    padding: 8vh 24px;
+  }
+
+  .selector-intro h1,
+  .platform-intro h1 {
+    font-size: 36px;
+  }
+
+  .download-status {
+    bottom: 12px;
+    max-width: calc(100% - 32px);
+    text-align: center;
+    width: max-content;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .edition-card,
+  .platform-option,
+  .download-status {
+    transition: none;
+  }
+
+  .edition-card:hover,
+  .platform-option:hover {
+    transform: none;
+  }
+}

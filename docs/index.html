@@ -14,6 +14,10 @@
       href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0..1,0"
+      rel="stylesheet"
+    />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
@@ -33,9 +37,12 @@
 
         <section class="hero-content" aria-labelledby="hero-title">
           <p class="eyebrow">A new browser, made for the present.</p>
-          <h1 id="hero-title">
+          <h1
+            id="hero-title"
+            aria-label="The browser that lets you browse, play, stream, ask, call, and work."
+          >
             The browser that lets you
-            <span class="word-slot" aria-live="polite">
+            <span class="word-slot" aria-hidden="true">
               <span class="rotating-word">Browse</span>
             </span>
           </h1>
@@ -43,13 +50,11 @@
             A dependable, local-first browser for the work, play, and everything
             in between.
           </p>
-          <div class="actions" aria-label="Coming soon">
-            <button class="button button-primary" type="button">
-              Download
-            </button>
-            <button class="button button-secondary" type="button">
-              Learn more
-            </button>
+          <div class="actions">
+            <a class="button button-primary" href="./download/index.html"
+              >Download</a
+            >
+            <a class="button button-secondary" href="#privacy">Learn more</a>
           </div>
         </section>
 
@@ -121,48 +126,159 @@
         </div>
 
         <div class="material-demo" aria-label="Material 3 design examples">
-          <div class="material-toolbar">
-            <span class="material-symbol" aria-hidden="true">C</span>
-            <span>Appearance</span>
-            <span class="more-button" aria-hidden="true">...</span>
+          <div class="m3-topbar">
+            <span
+              class="m3-icon-button material-symbols-rounded"
+              aria-hidden="true"
+              >arrow_back</span
+            >
+            <span class="m3-topbar-title">Personalize</span>
+            <span
+              class="m3-icon-button material-symbols-rounded"
+              aria-hidden="true"
+              >dark_mode</span
+            >
           </div>
-          <div class="material-tabs" aria-label="Appearance preview">
-            <button class="active" type="button" aria-pressed="true">
-              Color
-            </button>
-            <button type="button" aria-pressed="false">Shape</button>
-            <button type="button" aria-pressed="false">Type</button>
-          </div>
-          <div class="material-content">
-            <div class="material-slider-row">
-              <label for="color-slider">Accent color</label>
-              <output class="slider-value" for="color-slider">68%</output>
-              <input
-                id="color-slider"
-                class="appearance-slider"
-                type="range"
-                min="0"
-                max="100"
-                value="68"
-              />
-            </div>
-            <div class="material-controls">
-              <div class="material-loader" aria-label="Loading preview">
-                <span></span>
-              </div>
-              <label class="m3-switch">
-                <input type="checkbox" checked />
-                <span aria-hidden="true"></span>
-                Dynamic color
-              </label>
-              <button class="material-chip" type="button" aria-pressed="false">
-                Soft corners
+
+          <div class="m3-workspace">
+            <div
+              class="material-tabs"
+              role="tablist"
+              aria-label="Appearance preview"
+            >
+              <button
+                id="m3-tab-color"
+                class="active"
+                type="button"
+                role="tab"
+                aria-controls="m3-panel"
+                aria-selected="true"
+                data-mode="color"
+              >
+                <span class="material-symbols-rounded" aria-hidden="true"
+                  >palette</span
+                >
+                Color
+              </button>
+              <button
+                id="m3-tab-shape"
+                type="button"
+                role="tab"
+                aria-controls="m3-panel"
+                aria-selected="false"
+                tabindex="-1"
+                data-mode="shape"
+              >
+                <span class="material-symbols-rounded" aria-hidden="true"
+                  >shapes</span
+                >
+                Shape
+              </button>
+              <button
+                id="m3-tab-type"
+                type="button"
+                role="tab"
+                aria-controls="m3-panel"
+                aria-selected="false"
+                tabindex="-1"
+                data-mode="type"
+              >
+                <span class="material-symbols-rounded" aria-hidden="true"
+                  >text_fields</span
+                >
+                Type
               </button>
             </div>
+
+            <div
+              id="m3-panel"
+              class="material-content"
+              role="tabpanel"
+              aria-labelledby="m3-tab-color"
+              data-mode="color"
+            >
+              <div class="m3-content-heading">
+                <div>
+                  <span class="m3-overline">Dynamic theme</span>
+                  <strong class="m3-panel-title">Make it yours</strong>
+                </div>
+                <div
+                  class="material-loader"
+                  aria-label="Loading theme preview"
+                ></div>
+              </div>
+
+              <div class="m3-segmented" aria-label="Color intensity">
+                <button class="selected" type="button" aria-pressed="true">
+                  Standard
+                </button>
+                <button type="button" aria-pressed="false">Vibrant</button>
+                <button type="button" aria-pressed="false">Tonal</button>
+              </div>
+
+              <div class="m3-seed-row" aria-label="Theme color preview">
+                <span class="m3-seed seed-coral"></span>
+                <span class="m3-seed seed-purple"></span>
+                <span class="m3-seed seed-teal"></span>
+                <button
+                  class="material-chip"
+                  type="button"
+                  aria-pressed="false"
+                >
+                  <span class="material-symbols-rounded" aria-hidden="true"
+                    >add</span
+                  >
+                  Custom
+                </button>
+              </div>
+
+              <div class="material-slider-row">
+                <label for="color-slider">Color intensity</label>
+                <output class="slider-value" for="color-slider">68%</output>
+                <input
+                  id="color-slider"
+                  class="appearance-slider"
+                  type="range"
+                  min="0"
+                  max="100"
+                  value="68"
+                />
+              </div>
+
+              <div class="m3-setting-row">
+                <span class="material-symbols-rounded" aria-hidden="true"
+                  >format_paint</span
+                >
+                <span
+                  ><strong>Dynamic color</strong
+                  ><small>Adapt surfaces to your theme</small></span
+                >
+                <label class="m3-switch" aria-label="Dynamic color">
+                  <input type="checkbox" checked />
+                  <span aria-hidden="true"></span>
+                </label>
+              </div>
+              <div class="m3-setting-row">
+                <span class="material-symbols-rounded" aria-hidden="true"
+                  >rounded_corner</span
+                >
+                <span
+                  ><strong>Expressive shapes</strong
+                  ><small>Use the Material 3 shape system</small></span
+                >
+                <label class="m3-switch" aria-label="Expressive shapes">
+                  <input type="checkbox" checked />
+                  <span aria-hidden="true"></span>
+                </label>
+              </div>
+            </div>
           </div>
+
           <div class="material-preview" aria-hidden="true">
-            <span class="preview-pill"></span><span class="preview-line"></span
-            ><span class="preview-dot"></span>
+            <span class="material-symbols-rounded">check</span>
+            <strong>Theme applied</strong>
+            <span class="preview-dot"></span>
+            <span class="m3-fab material-symbols-rounded">edit</span>
           </div>
         </div>
       </section>
