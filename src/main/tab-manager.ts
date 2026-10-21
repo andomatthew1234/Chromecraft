@@ -36,6 +36,7 @@ import { sidebarWidth } from "../shared/sidebar";
 import { BrowserDataStore } from "./browser-data";
 import { ChromeWebStoreExtensionService } from "./chrome-web-store-extension-service";
 import { ExtensionPopupController } from "./extension-popup-controller";
+import { FullscreenHintController } from "./fullscreen-hint-controller";
 import { HyperdriveController } from "./hyperdrive/controller";
 import {
   buildPageContextMenu,
@@ -43,6 +44,7 @@ import {
 } from "./page-context-menu";
 import { PreferencesStore } from "./preferences";
 import { UblockService } from "./ublock-service";
+import type { ActiveWebsitePermissionContext } from "./website-permission-controller";
 
 export const SHELL_HEIGHT = 104;
 export const BOOKMARK_BAR_HEIGHT = 32;
@@ -58,13 +60,8 @@ const ZOOM_FACTORS = [
 export function isWebsiteFullscreenPermissionAllowed(
   permission: string,
   topLevelUrl: string,
-  requestingUrl?: string,
 ): boolean {
-  return (
-    permission === "fullscreen" &&
-    isAllowedWebUrl(topLevelUrl) &&
-    (!requestingUrl || isAllowedWebUrl(requestingUrl))
-  );
+  return permission === "fullscreen" && isAllowedWebUrl(topLevelUrl);
 }
 
 interface TabRecord {
@@ -85,6 +82,7 @@ interface TabRecord {
   lastFindText: string;
   findRequestId: number;
   nextHistoryEntryTyped: boolean;
+  documentEpoch: number;
   dismissedWebStoreExtensionId: string | null;
   webStoreListingTitle: string | null;
   webStoreListingDescription: string | null;
@@ -269,7 +267,16 @@ export class TabManager {
   private sessionTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly extensionPopup: ExtensionPopupController | null;
   private readonly extensionWindows = new Set<BrowserWindow>();
+  private readonly fullscreenHint: FullscreenHintController;
   private htmlFullscreenTabId: TabId | null = null;
+  private pendingHtmlFullscreen: {
+    tabId: TabId;
+    restoreBrowserFullscreen: boolean;
+    requestedAt: number;
+  } | null = null;
+  private restoreBrowserFullscreenAfterHtmlExit = false;
+  private htmlFullscreenRestoreBrowserFullscreen = false;
+  private fullscreenRestoreTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     private readonly window: BaseWindow,
@@ -285,6 +292,9 @@ export class TabManager {
     private readonly onExtensionCommandInput?: (
       input: Electron.Input,
     ) => boolean,
+    private readonly onWebsiteDocumentInvalidated?: (
+      contents: WebContents,
+    ) => void,
   ) {
     this.extensionPopup = extensions
       ? new ExtensionPopupController(window, browserSession, extensions, {
@@ -292,13 +302,24 @@ export class TabManager {
           openExternalUrl: (url) => this.createTab(url),
         })
       : null;
+    this.fullscreenHint = new FullscreenHintController(window);
     this.window.on("resize", () => this.scheduleLayout());
     const refreshFullscreenLayout = () => {
       this.layoutActiveView();
       this.emitSnapshot();
     };
     this.window.on("enter-full-screen", refreshFullscreenLayout);
-    this.window.on("leave-full-screen", refreshFullscreenLayout);
+    this.window.on("leave-full-screen", () => {
+      if (this.restoreBrowserFullscreenAfterHtmlExit) {
+        this.restoreBrowserFullscreenAfterHtmlExit = false;
+        if (this.fullscreenRestoreTimer)
+          clearTimeout(this.fullscreenRestoreTimer);
+        this.fullscreenRestoreTimer = null;
+        this.window.setFullScreen(true);
+        return;
+      }
+      refreshFullscreenLayout();
+    });
     this.attachShortcutHandler(this.shellView);
     this.attachShellContextMenuHandler();
     this.hyperdrive.setBrowserData(this.browserData.snapshot);
@@ -571,6 +592,11 @@ export class TabManager {
     }
     if (previous && this.htmlFullscreenTabId === previous.id)
       this.exitWebsiteFullscreen(previous);
+    if (previous && this.pendingHtmlFullscreen?.tabId === previous.id)
+      this.pendingHtmlFullscreen = null;
+    if (previous) this.releaseWebsiteInputCapture(previous);
+    if (previous?.view && !previous.view.webContents.isDestroyed())
+      this.onWebsiteDocumentInvalidated?.(previous.view.webContents);
     this.extensionPopup?.close();
     previous?.view?.setVisible(false);
     this.activeTabId = tabId;
@@ -593,6 +619,11 @@ export class TabManager {
   closeTab(tabId: TabId): void {
     const tab = this.requireTab(tabId);
     if (this.htmlFullscreenTabId === tab.id) this.exitWebsiteFullscreen(tab);
+    if (this.pendingHtmlFullscreen?.tabId === tab.id)
+      this.pendingHtmlFullscreen = null;
+    this.releaseWebsiteInputCapture(tab);
+    if (tab.view && !tab.view.webContents.isDestroyed())
+      this.onWebsiteDocumentInvalidated?.(tab.view.webContents);
     const closingIndex = this.order.indexOf(tabId);
     this.tabs.delete(tabId);
     this.order.splice(closingIndex, 1);
@@ -742,7 +773,7 @@ export class TabManager {
     this.extensionPopup?.close();
     if (!fullscreen && this.htmlFullscreenTabId) {
       const tab = this.tabs.get(this.htmlFullscreenTabId);
-      if (tab) this.exitWebsiteFullscreen(tab);
+      if (tab) this.exitWebsiteFullscreen(tab, false);
       else this.htmlFullscreenTabId = null;
     }
     this.window.setFullScreen(fullscreen);
@@ -751,18 +782,48 @@ export class TabManager {
   canGrantWebsiteFullscreen(
     contents: WebContents,
     permission: string,
-    requestingUrl?: string,
   ): boolean {
-    if (contents.isDestroyed()) return false;
-    const active = this.tabs.get(this.activeTabId);
-    return Boolean(
-      active?.view?.webContents === contents &&
-      isWebsiteFullscreenPermissionAllowed(
-        permission,
-        contents.getURL(),
-        requestingUrl,
-      ),
+    const context = this.getActiveWebsitePermissionContext(contents);
+    const allowed = Boolean(
+      context &&
+      isWebsiteFullscreenPermissionAllowed(permission, context.topLevelUrl),
     );
+    if (
+      allowed &&
+      !context?.websiteFullscreen &&
+      this.pendingHtmlFullscreen?.tabId !== this.activeTabId
+    ) {
+      this.pendingHtmlFullscreen = {
+        tabId: this.activeTabId,
+        restoreBrowserFullscreen: this.window.isFullScreen(),
+        requestedAt: Date.now(),
+      };
+    }
+    return allowed;
+  }
+
+  getActiveWebsitePermissionContext(
+    contents: WebContents,
+  ): ActiveWebsitePermissionContext | null {
+    if (
+      contents.isDestroyed() ||
+      this.window.isDestroyed() ||
+      !this.window.isVisible() ||
+      !this.window.isFocused()
+    )
+      return null;
+    const active = this.tabs.get(this.activeTabId);
+    if (
+      !active?.view ||
+      active.view.webContents !== contents ||
+      !isAllowedWebUrl(contents.getURL())
+    )
+      return null;
+    return {
+      topLevelUrl: contents.getURL(),
+      websiteFullscreen: this.htmlFullscreenTabId === active.id,
+      documentId: `${active.id}:${active.documentEpoch}`,
+    };
   }
 
   async setSidebarOpen(open: boolean): Promise<void> {
@@ -962,6 +1023,9 @@ export class TabManager {
     if (this.disposed) return;
     this.disposed = true;
     this.extensionPopup?.dispose();
+    this.fullscreenHint.dispose();
+    if (this.fullscreenRestoreTimer) clearTimeout(this.fullscreenRestoreTimer);
+    this.fullscreenRestoreTimer = null;
     for (const extensionWindow of this.extensionWindows) {
       if (!extensionWindow.isDestroyed()) extensionWindow.destroy();
     }
@@ -1007,6 +1071,7 @@ export class TabManager {
       lastFindText: "",
       findRequestId: 0,
       nextHistoryEntryTyped: false,
+      documentEpoch: 0,
       dismissedWebStoreExtensionId: null,
       webStoreListingTitle: null,
       webStoreListingDescription: null,
@@ -1133,13 +1198,13 @@ export class TabManager {
       status: tab.isLoading ? "loading" : "complete",
     });
     contents.once("destroyed", () => {
+      this.onWebsiteDocumentInvalidated?.(contents);
       if (this.htmlFullscreenTabId === tab.id) {
-        this.htmlFullscreenTabId = null;
-        if (!this.window.isDestroyed()) {
-          this.window.setFullScreen(false);
-          this.layoutActiveView();
-        }
+        this.finishWebsiteFullscreen(tab.id);
+        if (!this.window.isDestroyed()) this.window.setFullScreen(false);
       }
+      if (this.pendingHtmlFullscreen?.tabId === tab.id)
+        this.pendingHtmlFullscreen = null;
       this.extensionTabs.remove(tab.id, contents.id);
       if (tab.view === view) tab.view = null;
       if (this.tabs.has(tab.id) && tab.id === this.activeTabId)
@@ -1149,20 +1214,26 @@ export class TabManager {
       if (
         tab.id !== this.activeTabId ||
         tab.view !== view ||
-        !this.canGrantWebsiteFullscreen(contents, "fullscreen")
+        !isAllowedWebUrl(contents.getURL())
       ) {
         this.requestDocumentFullscreenExit(contents);
         return;
       }
+      const pending = this.pendingHtmlFullscreen;
+      this.htmlFullscreenRestoreBrowserFullscreen = Boolean(
+        pending?.tabId === tab.id &&
+        Date.now() - pending.requestedAt <= 5_000 &&
+        pending.restoreBrowserFullscreen,
+      );
+      this.pendingHtmlFullscreen = null;
       this.htmlFullscreenTabId = tab.id;
       this.extensionPopup?.close();
       this.layoutActiveView();
+      this.fullscreenHint.show();
       contents.focus();
     });
     contents.on("leave-html-full-screen", () => {
-      if (this.htmlFullscreenTabId !== tab.id) return;
-      this.htmlFullscreenTabId = null;
-      this.layoutActiveView();
+      if (!this.finishWebsiteFullscreen(tab.id)) return;
       if (!contents.isDestroyed()) contents.focus();
     });
     contents.ipc.on(channels.closeExtensionPopup, () => {
@@ -1214,6 +1285,13 @@ export class TabManager {
     });
     contents.on("did-start-navigation", (details) => {
       if (details.isMainFrame && !details.isSameDocument) {
+        tab.documentEpoch += 1;
+        if (this.pendingHtmlFullscreen?.tabId === tab.id)
+          this.pendingHtmlFullscreen = null;
+        if (this.htmlFullscreenTabId === tab.id)
+          this.exitWebsiteFullscreen(tab);
+        this.releaseWebsiteInputCapture(tab);
+        this.onWebsiteDocumentInvalidated?.(contents);
         this.hyperdrive.navigationStarted(tab.id, details.url);
       }
     });
@@ -1321,6 +1399,11 @@ export class TabManager {
     );
     contents.on("render-process-gone", (_event, details) => {
       if (this.tabs.has(tab.id)) {
+        if (this.pendingHtmlFullscreen?.tabId === tab.id)
+          this.pendingHtmlFullscreen = null;
+        if (this.htmlFullscreenTabId === tab.id)
+          this.exitWebsiteFullscreen(tab);
+        this.onWebsiteDocumentInvalidated?.(contents);
         tab.isLoading = false;
         tab.crashed = true;
         tab.error = `The page process stopped (${details.reason}).`;
@@ -1629,8 +1712,9 @@ export class TabManager {
         event.preventDefault();
         this.setFullscreen(!this.window.isFullScreen());
       } else if (key === "escape" && active?.id === this.htmlFullscreenTabId) {
-        event.preventDefault();
-        this.exitWebsiteFullscreen(active);
+        // Let Chromium leave HTML fullscreen, pointer lock, and keyboard lock
+        // together so the page receives the standard fullscreenchange event.
+        return;
       } else if (key === "escape" && this.window.isFullScreen()) {
         event.preventDefault();
         this.setFullscreen(false);
@@ -1753,11 +1837,20 @@ export class TabManager {
     this.shellView.setBounds({ x: 0, y: 0, width, height });
     this.shellView.setVisible(this.htmlFullscreenTabId !== this.activeTabId);
     this.tabs.get(this.activeTabId)?.view?.setBounds(this.currentPageBounds());
+    this.fullscreenHint.layout();
   }
 
-  private exitWebsiteFullscreen(tab: TabRecord): void {
+  private exitWebsiteFullscreen(
+    tab: TabRecord,
+    restorePreviousWindowMode = true,
+  ): void {
     if (this.htmlFullscreenTabId !== tab.id) return;
+    const shouldRestore =
+      restorePreviousWindowMode && this.htmlFullscreenRestoreBrowserFullscreen;
+    this.restoreBrowserFullscreenAfterHtmlExit = shouldRestore;
     this.htmlFullscreenTabId = null;
+    this.htmlFullscreenRestoreBrowserFullscreen = false;
+    this.fullscreenHint.hide();
     const contents = tab.view?.webContents;
     if (contents && !contents.isDestroyed())
       this.requestDocumentFullscreenExit(contents);
@@ -1765,6 +1858,34 @@ export class TabManager {
       this.window.setFullScreen(false);
       this.layoutActiveView();
     }
+    if (shouldRestore) this.scheduleBrowserFullscreenRestoreDecision();
+  }
+
+  private finishWebsiteFullscreen(tabId: TabId): boolean {
+    if (this.htmlFullscreenTabId !== tabId) return false;
+    const shouldRestore = this.htmlFullscreenRestoreBrowserFullscreen;
+    this.htmlFullscreenTabId = null;
+    this.htmlFullscreenRestoreBrowserFullscreen = false;
+    this.restoreBrowserFullscreenAfterHtmlExit = shouldRestore;
+    this.fullscreenHint.hide();
+    this.layoutActiveView();
+    if (shouldRestore) this.scheduleBrowserFullscreenRestoreDecision();
+    return true;
+  }
+
+  private scheduleBrowserFullscreenRestoreDecision(): void {
+    if (this.fullscreenRestoreTimer) clearTimeout(this.fullscreenRestoreTimer);
+    this.fullscreenRestoreTimer = setTimeout(() => {
+      this.fullscreenRestoreTimer = null;
+      if (!this.restoreBrowserFullscreenAfterHtmlExit) return;
+      this.restoreBrowserFullscreenAfterHtmlExit = false;
+      if (
+        !this.window.isDestroyed() &&
+        !this.window.isFullScreen() &&
+        this.htmlFullscreenTabId === null
+      )
+        this.window.setFullScreen(true);
+    }, 120);
   }
 
   private requestDocumentFullscreenExit(contents: WebContents): void {
@@ -1776,6 +1897,19 @@ export class TabManager {
       )
       .catch(() => {
         // The document may navigate or be destroyed while fullscreen is closing.
+      });
+  }
+
+  private releaseWebsiteInputCapture(tab: TabRecord): void {
+    const contents = tab.view?.webContents;
+    if (!contents || contents.isDestroyed()) return;
+    void contents
+      .executeJavaScript(
+        "document.pointerLockElement && document.exitPointerLock(); navigator.keyboard?.unlock?.();",
+        false,
+      )
+      .catch(() => {
+        // The document may navigate or be destroyed during capture cleanup.
       });
   }
 

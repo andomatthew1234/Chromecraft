@@ -13,7 +13,6 @@ describe("website fullscreen permissions", () => {
       isWebsiteFullscreenPermissionAllowed(
         "fullscreen",
         "https://video.example/watch",
-        "https://player.example/embed/1",
       ),
     ).toBe(true);
     expect(
@@ -39,9 +38,8 @@ describe("website fullscreen permissions", () => {
       isWebsiteFullscreenPermissionAllowed(
         "fullscreen",
         "https://video.example/watch",
-        "file:///private/player.html",
       ),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       isWebsiteFullscreenPermissionAllowed(
         "geolocation",
@@ -62,18 +60,36 @@ describe("website fullscreen permissions", () => {
     const manager = Object.create(TabManager.prototype) as TabManager;
     Object.assign(manager as unknown as Record<string, unknown>, {
       activeTabId: "active",
+      htmlFullscreenTabId: null,
+      pendingHtmlFullscreen: null,
+      window: {
+        isDestroyed: () => false,
+        isVisible: () => true,
+        isFocused: () => true,
+        isFullScreen: () => false,
+      },
       tabs: new Map([
-        ["active", { view: { webContents: activeContents } }],
-        ["inactive", { view: { webContents: inactiveContents } }],
+        [
+          "active",
+          {
+            id: "active",
+            documentEpoch: 1,
+            view: { webContents: activeContents },
+          },
+        ],
+        [
+          "inactive",
+          {
+            id: "inactive",
+            documentEpoch: 1,
+            view: { webContents: inactiveContents },
+          },
+        ],
       ]),
     });
 
     expect(
-      manager.canGrantWebsiteFullscreen(
-        activeContents,
-        "fullscreen",
-        "https://player.example/embed/1",
-      ),
+      manager.canGrantWebsiteFullscreen(activeContents, "fullscreen"),
     ).toBe(true);
     expect(
       manager.canGrantWebsiteFullscreen(inactiveContents, "fullscreen"),

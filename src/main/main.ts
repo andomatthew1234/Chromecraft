@@ -53,6 +53,10 @@ import { TabManager } from "./tab-manager";
 import { UblockService } from "./ublock-service";
 import { UpdateManager } from "./update-manager";
 import { parseChromeWebStoreListingUrl } from "../shared/web-store-listing";
+import {
+  WebsitePermissionController,
+  type WebsitePermissionPrompt,
+} from "./website-permission-controller";
 
 const startedAt = performance.now();
 const profilePartition = "persist:chromecraft-default";
@@ -115,6 +119,46 @@ let updateRestartPrepared = false;
 let updateShutdownPromise: Promise<void> | null = null;
 let ipcRegistered = false;
 let updateManager: UpdateManager | null = null;
+let websitePermissionController: WebsitePermissionController | null = null;
+
+async function promptForWebsitePermission(
+  request: WebsitePermissionPrompt,
+): Promise<boolean> {
+  if (
+    smokeUserData &&
+    process.argv.includes("--chromecraft-smoke-allow-site-permissions")
+  )
+    return true;
+  const hostname = new URL(request.origin).hostname;
+  const copy = {
+    pointerLock: {
+      message: `${hostname} wants to capture your mouse`,
+      detail:
+        "This lets games and interactive sites continue receiving mouse movement while the pointer is hidden. Press Esc to release it.",
+    },
+    keyboardLock: {
+      message: `${hostname} wants to capture keyboard input`,
+      detail:
+        "This is available only while the site is fullscreen. Press Esc to leave fullscreen and release the keyboard.",
+    },
+    "screen-wake-lock": {
+      message: `${hostname} wants to keep your screen awake`,
+      detail:
+        "This is useful for videos and presentations. The permission ends when this page navigates or closes.",
+    },
+  }[request.permission];
+  const answer = await dialog.showMessageBox({
+    type: "question",
+    title: "Website permission",
+    message: copy.message,
+    detail: copy.detail,
+    buttons: ["Block", "Allow once"],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+  });
+  return answer.response === 1;
+}
 
 function sendUpdateSnapshot(snapshot = updateManager?.snapshot): void {
   if (!snapshot) return;
@@ -1066,24 +1110,32 @@ async function createMainWindow(): Promise<void> {
     (contents, permission, requestingOrigin) =>
       Boolean(
         contents &&
-        tabManager?.canGrantWebsiteFullscreen(
-          contents,
-          permission,
-          requestingOrigin,
-        ),
+        (permission === "fullscreen"
+          ? tabManager?.canGrantWebsiteFullscreen(contents, permission)
+          : websitePermissionController?.check(
+              contents,
+              permission,
+              requestingOrigin,
+            )),
       ),
   );
   browserSession.setPermissionRequestHandler(
-    (contents, permission, callback, details) =>
-      callback(
-        Boolean(
-          tabManager?.canGrantWebsiteFullscreen(
-            contents,
-            permission,
-            details.requestingUrl,
-          ),
-        ),
-      ),
+    (contents, permission, callback, details) => {
+      if (permission === "fullscreen") {
+        callback(
+          Boolean(tabManager?.canGrantWebsiteFullscreen(contents, permission)),
+        );
+        return;
+      }
+      const controller = websitePermissionController;
+      if (!controller) {
+        callback(false);
+        return;
+      }
+      void controller
+        .request(contents, permission, details.requestingUrl)
+        .then(callback, () => callback(false));
+    },
   );
   browserSession.setSpellCheckerEnabled(false);
   browserSession.setUserAgent(
@@ -1297,8 +1349,14 @@ async function createMainWindow(): Promise<void> {
     sendBrowserData,
     () => void sendExtensionsSnapshot(),
     (input) => actionHost.handleCommandInput(input),
+    (contents) => websitePermissionController?.revoke(contents),
   );
   tabManager = manager;
+  websitePermissionController = new WebsitePermissionController({
+    contextFor: (contents) =>
+      manager.getActiveWebsitePermissionContext(contents),
+    prompt: (request) => promptForWebsitePermission(request),
+  });
   actionHost.attachTabs(manager);
   manager.initialize();
   registerIpc();
@@ -1354,6 +1412,8 @@ async function createMainWindow(): Promise<void> {
       searchSuggestionService = null;
       hyperdriveController = null;
       updateManager = null;
+      websitePermissionController?.clear();
+      websitePermissionController = null;
     }
   });
 
