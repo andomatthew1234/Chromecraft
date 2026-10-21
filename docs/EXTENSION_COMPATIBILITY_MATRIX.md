@@ -72,6 +72,26 @@ as password-manager autofill and passkeys.
 - `test-packaged-extensions.mjs` covers install-state lifecycle, action popup
   toggling, disable/re-enable, uninstall cleanup, and its own MV3 worker
   handshake.
+- `test-packaged-extension-tabs-lifecycle.mjs` is a focused, currently red
+  conformance harness for the Browser Shell tab lifecycle. It creates,
+  activates, navigates, and removes a tab through the packaged browser while a
+  deterministic MV3 worker observes `tabs.onCreated`, `onActivated`,
+  `onUpdated`, and `onRemoved`. It requires an exact ordered event stream and
+  proves that `tabs.query` and `tabs.get` use the same stable IDs before and
+  after navigation/removal. When CDP can stop the fixture worker, it also
+  requires a tab event to wake the worker and persist the wake-causing event.
+  Run it after `pnpm package:win` with:
+
+  ```powershell
+  pnpm test:extension-tabs:win
+  ```
+
+  Its machine-readable evidence is written to
+  `.artifacts/extensions/extension-tabs-lifecycle.json`. A nonzero result is
+  intentional until the browser-owned extension host delivers the authoritative
+  tab lifecycle to MV3 workers; namespace-shaped event objects alone do not
+  satisfy this harness.
+
 - `diagnose-web-store-extension.mjs` uses a real signed Web Store package and
   records Electron warnings, but does not prove every feature of that package.
 - `validate-real-bitwarden-popup.mjs` and
