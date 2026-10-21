@@ -14,6 +14,11 @@ const profile = await fs.mkdtemp(
   path.join(os.tmpdir(), "chromecraft-sidebar-test-"),
 );
 const screenshotPath = path.join(root, ".artifacts", "sidebar-menu.png");
+const updatesScreenshotPath = path.join(
+  root,
+  ".artifacts",
+  "updates-and-versions.png",
+);
 
 async function freePort() {
   const server = net.createServer();
@@ -174,6 +179,43 @@ try {
   await fs.writeFile(screenshotPath, Buffer.from(screenshot.data, "base64"));
 
   await cdp.evaluate(`([...document.querySelectorAll('[role="menuitem"]')]
+    .find((item) => item.textContent?.includes('Updates and versions')))?.click()`);
+  const updatesPageReady = await poll(
+    () =>
+      cdp.evaluate(`Boolean(
+        document.querySelector('.updates-page') &&
+        [...document.querySelectorAll('button')].some(
+          (button) => button.textContent?.includes('Check for updates')
+        )
+      )`),
+    Boolean,
+    "the Updates and versions page",
+  );
+  await cdp.evaluate(`([...document.querySelectorAll('button')]
+    .find((button) => button.textContent?.includes('Check for updates')))?.click()`);
+  const portableUpdateStatus = await poll(
+    () =>
+      cdp.evaluate(
+        `document.querySelector('.update-status-card')?.getAttribute('data-status')`,
+      ),
+    (status) => status === "unavailable",
+    "the portable-build update status",
+  );
+  const updatesScreenshot = await cdp.send("Page.captureScreenshot", {
+    format: "png",
+  });
+  await fs.writeFile(
+    updatesScreenshotPath,
+    Buffer.from(updatesScreenshot.data, "base64"),
+  );
+  await cdp.evaluate(
+    "document.querySelector('button[aria-label=\"Back to browsing\"]')?.click()",
+  );
+  await cdp.evaluate(
+    "document.querySelector('button[aria-label=\"Chromecraft menu\"]')?.click()",
+  );
+
+  await cdp.evaluate(`([...document.querySelectorAll('[role="menuitem"]')]
     .find((item) => item.textContent?.includes('Collapse sidebar')))?.click()`);
   await poll(
     () =>
@@ -250,7 +292,15 @@ try {
 
   console.log(
     JSON.stringify(
-      { pass: true, toggledClosed, railCollapse, screenshotPath },
+      {
+        pass: true,
+        updatesPageReady,
+        portableUpdateStatus,
+        toggledClosed,
+        railCollapse,
+        screenshotPath,
+        updatesScreenshotPath,
+      },
       null,
       2,
     ),

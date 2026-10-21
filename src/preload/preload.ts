@@ -12,6 +12,7 @@ import type {
   TabId,
 } from "../shared/browser";
 import { channels } from "../shared/channels";
+import type { UpdateSnapshot } from "../shared/updates";
 
 const api: ChromecraftApi = {
   getSnapshot: () =>
@@ -200,6 +201,12 @@ const api: ChromecraftApi = {
     ipcRenderer.invoke(channels.removeDownload, id) as Promise<void>,
   clearFinishedDownloads: () =>
     ipcRenderer.invoke(channels.clearFinishedDownloads) as Promise<void>,
+  getUpdateSnapshot: () =>
+    ipcRenderer.invoke(channels.getUpdates) as Promise<UpdateSnapshot>,
+  checkForUpdates: () =>
+    ipcRenderer.invoke(channels.checkForUpdates) as Promise<UpdateSnapshot>,
+  restartToUpdate: () =>
+    ipcRenderer.invoke(channels.restartToUpdate) as Promise<void>,
   onSnapshot: (listener) => {
     const handler = (
       _event: Electron.IpcRendererEvent,
@@ -266,6 +273,14 @@ const api: ChromecraftApi = {
     ipcRenderer.on(channels.extensionsChanged, handler);
     return () =>
       ipcRenderer.removeListener(channels.extensionsChanged, handler);
+  },
+  onUpdateSnapshot: (listener) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      snapshot: UpdateSnapshot,
+    ) => listener(snapshot);
+    ipcRenderer.on(channels.updatesChanged, handler);
+    return () => ipcRenderer.removeListener(channels.updatesChanged, handler);
   },
 };
 

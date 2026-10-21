@@ -13,7 +13,7 @@ Phase 1 established reliable browsing and horizontal tabs. Stage 2A now adds dai
 - One persistent local Default Profile holds normal browsing data. Private Windows are a later Daily Driver Fundamentals capability.
 - uBlock Origin is preinstalled, enabled by default, visible on the new-tab page, and user-disableable. Its upstream filtering engine and dashboard must work; a weaker private replacement is not an acceptable silent fallback. Electron does not provide usable tab IDs for uBlock's per-site popup, so that misleading control is not exposed.
 - The Privacy Center will add Site Network Control focused on third-party requests, with an advanced whole-site offline switch later. This is not a DNS server.
-- Installer, signing, automatic updates, and public distribution are intentionally deferred until the browser core is good enough to publish.
+- The browser includes a user-triggered full-release update interface and Windows Squirrel installer path. Production signing, a hosted release feed, Linux package repository, and public distribution remain release-preparation work.
 
 ## Architecture to build toward
 
@@ -140,7 +140,7 @@ Only after the browser is stable:
 - Any telemetry/advertising SDK, Chromecraft account, sync, or automated crash-report upload.
 - AI, ChatGPT OAuth, local Llama models, Discord, music, or other embedded services.
 - Accounts, sync, AI, music, or messaging inside the Sidebar.
-- An installer, auto-update service, signing pipeline, or public release channel.
+- A hosted update service, production signing pipeline, Linux package repository, or public release channel.
 
 ## Primary risks and controls
 

@@ -1,5 +1,6 @@
 import type { ForgeConfig } from "@electron-forge/shared-types";
 import { MakerDeb } from "@electron-forge/maker-deb";
+import { MakerSquirrel } from "@electron-forge/maker-squirrel";
 import { MakerZIP } from "@electron-forge/maker-zip";
 import { FusesPlugin } from "@electron-forge/plugin-fuses";
 import { VitePlugin } from "@electron-forge/plugin-vite";
@@ -12,6 +13,17 @@ const config: ForgeConfig = {
     executableName: "chromecraft",
   },
   makers: [
+    new MakerSquirrel(
+      {
+        name: "Chromecraft",
+        authors: "Chromecraft contributors",
+        description:
+          "A dependable, local-first Electron browser for Windows and Linux.",
+        setupExe: "ChromecraftSetup.exe",
+        noMsi: true,
+      },
+      ["win32"],
+    ),
     new MakerZIP({}, ["win32", "linux"]),
     new MakerDeb(
       {

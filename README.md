@@ -38,6 +38,12 @@ Create an unpacked Windows application:
 pnpm package:win
 ```
 
+Create the Windows ZIP plus the Squirrel installer and update artifacts:
+
+```sh
+pnpm make:win
+```
+
 Create an unpacked Linux x64 application suitable for Linux Mint runtime testing:
 
 ```sh
@@ -45,7 +51,21 @@ pnpm package:linux
 pnpm smoke:linux
 ```
 
-Outputs are written beneath `out/`. Installer and automatic-update work remains deliberately out of scope for Phase 1.
+Outputs are written beneath `out/`.
+
+## Updates
+
+The ChromeCraft menu exposes **Updates and versions**. Installed Windows builds
+use Electron's native Squirrel updater to download and apply a complete packaged
+release—including Electron, Chromium, Node.js, and bundled dependencies—after a
+user-approved restart. Browser data remains in the existing per-user profile.
+
+Release builds must set `CHROMECRAFT_UPDATE_FEED_URL` to the fixed HTTPS directory
+that publishes the matching `RELEASES` file and `.nupkg` artifacts. Portable ZIP
+and development builds report that self-update is unavailable. Linux packages
+are updated through the distribution package manager because Electron does not
+provide a built-in Linux updater. Production Windows releases must also be code
+signed; signing credentials are intentionally not stored in this repository.
 
 ## uBlock Origin
 
@@ -61,5 +81,5 @@ See [third-party notices](THIRD_PARTY_NOTICES.md) for the pinned source, license
 
 - Sidebar, Minecraft theme, accounts, profiles, sync, AI, music, and messaging
 - Downloads, bookmarks, history UI, session restore, and site permission prompts
-- Installer, signing, or automatic updates
+- Production signing and a hosted release feed
 - A Chromium fork or a replacement browser engine

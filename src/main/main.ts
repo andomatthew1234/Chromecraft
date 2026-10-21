@@ -14,6 +14,7 @@ import {
   type IpcMainInvokeEvent,
   WebContentsView,
 } from "electron";
+import electronSquirrelStartup from "electron-squirrel-startup";
 
 import { channels } from "../shared/channels";
 import type {
@@ -42,12 +43,14 @@ import {
   DownloadManager,
   type DownloadSnapshot as ManagerDownload,
 } from "./download-manager";
+import { ElectronUpdateAdapter } from "./electron-update-adapter";
 import { registerInternalProtocol } from "./internal-protocol";
 import { HyperdriveController } from "./hyperdrive/controller";
 import { PreferencesStore } from "./preferences";
 import { SearchSuggestionService } from "./search-suggestions";
 import { TabManager } from "./tab-manager";
 import { UblockService } from "./ublock-service";
+import { UpdateManager } from "./update-manager";
 import { parseChromeWebStoreListingUrl } from "../shared/web-store-listing";
 
 const startedAt = performance.now();
@@ -84,6 +87,11 @@ if (smokeFixtureUrl) {
 }
 
 app.setName("Chromecraft");
+if (process.platform === "win32") {
+  app.setAppUserModelId("com.squirrel.Chromecraft.chromecraft");
+}
+
+const handlingSquirrelStartup = electronSquirrelStartup;
 
 let mainWindow: BaseWindow | null = null;
 let shellView: WebContentsView | null = null;
@@ -101,7 +109,46 @@ let extensionProgress: ExtensionOperationProgressSnapshot | null = null;
 let preparedExtensionToken: string | null = null;
 let preparedExtensionId: string | null = null;
 let extensionSnapshotSendQueue: Promise<void> = Promise.resolve();
+let updateRestartPrepared = false;
+let updateShutdownPromise: Promise<void> | null = null;
 let ipcRegistered = false;
+
+const updateManager = new UpdateManager({
+  adapter: new ElectronUpdateAdapter({
+    isPackaged: app.isPackaged,
+    platform: process.platform,
+    executablePath: process.execPath,
+    feedUrl: CHROMECRAFT_UPDATE_FEED_URL,
+  }),
+  installedVersions: [
+    { id: "chromecraft", label: "ChromeCraft", version: app.getVersion() },
+    {
+      id: "electron",
+      label: "Electron",
+      version: process.versions.electron,
+    },
+    { id: "chromium", label: "Chromium", version: process.versions.chrome },
+    { id: "node", label: "Node.js", version: process.versions.node },
+  ],
+  emit: sendUpdateSnapshot,
+  prepareForRestart: prepareForUpdateRestart,
+});
+
+function sendUpdateSnapshot(snapshot = updateManager.snapshot): void {
+  if (!shellView || shellView.webContents.isDestroyed()) return;
+  shellView.webContents.send(channels.updatesChanged, snapshot);
+}
+
+function prepareForUpdateRestart(): Promise<void> {
+  if (updateShutdownPromise) return updateShutdownPromise;
+  updateShutdownPromise = Promise.all([
+    tabManager?.flushSession() ?? Promise.resolve(),
+    downloadManager?.dispose() ?? Promise.resolve(),
+  ]).then(() => {
+    updateRestartPrepared = true;
+  });
+  return updateShutdownPromise;
+}
 
 function requireManager(event: IpcMainInvokeEvent): TabManager {
   if (!tabManager || !shellView || event.sender !== shellView.webContents) {
@@ -451,6 +498,18 @@ function registerIpc(): void {
     channels.getSnapshot,
     (event) => requireManager(event).snapshot,
   );
+  ipcMain.handle(channels.getUpdates, (event) => {
+    requireTrusted(event);
+    return updateManager.snapshot;
+  });
+  ipcMain.handle(channels.checkForUpdates, async (event) => {
+    requireTrusted(event);
+    return updateManager.check();
+  });
+  ipcMain.handle(channels.restartToUpdate, async (event) => {
+    requireTrusted(event);
+    await updateManager.restart();
+  });
   ipcMain.handle(channels.createTab, (event, input?: unknown) =>
     requireManager(event).createTab(
       typeof input === "string" ? input : undefined,
@@ -1130,7 +1189,7 @@ async function createMainWindow(): Promise<void> {
 
   let closingApproved = false;
   window.on("close", (event) => {
-    if (closingApproved) {
+    if (closingApproved || updateRestartPrepared) {
       suggestions.dispose();
       hyperdrive.dispose();
       manager.dispose();
@@ -1198,19 +1257,23 @@ async function createMainWindow(): Promise<void> {
   }
 }
 
-app.whenReady().then(async () => {
-  try {
-    await createMainWindow();
-  } catch (error) {
-    console.error("Chromecraft failed to start.", error);
-    app.exit(1);
-  }
-});
+if (handlingSquirrelStartup) {
+  app.quit();
+} else {
+  app.whenReady().then(async () => {
+    try {
+      await createMainWindow();
+    } catch (error) {
+      console.error("Chromecraft failed to start.", error);
+      app.exit(1);
+    }
+  });
+}
 
 app.on("window-all-closed", () => app.quit());
 
 app.on("activate", () => {
-  if (!mainWindow) void createMainWindow();
+  if (!handlingSquirrelStartup && !mainWindow) void createMainWindow();
 });
 
 app.on("web-contents-created", (_event, contents) => {

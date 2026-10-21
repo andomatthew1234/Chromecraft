@@ -81,4 +81,8 @@ export const channels = {
   showDownloadInFolder: "downloads:show-in-folder",
   removeDownload: "downloads:remove",
   clearFinishedDownloads: "downloads:clear-finished",
+  getUpdates: "updates:get-snapshot",
+  checkForUpdates: "updates:check",
+  restartToUpdate: "updates:restart",
+  updatesChanged: "updates:snapshot-changed",
 } as const;

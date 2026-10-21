@@ -1,3 +1,5 @@
+import type { UpdateSnapshot } from "./updates";
+
 export type TabId = string;
 
 export interface BrowserTabSnapshot {
@@ -388,6 +390,9 @@ export interface ChromecraftApi {
   showDownloadInFolder(id: string): Promise<void>;
   removeDownload(id: string): Promise<void>;
   clearFinishedDownloads(): Promise<void>;
+  getUpdateSnapshot(): Promise<UpdateSnapshot>;
+  checkForUpdates(): Promise<UpdateSnapshot>;
+  restartToUpdate(): Promise<void>;
   onSnapshot(listener: (snapshot: BrowserSnapshot) => void): () => void;
   onBrowserData(listener: (snapshot: BrowserDataSnapshot) => void): () => void;
   onDownloads(listener: (snapshot: DownloadSnapshot) => void): () => void;
@@ -399,4 +404,5 @@ export interface ChromecraftApi {
     listener: (snapshot: HyperdriveSnapshot) => void,
   ): () => void;
   onExtensions(listener: (snapshot: ExtensionsSnapshot) => void): () => void;
+  onUpdateSnapshot(listener: (snapshot: UpdateSnapshot) => void): () => void;
 }

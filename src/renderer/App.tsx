@@ -34,6 +34,7 @@ import {
   type SidebarTool,
 } from "../shared/sidebar";
 import { parseChromeWebStoreListingUrl } from "../shared/web-store-listing";
+import type { UpdateSnapshot } from "../shared/updates";
 import {
   ExtensionInstallBanner,
   type ExtensionInstallBannerState,
@@ -412,12 +413,16 @@ function TabStrip({
   brandMenuOpen,
   onToggleBrandMenu,
   onSetSidebarAttached,
+  onOpenUpdates,
+  onHoverCardOpenChange,
 }: {
   snapshot: BrowserSnapshot;
   onMenu: (event: MouseEvent, tab: BrowserTabSnapshot) => void;
   brandMenuOpen: boolean;
   onToggleBrandMenu: () => void;
   onSetSidebarAttached: (attached: boolean) => void;
+  onOpenUpdates: () => void;
+  onHoverCardOpenChange: (open: boolean) => void;
 }) {
   const sidebarAttached = snapshot.preferences.sidebarAttached;
   const sidebarAction = sidebarMenuActionLabel(sidebarAttached);
@@ -509,9 +514,21 @@ function TabStrip({
                 aria-hidden="true"
               />
             </button>
-            <footer className="brand-menu-footer">
-              More Chromecraft controls will live here.
-            </footer>
+            <button
+              type="button"
+              className="brand-menu-item"
+              role="menuitem"
+              onClick={onOpenUpdates}
+            >
+              <span className="brand-menu-item-icon" aria-hidden="true">
+                <Icon name="reload" />
+              </span>
+              <span className="brand-menu-item-copy">
+                <strong>Updates and versions</strong>
+                <small>Update ChromeCraft, Electron, and dependencies</small>
+              </span>
+              <Icon name="chevronRight" />
+            </button>
           </section>
         )}
       </div>
@@ -2656,6 +2673,186 @@ const HyperdriveMonitor = memo(function HyperdriveMonitor({
   );
 });
 
+function UpdatesPage({
+  snapshot,
+  close,
+}: {
+  snapshot: UpdateSnapshot;
+  close: () => void;
+}) {
+  const [actionError, setActionError] = useState<string | null>(null);
+  const busy =
+    snapshot.status === "checking" || snapshot.status === "downloading";
+  const statusTitle: Record<UpdateSnapshot["status"], string> = {
+    idle: "Ready to check",
+    checking: "Checking every shipped part",
+    downloading: "Downloading the verified release",
+    ready: "Update ready",
+    "up-to-date": "Everything is up to date",
+    unavailable: "Updates unavailable here",
+    error: "Update check failed",
+  };
+  const check = async () => {
+    setActionError(null);
+    try {
+      await window.chromecraft.checkForUpdates();
+    } catch {
+      setActionError("ChromeCraft could not start the update check.");
+    }
+  };
+  const restart = async () => {
+    setActionError(null);
+    try {
+      await window.chromecraft.restartToUpdate();
+    } catch {
+      setActionError("ChromeCraft could not restart to apply the update.");
+    }
+  };
+
+  return (
+    <main className="updates-page" aria-labelledby="updates-title">
+      <div className="updates-page-content">
+        <header className="updates-page-header">
+          <button
+            type="button"
+            className="updates-back-button"
+            onClick={close}
+            aria-label="Back to browsing"
+            title="Back to browsing"
+          >
+            <Icon name="back" />
+          </button>
+          <span>
+            <small>ChromeCraft system</small>
+            <h1 id="updates-title">Updates and versions</h1>
+          </span>
+        </header>
+
+        <section
+          className="update-status-card"
+          data-status={snapshot.status}
+          aria-live="polite"
+          aria-busy={busy}
+        >
+          <span className="update-status-icon" aria-hidden="true">
+            <Icon
+              name={
+                snapshot.status === "error" || snapshot.status === "unavailable"
+                  ? "warning"
+                  : snapshot.status === "ready" ||
+                      snapshot.status === "up-to-date"
+                    ? "shield"
+                    : "reload"
+              }
+            />
+          </span>
+          <span className="update-status-copy">
+            <strong>{statusTitle[snapshot.status]}</strong>
+            <small>
+              {snapshot.message ??
+                "Check the complete packaged browser, including its engine and dependencies."}
+            </small>
+          </span>
+          {busy && (
+            <span className="update-progress-track" aria-hidden="true" />
+          )}
+        </section>
+
+        {snapshot.readyUpdates.length > 0 && (
+          <section
+            className="ready-updates"
+            aria-labelledby="ready-updates-title"
+          >
+            <div className="updates-section-heading">
+              <span>
+                <small>Downloaded and verified</small>
+                <h2 id="ready-updates-title">Ready updates</h2>
+              </span>
+              <span className="ready-badge">Ready</span>
+            </div>
+            {snapshot.readyUpdates.map((update) => (
+              <article className="ready-update-card" key={update.id}>
+                <div className="ready-update-title">
+                  <span className="update-package-icon" aria-hidden="true">
+                    C
+                  </span>
+                  <span>
+                    <strong>{update.label}</strong>
+                    <small>
+                      {update.fromVersion} → {update.toVersion}
+                    </small>
+                  </span>
+                </div>
+                <ul>
+                  {update.includes.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </article>
+            ))}
+          </section>
+        )}
+
+        <section
+          className="installed-versions"
+          aria-labelledby="versions-title"
+        >
+          <div className="updates-section-heading">
+            <span>
+              <small>Currently installed</small>
+              <h2 id="versions-title">Versions</h2>
+            </span>
+          </div>
+          <div className="version-grid">
+            {snapshot.installedVersions.map((item) => (
+              <article className="version-card" key={item.id}>
+                <span>{item.label}</span>
+                <strong>{item.version}</strong>
+              </article>
+            ))}
+          </div>
+        </section>
+
+        {actionError && (
+          <p className="update-action-error" role="alert">
+            {actionError}
+          </p>
+        )}
+        <footer className="updates-actions">
+          <button
+            type="button"
+            className="tonal-button"
+            onClick={() => void check()}
+            disabled={!snapshot.canCheck}
+          >
+            {snapshot.status === "checking"
+              ? "Checking…"
+              : snapshot.status === "downloading"
+                ? "Downloading…"
+                : "Check for updates"}
+          </button>
+          {snapshot.canRestart && (
+            <button
+              type="button"
+              className="filled-button restart-update-button"
+              onClick={() => void restart()}
+            >
+              Restart ChromeCraft
+            </button>
+          )}
+        </footer>
+        <p className="updates-footnote">
+          Updates replace the complete signed application. Your tabs, history,
+          bookmarks, settings, and extensions remain in your local profile.
+          {snapshot.checkedAt
+            ? ` Last checked ${new Date(snapshot.checkedAt).toLocaleString()}.`
+            : ""}
+        </p>
+      </div>
+    </main>
+  );
+}
+
 function NewTabSurface({
   tab,
   snapshot,
@@ -2836,8 +3033,12 @@ export function App() {
   const [data, setData] = useState(emptyData);
   const [downloads, setDownloads] = useState(emptyDownloads);
   const [extensions, setExtensions] = useState(emptyExtensions);
+  const [updates, setUpdates] = useState<UpdateSnapshot | null>(null);
   const [tool, setTool] = useState<SidebarTool | null>(null);
   const [brandMenuOpen, setBrandMenuOpen] = useState(false);
+  const [updatesOpen, setUpdatesOpen] = useState(false);
+  const [extensionsMenuOpen, setExtensionsMenuOpen] = useState(false);
+  const [tabHoverCardOpen, setTabHoverCardOpen] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
   const [omniboxExpanded, setOmniboxExpanded] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -2855,6 +3056,7 @@ export function App() {
       window.chromecraft.getDownloads(),
       window.chromecraft.getHyperdriveSnapshot(),
       window.chromecraft.getExtensions(),
+      window.chromecraft.getUpdateSnapshot(),
     ]).then(
       ([
         nextSnapshot,
@@ -2862,6 +3064,7 @@ export function App() {
         nextDownloads,
         nextHyperdrive,
         nextExtensions,
+        nextUpdates,
       ]) => {
         if (mounted) {
           setSnapshot(nextSnapshot);
@@ -2870,6 +3073,7 @@ export function App() {
           setDownloads(nextDownloads);
           setHyperdrive(nextHyperdrive);
           setExtensions(nextExtensions);
+          setUpdates(nextUpdates);
         }
       },
     );
@@ -2879,6 +3083,7 @@ export function App() {
       window.chromecraft.onDownloads(setDownloads),
       window.chromecraft.onHyperdriveSnapshot(setHyperdrive),
       window.chromecraft.onExtensions(setExtensions),
+      window.chromecraft.onUpdateSnapshot(setUpdates),
       window.chromecraft.onShowFind(() => setFindOpen(true)),
       window.chromecraft.onOpenCommandPalette(() => setPaletteOpen(true)),
     ];
@@ -2898,6 +3103,9 @@ export function App() {
       findOpen ||
       paletteOpen ||
       brandMenuOpen ||
+      updatesOpen ||
+      extensionsMenuOpen ||
+      tabHoverCardOpen ||
       tabMenu ||
       dialog,
     );
@@ -2905,7 +3113,17 @@ export function App() {
     return () => {
       if (open) void window.chromecraft.setChromeOverlayOpen(false);
     };
-  }, [brandMenuOpen, dialog, findOpen, omniboxExpanded, paletteOpen, tabMenu]);
+  }, [
+    brandMenuOpen,
+    dialog,
+    extensionsMenuOpen,
+    findOpen,
+    omniboxExpanded,
+    paletteOpen,
+    tabHoverCardOpen,
+    tabMenu,
+    updatesOpen,
+  ]);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
@@ -2923,6 +3141,8 @@ export function App() {
       if (event.key === "Escape") {
         void window.chromecraft.closeExtensionPopup();
         setBrandMenuOpen(false);
+        setExtensionsMenuOpen(false);
+        setUpdatesOpen(false);
         setPaletteOpen(false);
         setTabMenu(null);
       }
@@ -2944,7 +3164,7 @@ export function App() {
     addEventListener("pointerdown", pointer, { capture: true });
     return () => removeEventListener("pointerdown", pointer, { capture: true });
   }, []);
-  if (!snapshot || !activeTab || !hyperdrive)
+  if (!snapshot || !activeTab || !hyperdrive || !updates)
     return (
       <main className="boot">
         <ExpressiveLoadingIndicator label="Starting Chromecraft" />
@@ -3038,6 +3258,10 @@ export function App() {
           onHoverCardOpenChange={setTabHoverCardOpen}
           onSetSidebarAttached={(attached) => {
             void window.chromecraft.setSidebarAttached(attached);
+            setBrandMenuOpen(false);
+          }}
+          onOpenUpdates={() => {
+            setUpdatesOpen(true);
             setBrandMenuOpen(false);
           }}
           onMenu={(event, tab) => {
@@ -3198,6 +3422,9 @@ export function App() {
         }
       />
       <NewTabSurface tab={activeTab} snapshot={snapshot} data={data} />
+      {updatesOpen && (
+        <UpdatesPage snapshot={updates} close={() => setUpdatesOpen(false)} />
+      )}
       {snapshot.preferences.hyperdriveMonitorOpen && (
         <HyperdriveMonitor snapshot={hyperdrive} />
       )}

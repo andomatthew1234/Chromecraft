@@ -612,11 +612,53 @@ export async function runSmokeTest(
     })()`);
     if (!collapseMenuReady)
       throw new Error("The Chromecraft menu did not expose Collapse sidebar.");
+    const updatesMenuReady = await manager.evaluateShell<boolean>(`(() => {
+      const action = [...document.querySelectorAll('[role="menuitem"]')].find(
+        (candidate) => candidate.textContent?.includes('Updates and versions')
+      );
+      return Boolean(action);
+    })()`);
+    if (!updatesMenuReady)
+      throw new Error(
+        "The Chromecraft menu did not expose Updates and versions.",
+      );
     await saveCaptureIfAvailable(
       namedCapturePath(options.shellScreenshotPath, "chromecraft-menu"),
       () => manager.captureShell(),
       "the Chromecraft menu screenshot",
     );
+    await manager.evaluateShell<boolean>(`(() => {
+      const action = [...document.querySelectorAll('[role="menuitem"]')].find(
+        (candidate) => candidate.textContent?.includes('Updates and versions')
+      );
+      action?.click();
+      return Boolean(action);
+    })()`);
+    await waitForShellPaint(manager);
+    const updatesPageReady = await manager.evaluateShell<boolean>(`Boolean(
+      document.querySelector('.updates-page') &&
+      [...document.querySelectorAll('button')].some(
+        (button) => button.textContent?.includes('Check for updates')
+      )
+    )`);
+    if (!updatesPageReady)
+      throw new Error("The Updates and versions page did not open.");
+    await saveCaptureIfAvailable(
+      namedCapturePath(options.shellScreenshotPath, "updates-and-versions"),
+      () => manager.captureShell(),
+      "the Updates and versions screenshot",
+    );
+    await manager.evaluateShell<boolean>(`(() => {
+      const back = document.querySelector('button[aria-label="Back to browsing"]');
+      back?.click();
+      return Boolean(back);
+    })()`);
+    await manager.evaluateShell<boolean>(`(() => {
+      const brand = document.querySelector('button[aria-label="Chromecraft menu"]');
+      brand?.click();
+      return Boolean(brand);
+    })()`);
+    await waitForShellPaint(manager);
     await manager.evaluateShell<boolean>(`(() => {
       const action = [...document.querySelectorAll('[role="menuitem"]')].find(
         (candidate) => candidate.textContent?.includes('Collapse sidebar')
