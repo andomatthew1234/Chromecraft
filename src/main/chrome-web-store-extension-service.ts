@@ -34,6 +34,7 @@ const LEGACY_COMPATIBILITY_SCRIPT_PATHS = new Set([
 const LEGACY_COMPATIBILITY_WINDOW_BRIDGE_PATHS = new Set([
   `${LEGACY_COMPATIBILITY_DIRECTORY}/window-bridge.js`,
 ]);
+const DEFAULT_EXTENSION_READY_TIMEOUT_MS = 15_000;
 
 export interface InstalledExtensionSnapshot {
   id: string;
@@ -114,6 +115,8 @@ export interface ChromeWebStoreExtensionServiceOptions {
   ) => Promise<Response>;
   chromiumVersion: string;
   maximumCrxBytes?: number;
+  extensionReadyTimeoutMs?: number;
+  onChanged?: () => void;
 }
 
 interface ParsedCrx {
@@ -161,6 +164,7 @@ export class ChromeWebStoreExtensionService {
   private readonly storagePath: string;
   private readonly registryPath: string;
   private readonly maximumCrxBytes: number;
+  private readonly extensionReadyTimeoutMs: number;
   private readonly runtimes = new Map<string, ExtensionRuntime>();
   private preparedExtension: PreparedExtension | null = null;
   private activePreparation: {
@@ -169,6 +173,43 @@ export class ChromeWebStoreExtensionService {
   } | null = null;
   private committingPreviewToken: string | null = null;
   private initialized = false;
+  private lifecycleBound = false;
+
+  private readonly onExtensionLoaded = (
+    _event: Electron.Event,
+    extension: Extension,
+  ): void => {
+    const runtime = this.runtimes.get(extension.id);
+    if (!runtime?.stored.enabled) return;
+    runtime.extension = extension;
+    runtime.snapshot.ready = false;
+    runtime.snapshot.error = null;
+    this.options.onChanged?.();
+  };
+
+  private readonly onExtensionReady = (
+    _event: Electron.Event,
+    extension: Extension,
+  ): void => {
+    const runtime = this.runtimes.get(extension.id);
+    if (!runtime?.stored.enabled) return;
+    runtime.extension = extension;
+    runtime.snapshot.ready = true;
+    runtime.snapshot.error = null;
+    if (extension.name.trim()) runtime.snapshot.name = extension.name;
+    this.options.onChanged?.();
+  };
+
+  private readonly onExtensionUnloaded = (
+    _event: Electron.Event,
+    extension: Extension,
+  ): void => {
+    const runtime = this.runtimes.get(extension.id);
+    if (!runtime) return;
+    runtime.extension = null;
+    runtime.snapshot.ready = false;
+    this.options.onChanged?.();
+  };
 
   constructor(
     private readonly browserSession: Session,
@@ -180,18 +221,33 @@ export class ChromeWebStoreExtensionService {
       Math.max(options.maximumCrxBytes ?? MAX_CRX_BYTES, 1_024),
       MAX_EXTRACTED_BYTES,
     );
+    this.extensionReadyTimeoutMs = Math.max(
+      1,
+      options.extensionReadyTimeoutMs ?? DEFAULT_EXTENSION_READY_TIMEOUT_MS,
+    );
   }
 
   async initialize(): Promise<void> {
     if (this.initialized) return;
-    await fs.mkdir(this.storagePath, { recursive: true });
-    const registry = await this.readRegistry();
-    for (const stored of registry.extensions) {
-      const runtime = await this.readRuntime(stored);
-      this.runtimes.set(stored.id, runtime);
-      if (stored.enabled) await this.loadRuntime(runtime, false);
+    this.bindLifecycle();
+    try {
+      await fs.mkdir(this.storagePath, { recursive: true });
+      const registry = await this.readRegistry();
+      for (const stored of registry.extensions) {
+        const runtime = await this.readRuntime(stored);
+        this.runtimes.set(stored.id, runtime);
+        if (stored.enabled) await this.loadRuntime(runtime, false);
+      }
+      this.initialized = true;
+    } catch (error) {
+      this.unbindLifecycle();
+      throw error;
     }
-    this.initialized = true;
+  }
+
+  dispose(): void {
+    this.cancelPreparedExtension();
+    this.unbindLifecycle();
   }
 
   async listInstalled(): Promise<InstalledExtensionSnapshot[]> {
@@ -498,6 +554,24 @@ export class ChromeWebStoreExtensionService {
     }
   }
 
+  private bindLifecycle(): void {
+    if (this.lifecycleBound) return;
+    const extensions = this.browserSession.extensions;
+    extensions.on("extension-loaded", this.onExtensionLoaded);
+    extensions.on("extension-ready", this.onExtensionReady);
+    extensions.on("extension-unloaded", this.onExtensionUnloaded);
+    this.lifecycleBound = true;
+  }
+
+  private unbindLifecycle(): void {
+    if (!this.lifecycleBound) return;
+    const extensions = this.browserSession.extensions;
+    extensions.removeListener("extension-loaded", this.onExtensionLoaded);
+    extensions.removeListener("extension-ready", this.onExtensionReady);
+    extensions.removeListener("extension-unloaded", this.onExtensionUnloaded);
+    this.lifecycleBound = false;
+  }
+
   private assertActivePreparation(token: string): void {
     if (
       this.activePreparation?.token !== token ||
@@ -656,6 +730,15 @@ export class ChromeWebStoreExtensionService {
     runtime: ExtensionRuntime,
     failInstallation: boolean,
   ): Promise<void> {
+    let readyTimer: ReturnType<typeof setTimeout> | null = null;
+    let resolveReady: ((extension: Extension) => void) | null = null;
+    const ready = new Promise<Extension>((resolve) => {
+      resolveReady = resolve;
+    });
+    const onReady = (_event: Electron.Event, extension: Extension) => {
+      if (extension.id === runtime.stored.id) resolveReady?.(extension);
+    };
+    this.browserSession.extensions.on("extension-ready", onReady);
     try {
       const extension = await this.browserSession.extensions.loadExtension(
         this.extensionVersionPath(runtime.stored.id, runtime.stored.version),
@@ -667,8 +750,23 @@ export class ChromeWebStoreExtensionService {
           "Electron loaded the extension with an unexpected extension id.",
         );
       }
-      runtime.extension = extension;
-      if (extension.name.trim()) runtime.snapshot.name = extension.name;
+      const readyExtension = await Promise.race([
+        ready,
+        new Promise<never>((_resolve, reject) => {
+          readyTimer = setTimeout(
+            () =>
+              reject(
+                new Error(
+                  `Extension ${runtime.stored.id} did not become ready within ${this.extensionReadyTimeoutMs}ms.`,
+                ),
+              ),
+            this.extensionReadyTimeoutMs,
+          );
+        }),
+      ]);
+      runtime.extension = readyExtension;
+      if (readyExtension.name.trim())
+        runtime.snapshot.name = readyExtension.name;
       runtime.snapshot.ready = true;
       runtime.snapshot.error = null;
     } catch (error) {
@@ -676,6 +774,9 @@ export class ChromeWebStoreExtensionService {
       runtime.snapshot.ready = false;
       runtime.snapshot.error = errorMessage(error);
       if (failInstallation) throw error;
+    } finally {
+      if (readyTimer) clearTimeout(readyTimer);
+      this.browserSession.extensions.removeListener("extension-ready", onReady);
     }
   }
 

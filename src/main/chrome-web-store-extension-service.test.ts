@@ -1,4 +1,5 @@
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
+import { EventEmitter } from "node:events";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -534,6 +535,95 @@ describe("ChromeWebStoreExtensionService", () => {
     ).rejects.toThrow();
   });
 
+  it("does not report an extension ready before Electron initializes its browser state", async () => {
+    const fixture = createCrxFixture();
+    const runtime = createSessionDouble(fixture.id, {
+      automaticallyReady: false,
+    });
+    const service = new ChromeWebStoreExtensionService(runtime.session, {
+      storagePath: await makeTemporaryDirectory(),
+      fetch: async () => new Response(new Uint8Array(fixture.crx)),
+      chromiumVersion: "152.0.0.0",
+      extensionReadyTimeoutMs: 250,
+    });
+    await service.initialize();
+
+    let settled = false;
+    const installing = service
+      .installFromWebStoreUrl(
+        `https://chromewebstore.google.com/detail/readiness-fixture/${fixture.id}`,
+      )
+      .finally(() => {
+        settled = true;
+      });
+    await vi.waitFor(() => expect(runtime.loadExtension).toHaveBeenCalled());
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    runtime.emitReady();
+    await expect(installing).resolves.toMatchObject({
+      ready: true,
+      error: null,
+    });
+  });
+
+  it("fails installation when Electron never reports the extension ready", async () => {
+    const fixture = createCrxFixture();
+    const runtime = createSessionDouble(fixture.id, {
+      automaticallyReady: false,
+    });
+    const service = new ChromeWebStoreExtensionService(runtime.session, {
+      storagePath: await makeTemporaryDirectory(),
+      fetch: async () => new Response(new Uint8Array(fixture.crx)),
+      chromiumVersion: "152.0.0.0",
+      extensionReadyTimeoutMs: 10,
+    });
+    await service.initialize();
+
+    await expect(
+      service.installFromWebStoreUrl(
+        `https://chromewebstore.google.com/detail/readiness-timeout/${fixture.id}`,
+      ),
+    ).rejects.toThrow(/did not become ready/i);
+    await expect(service.listInstalled()).resolves.toEqual([]);
+  });
+
+  it("tracks Electron reload and unload lifecycle events after installation", async () => {
+    const fixture = createCrxFixture();
+    const onChanged = vi.fn();
+    const runtime = createSessionDouble(fixture.id);
+    const service = new ChromeWebStoreExtensionService(runtime.session, {
+      storagePath: await makeTemporaryDirectory(),
+      fetch: async () => new Response(new Uint8Array(fixture.crx)),
+      chromiumVersion: "152.0.0.0",
+      onChanged,
+    });
+    await service.initialize();
+    await service.installFromWebStoreUrl(
+      `https://chromewebstore.google.com/detail/lifecycle-fixture/${fixture.id}`,
+    );
+
+    runtime.emitLoaded();
+    await expect(service.listInstalled()).resolves.toEqual([
+      expect.objectContaining({ ready: false }),
+    ]);
+    runtime.emitReady();
+    await expect(service.listInstalled()).resolves.toEqual([
+      expect.objectContaining({ ready: true }),
+    ]);
+    runtime.emitUnloaded();
+    await expect(service.listInstalled()).resolves.toEqual([
+      expect.objectContaining({ ready: false }),
+    ]);
+    expect(onChanged).toHaveBeenCalledTimes(3);
+
+    service.dispose();
+    runtime.emitReady();
+    await expect(service.listInstalled()).resolves.toEqual([
+      expect.objectContaining({ ready: false }),
+    ]);
+  });
+
   it("wraps module-based Manifest V3 workers before loading the extension", async () => {
     const fixture = createCrxFixture({
       manifest: {
@@ -756,11 +846,18 @@ async function makeTemporaryDirectory(): Promise<string> {
   return directory;
 }
 
-function createSessionDouble(extensionId: string): {
+function createSessionDouble(
+  extensionId: string,
+  options: { automaticallyReady?: boolean } = {},
+): {
   session: Session;
   loadExtension: ReturnType<typeof vi.fn>;
+  emitLoaded: () => void;
+  emitReady: () => void;
+  emitUnloaded: () => void;
 } {
   const loadedExtensions: Extension[] = [];
+  const extensions = new EventEmitter();
   const loadExtension = vi.fn(
     async (extensionPath: string): Promise<Extension> => {
       const manifest = JSON.parse(
@@ -782,26 +879,42 @@ function createSessionDouble(extensionId: string): {
         manifest,
       } as unknown as Extension;
       loadedExtensions.push(extension);
+      if (options.automaticallyReady !== false) {
+        queueMicrotask(() => extensions.emit("extension-ready", {}, extension));
+      }
       return extension;
     },
   );
+  Object.assign(extensions, {
+    getAllExtensions: () => [...loadedExtensions],
+    getExtension: (id: string) =>
+      loadedExtensions.find((extension) => extension.id === id) ?? null,
+    loadExtension,
+    removeExtension: vi.fn(async (id: string) => {
+      const index = loadedExtensions.findIndex(
+        (extension) => extension.id === id,
+      );
+      if (index >= 0) loadedExtensions.splice(index, 1);
+    }),
+  });
   return {
     session: {
       clearStorageData: vi.fn(async () => undefined),
-      extensions: {
-        getAllExtensions: () => [...loadedExtensions],
-        getExtension: (id: string) =>
-          loadedExtensions.find((extension) => extension.id === id) ?? null,
-        loadExtension,
-        removeExtension: vi.fn(async (id: string) => {
-          const index = loadedExtensions.findIndex(
-            (extension) => extension.id === id,
-          );
-          if (index >= 0) loadedExtensions.splice(index, 1);
-        }),
-      },
+      extensions,
     } as unknown as Session,
     loadExtension,
+    emitLoaded: () => {
+      const extension = loadedExtensions.at(-1);
+      if (extension) extensions.emit("extension-loaded", {}, extension);
+    },
+    emitReady: () => {
+      const extension = loadedExtensions.at(-1);
+      if (extension) extensions.emit("extension-ready", {}, extension);
+    },
+    emitUnloaded: () => {
+      const extension = loadedExtensions.at(-1);
+      if (extension) extensions.emit("extension-unloaded", {}, extension);
+    },
   };
 }
 

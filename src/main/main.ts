@@ -1039,6 +1039,7 @@ async function createMainWindow(): Promise<void> {
         init,
       ),
     chromiumVersion: process.versions.chrome,
+    onChanged: () => void sendExtensionsSnapshot(),
   });
   try {
     await extensions.initialize();
@@ -1204,6 +1205,7 @@ async function createMainWindow(): Promise<void> {
     );
   });
   window.on("closed", () => {
+    extensions.dispose();
     nativeTheme.removeListener("updated", syncWindowChromeTheme);
     if (mainWindow === window) {
       mainWindow = null;
