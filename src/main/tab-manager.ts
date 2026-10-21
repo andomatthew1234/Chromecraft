@@ -71,9 +71,161 @@ interface TabRecord {
   webStoreListingDescription: string | null;
 }
 
+export type ExtensionTabStatus = "loading" | "complete";
+
+export interface ExtensionTabSnapshot {
+  id: number;
+  active: boolean;
+  title: string;
+  url: string;
+  status: ExtensionTabStatus;
+}
+
+export type ExtensionTabChange = Partial<
+  Pick<ExtensionTabSnapshot, "title" | "url" | "status">
+>;
+
+export type ExtensionTabTransition =
+  | { type: "created"; tab: ExtensionTabSnapshot }
+  | {
+      type: "activated";
+      tabId: number;
+      previousTabId: number | null;
+    }
+  | {
+      type: "updated";
+      tabId: number;
+      change: ExtensionTabChange;
+      tab: ExtensionTabSnapshot;
+    }
+  | {
+      type: "removed";
+      tabId: number;
+      wasActive: boolean;
+    };
+
+export type ExtensionTabTransitionListener = (
+  transition: ExtensionTabTransition,
+) => void;
+
+/**
+ * Owns the process-local identity and ordered transition stream exposed to the
+ * extension host. Browser tab UUIDs remain an implementation detail.
+ */
+export class ExtensionTabLifecycle {
+  private readonly tabsByBrowserId = new Map<TabId, ExtensionTabSnapshot>();
+  private readonly tabsByExtensionId = new Map<number, ExtensionTabSnapshot>();
+  private readonly listeners = new Set<ExtensionTabTransitionListener>();
+  private nextId = 1;
+  private activeId: number | null = null;
+
+  get snapshots(): ExtensionTabSnapshot[] {
+    return [...this.tabsByBrowserId.values()].map(cloneExtensionTab);
+  }
+
+  get(extensionTabId: number): ExtensionTabSnapshot | null {
+    const tab = this.tabsByExtensionId.get(extensionTabId);
+    return tab ? cloneExtensionTab(tab) : null;
+  }
+
+  idForBrowserTab(browserTabId: TabId): number | null {
+    return this.tabsByBrowserId.get(browserTabId)?.id ?? null;
+  }
+
+  subscribe(listener: ExtensionTabTransitionListener): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  create(
+    browserTabId: TabId,
+    initial: Pick<ExtensionTabSnapshot, "title" | "url" | "status">,
+  ): ExtensionTabSnapshot {
+    const existing = this.tabsByBrowserId.get(browserTabId);
+    if (existing) return cloneExtensionTab(existing);
+    if (!Number.isSafeInteger(this.nextId) || this.nextId < 1) {
+      throw new Error("Extension tab identifier space is exhausted.");
+    }
+    const tab: ExtensionTabSnapshot = {
+      id: this.nextId++,
+      active: false,
+      ...initial,
+    };
+    this.tabsByBrowserId.set(browserTabId, tab);
+    this.tabsByExtensionId.set(tab.id, tab);
+    this.emit({ type: "created", tab: cloneExtensionTab(tab) });
+    return cloneExtensionTab(tab);
+  }
+
+  activate(browserTabId: TabId): void {
+    const tab = this.tabsByBrowserId.get(browserTabId);
+    if (!tab || tab.id === this.activeId) return;
+    const previousTabId = this.activeId;
+    if (previousTabId !== null) {
+      const previous = this.tabsByExtensionId.get(previousTabId);
+      if (previous) previous.active = false;
+    }
+    tab.active = true;
+    this.activeId = tab.id;
+    this.emit({ type: "activated", tabId: tab.id, previousTabId });
+  }
+
+  update(browserTabId: TabId, requested: ExtensionTabChange): void {
+    const tab = this.tabsByBrowserId.get(browserTabId);
+    if (!tab) return;
+    const change: ExtensionTabChange = {};
+    for (const key of ["title", "url", "status"] as const) {
+      const value = requested[key];
+      if (value !== undefined && value !== tab[key]) {
+        Object.assign(change, { [key]: value });
+        Object.assign(tab, { [key]: value });
+      }
+    }
+    if (Object.keys(change).length === 0) return;
+    this.emit({
+      type: "updated",
+      tabId: tab.id,
+      change: { ...change },
+      tab: cloneExtensionTab(tab),
+    });
+  }
+
+  remove(browserTabId: TabId): void {
+    const tab = this.tabsByBrowserId.get(browserTabId);
+    if (!tab) return;
+    this.tabsByBrowserId.delete(browserTabId);
+    this.tabsByExtensionId.delete(tab.id);
+    const wasActive = this.activeId === tab.id;
+    if (wasActive) this.activeId = null;
+    this.emit({ type: "removed", tabId: tab.id, wasActive });
+  }
+
+  dispose(): void {
+    this.tabsByBrowserId.clear();
+    this.tabsByExtensionId.clear();
+    this.listeners.clear();
+    this.activeId = null;
+  }
+
+  private emit(transition: ExtensionTabTransition): void {
+    for (const listener of this.listeners) {
+      try {
+        listener(transition);
+      } catch (error) {
+        console.warn("Extension tab transition listener failed.", error);
+      }
+    }
+  }
+}
+
+function cloneExtensionTab(tab: ExtensionTabSnapshot): ExtensionTabSnapshot {
+  return { ...tab };
+}
+
 export class TabManager {
   private readonly tabs = new Map<TabId, TabRecord>();
   private readonly order: TabId[] = [];
+  private readonly extensionTabs = new ExtensionTabLifecycle();
   private activeTabId = "";
   private disposed = false;
   private snapshotTimer: ReturnType<typeof setTimeout> | null = null;
@@ -133,6 +285,7 @@ export class TabManager {
     this.activeTabId = this.tabs.has(session.activeTabId ?? "")
       ? (session.activeTabId as string)
       : this.order[0];
+    this.extensionTabs.activate(this.activeTabId);
     this.hyperdrive.setActiveTab(this.activeTabId);
     const active = this.requireTab(this.activeTabId);
     if (!active.isNewTab && active.url) {
@@ -182,6 +335,28 @@ export class TabManager {
 
   get extensionPopupId(): string | null {
     return this.extensionPopup?.openExtensionId ?? null;
+  }
+
+  get extensionTabSnapshots(): ExtensionTabSnapshot[] {
+    return this.order
+      .map((browserTabId) => this.extensionTabs.idForBrowserTab(browserTabId))
+      .filter((id): id is number => id !== null)
+      .map((id) => this.extensionTabs.get(id))
+      .filter((tab): tab is ExtensionTabSnapshot => tab !== null);
+  }
+
+  getExtensionTab(extensionTabId: number): ExtensionTabSnapshot | null {
+    return this.extensionTabs.get(extensionTabId);
+  }
+
+  getExtensionTabId(browserTabId: TabId): number | null {
+    return this.extensionTabs.idForBrowserTab(browserTabId);
+  }
+
+  subscribeExtensionTabTransitions(
+    listener: ExtensionTabTransitionListener,
+  ): () => void {
+    return this.extensionTabs.subscribe(listener);
   }
 
   setChromeOverlayOpen(open: boolean): void {
@@ -327,6 +502,7 @@ export class TabManager {
     this.extensionPopup?.close();
     previous?.view?.setVisible(false);
     this.activeTabId = tabId;
+    this.extensionTabs.activate(tabId);
     this.hyperdrive.setActiveTab(tabId);
     if (!next.isNewTab && next.url && !next.view) {
       void this.navigateToUrl(
@@ -347,6 +523,7 @@ export class TabManager {
     const closingIndex = this.order.indexOf(tabId);
     this.tabs.delete(tabId);
     this.order.splice(closingIndex, 1);
+    this.extensionTabs.remove(tabId);
     this.destroyView(tab);
     if (isAllowedWebUrl(tab.url)) {
       void this.browserData
@@ -686,6 +863,7 @@ export class TabManager {
     for (const tab of this.tabs.values()) this.destroyView(tab);
     this.tabs.clear();
     this.order.length = 0;
+    this.extensionTabs.dispose();
     if (this.snapshotTimer) clearTimeout(this.snapshotTimer);
     if (this.layoutTimer) clearTimeout(this.layoutTimer);
     if (this.sessionTimer) clearTimeout(this.sessionTimer);
@@ -702,7 +880,7 @@ export class TabManager {
     url: string,
     isNewTab: boolean,
   ): TabRecord {
-    return {
+    const tab: TabRecord = {
       id,
       title: title || "New Tab",
       url,
@@ -724,6 +902,12 @@ export class TabManager {
       webStoreListingTitle: null,
       webStoreListingDescription: null,
     };
+    this.extensionTabs.create(id, {
+      title: tab.title,
+      url: tab.url,
+      status: "complete",
+    });
+    return tab;
   }
 
   private async navigateToUrl(
@@ -748,6 +932,11 @@ export class TabManager {
     tab.crashed = false;
     tab.error = null;
     tab.nextHistoryEntryTyped = typed;
+    this.extensionTabs.update(tab.id, {
+      title: tab.title,
+      url: tab.url,
+      status: "loading",
+    });
     const view = this.ensureView(tab);
     const changedActiveTab = activate && tab.id !== this.activeTabId;
     if (activate) this.activateTab(tab.id);
@@ -818,12 +1007,14 @@ export class TabManager {
       if (this.tabs.has(tab.id)) {
         tab.isLoading = true;
         tab.error = null;
+        this.extensionTabs.update(tab.id, { status: "loading" });
         this.scheduleSnapshot();
       }
     });
     contents.on("did-stop-loading", () => {
       if (this.tabs.has(tab.id)) {
         tab.isLoading = false;
+        this.extensionTabs.update(tab.id, { status: "complete" });
         updateNavigationState();
       }
     });
@@ -879,6 +1070,7 @@ export class TabManager {
       const nextTitle = title.trim() || hostFromUrl(tab.url) || "Untitled";
       if (tab.title !== nextTitle) {
         tab.title = nextTitle;
+        this.extensionTabs.update(tab.id, { title: nextTitle });
         this.scheduleSnapshot();
         this.scheduleSessionSave();
       }
@@ -923,6 +1115,11 @@ export class TabManager {
           tab.url = validatedUrl;
           tab.requestedUrl = validatedUrl;
         }
+        this.extensionTabs.update(tab.id, {
+          title: tab.title,
+          url: tab.url,
+          status: "complete",
+        });
         this.emitSnapshot();
         const errorUrl = `chromecraft://error/?url=${encodeURIComponent(tab.requestedUrl)}&description=${encodeURIComponent(errorDescription)}`;
         void contents.loadURL(errorUrl).catch(() => undefined);
@@ -934,6 +1131,10 @@ export class TabManager {
         tab.crashed = true;
         tab.error = `The page process stopped (${details.reason}).`;
         tab.title = "Page crashed";
+        this.extensionTabs.update(tab.id, {
+          title: tab.title,
+          status: "complete",
+        });
         this.emitSnapshot();
       }
     });
@@ -1121,6 +1322,7 @@ export class TabManager {
       tab.url = url;
       tab.requestedUrl = url;
       tab.error = null;
+      this.extensionTabs.update(tab.id, { url });
       if (tab.id === this.activeTabId) this.layoutActiveView();
       this.scheduleSnapshot();
       this.scheduleSessionSave();
@@ -1339,6 +1541,7 @@ export class TabManager {
     const tab = this.requireTab(tabId);
     this.tabs.delete(tabId);
     this.order.splice(this.order.indexOf(tabId), 1);
+    this.extensionTabs.remove(tabId);
     this.destroyView(tab);
     this.activeTabId = "";
   }
