@@ -4,6 +4,8 @@ import path from "node:path";
 import {
   BaseWindow,
   BrowserWindow,
+  clipboard,
+  Menu,
   type BrowserWindowConstructorOptions,
   type NativeImage,
   type Session,
@@ -34,6 +36,10 @@ import { BrowserDataStore } from "./browser-data";
 import { ChromeWebStoreExtensionService } from "./chrome-web-store-extension-service";
 import { ExtensionPopupController } from "./extension-popup-controller";
 import { HyperdriveController } from "./hyperdrive/controller";
+import {
+  buildPageContextMenu,
+  buildTextContextMenu,
+} from "./page-context-menu";
 import { PreferencesStore } from "./preferences";
 import { UblockService } from "./ublock-service";
 
@@ -277,6 +283,7 @@ export class TabManager {
     this.window.on("enter-full-screen", refreshFullscreenLayout);
     this.window.on("leave-full-screen", refreshFullscreenLayout);
     this.attachShortcutHandler(this.shellView);
+    this.attachShellContextMenuHandler();
     this.hyperdrive.setBrowserData(this.browserData.snapshot);
   }
 
@@ -1023,6 +1030,54 @@ export class TabManager {
     view.setVisible(tab.id === this.activeTabId);
     this.attachShortcutHandler(view);
     const contents = view.webContents;
+    contents.on("context-menu", (_event, params) => {
+      if (
+        !this.tabs.has(tab.id) ||
+        contents.isDestroyed() ||
+        this.window.isDestroyed()
+      )
+        return;
+      this.extensionPopup?.close();
+      const withLiveTab = (action: () => void) => () => {
+        if (!this.tabs.has(tab.id) || contents.isDestroyed()) return;
+        action();
+      };
+      const menu = Menu.buildFromTemplate(
+        buildPageContextMenu(
+          params,
+          {
+            canGoBack: contents.navigationHistory.canGoBack(),
+            canGoForward: contents.navigationHistory.canGoForward(),
+          },
+          {
+            goBack: withLiveTab(() => this.goBack(tab.id)),
+            goForward: withLiveTab(() => this.goForward(tab.id)),
+            reload: withLiveTab(() => this.reload(tab.id)),
+            openInNewTab: (url) => withLiveTab(() => this.createTab(url))(),
+            download: (url) => {
+              if (!contents.isDestroyed()) contents.downloadURL(url);
+            },
+            copyText: (text) =>
+              clipboard
+                .writeText(text)
+                .catch((error: unknown) =>
+                  console.warn("Could not copy context-menu text.", error),
+                ),
+            copyImageAt: (x, y) => {
+              if (!contents.isDestroyed()) contents.copyImageAt(x, y);
+            },
+            inspectAt: (x, y) => {
+              if (!contents.isDestroyed()) contents.inspectElement(x, y);
+            },
+          },
+        ),
+      );
+      menu.popup({
+        window: this.window,
+        frame: params.frame ?? undefined,
+        sourceType: params.menuSourceType,
+      });
+    });
     this.extensionTabs.attach(tab.id, contents.id, {
       title: tab.title,
       url: tab.url,
@@ -1504,6 +1559,20 @@ export class TabManager {
         event.preventDefault();
         this.stop(active.id);
       }
+    });
+  }
+
+  private attachShellContextMenuHandler(): void {
+    const contents = this.shellView.webContents;
+    contents.on("context-menu", (_event, params) => {
+      if (contents.isDestroyed() || this.window.isDestroyed()) return;
+      const template = buildTextContextMenu(params);
+      if (template.length === 0) return;
+      Menu.buildFromTemplate(template).popup({
+        window: this.window,
+        frame: params.frame ?? undefined,
+        sourceType: params.menuSourceType,
+      });
     });
   }
 
