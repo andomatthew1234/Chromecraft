@@ -25,8 +25,20 @@ export interface ExtensionWorkerReadyMessage {
   type: "worker-ready";
 }
 
+export type ExtensionTabsEventName =
+  | "onCreated"
+  | "onActivated"
+  | "onUpdated"
+  | "onRemoved";
+
+export interface ExtensionTabsSubscriptionsMessage {
+  type: "tabs-subscriptions";
+  events: ExtensionTabsEventName[];
+}
+
 export type ExtensionWorkerMessage =
   | ExtensionWebRequestSubscriptionsMessage
+  | ExtensionTabsSubscriptionsMessage
   | ExtensionWorkerReadyMessage;
 
 export interface ExtensionHostReadyMessage {
@@ -51,6 +63,19 @@ export interface ExtensionWebRequestEventMessage {
   details: ExtensionWebRequestEventDetails;
 }
 
+export interface ExtensionTabsEventMessage {
+  type: "tabs-event";
+  eventName: ExtensionTabsEventName;
+  args: unknown[];
+}
+
+export interface ExtensionTabsSnapshotMessage {
+  type: "tabs-snapshot";
+  tabs: Array<Record<string, unknown>>;
+}
+
 export type ExtensionHostMessage =
   | ExtensionHostReadyMessage
-  | ExtensionWebRequestEventMessage;
+  | ExtensionWebRequestEventMessage
+  | ExtensionTabsEventMessage
+  | ExtensionTabsSnapshotMessage;

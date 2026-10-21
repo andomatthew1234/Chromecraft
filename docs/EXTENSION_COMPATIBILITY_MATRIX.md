@@ -72,7 +72,7 @@ as password-manager autofill and passkeys.
 - `test-packaged-extensions.mjs` covers install-state lifecycle, action popup
   toggling, disable/re-enable, uninstall cleanup, and its own MV3 worker
   handshake.
-- `test-packaged-extension-tabs-lifecycle.mjs` is a focused, currently red
+- `test-packaged-extension-tabs-lifecycle.mjs` is a focused packaged
   conformance harness for the Browser Shell tab lifecycle. It creates,
   activates, navigates, and removes a tab through the packaged browser while a
   deterministic MV3 worker observes `tabs.onCreated`, `onActivated`,
@@ -87,10 +87,11 @@ as password-manager autofill and passkeys.
   ```
 
   Its machine-readable evidence is written to
-  `.artifacts/extensions/extension-tabs-lifecycle.json`. A nonzero result is
-  intentional until the browser-owned extension host delivers the authoritative
-  tab lifecycle to MV3 workers; namespace-shaped event objects alone do not
-  satisfy this harness.
+  `.artifacts/extensions/extension-tabs-lifecycle.json`. The browser-owned
+  extension host now delivers the authoritative lifecycle, uses Electron's
+  native WebContents IDs consistently with `tabs.query` and `tabs.get`, repairs
+  Electron's missing active/status fields, and wakes a stopped MV3 worker for a
+  subscribed lifecycle event.
 
 - `diagnose-web-store-extension.mjs` uses a real signed Web Store package and
   records Electron warnings, but does not prove every feature of that package.

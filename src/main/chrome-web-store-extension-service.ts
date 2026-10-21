@@ -14,7 +14,7 @@ const MAX_ENTRY_BYTES = 32 * 1024 * 1024;
 const MAX_EXTRACTED_BYTES = 128 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES = 4_096;
 const EXTENSION_ID_PATTERN = /^[a-p]{32}$/;
-const COMPATIBILITY_REVISION = 9;
+const COMPATIBILITY_REVISION = 10;
 const COMPATIBILITY_DIRECTORY = "chromecraft-compat";
 const LEGACY_COMPATIBILITY_DIRECTORY = "__chromecraft";
 const COMPATIBILITY_SCRIPT_PATH = `${COMPATIBILITY_DIRECTORY}/extension-compat.js`;
@@ -2207,7 +2207,10 @@ function extensionCompatibilitySource(): string {
   const extensionHostBridge = serviceWorkerContext
     ? globalThis.__chromecraftExtensionHost
     : null;
-  const hostEvents = new Map();
+  const webRequestHostEvents = new Map();
+  const tabsHostEvents = new Map();
+  const hostTabs = new Map();
+  let hostTabsReady = false;
   const wildcardMatch = (pattern, candidate) => {
     let url;
     try { url = new URL(candidate); } catch { return false; }
@@ -2252,7 +2255,7 @@ function extensionCompatibilitySource(): string {
       filters: [...listeners.values()].map((entry) => entry.filter)
     });
   };
-  const makeHostEvent = (eventName) => {
+  const makeWebRequestHostEvent = (eventName) => {
     const listeners = new Map();
     const event = {
       addListener(listener, filter = { urls: ["<all_urls>"] }, extraInfoSpec = []) {
@@ -2276,18 +2279,91 @@ function extensionCompatibilitySource(): string {
       },
       sync() { sendHostSubscriptions(eventName, listeners); }
     };
-    hostEvents.set(eventName, event);
+    webRequestHostEvents.set(eventName, event);
     return event;
+  };
+  const sendTabsSubscriptions = () => {
+    if (!extensionHostBridge?.send) return;
+    extensionHostBridge.send({
+      type: "tabs-subscriptions",
+      events: [...tabsHostEvents.entries()]
+        .filter(([, event]) => event.hasListeners())
+        .map(([eventName]) => eventName)
+    });
+  };
+  const makeTabsHostEvent = (eventName) => {
+    const listeners = new Set();
+    const event = {
+      addListener(listener) {
+        if (typeof listener !== "function") return;
+        listeners.add(listener);
+        sendTabsSubscriptions();
+      },
+      removeListener(listener) {
+        if (!listeners.delete(listener)) return;
+        sendTabsSubscriptions();
+      },
+      hasListener(listener) { return listeners.has(listener); },
+      hasListeners() { return listeners.size > 0; },
+      dispatch(args) {
+        for (const listener of listeners) {
+          try { listener(...args); } catch (error) {
+            console.error("Chromecraft extension tabs listener failed.", error);
+          }
+        }
+      },
+      sync() { sendTabsSubscriptions(); }
+    };
+    tabsHostEvents.set(eventName, event);
+    return event;
+  };
+  const applyTabsEvent = (message) => {
+    if (message.eventName === "onCreated") {
+      const tab = message.args?.[0];
+      if (Number.isInteger(tab?.id)) hostTabs.set(tab.id, { ...tab });
+      return;
+    }
+    if (message.eventName === "onUpdated") {
+      const tab = message.args?.[2];
+      if (Number.isInteger(tab?.id)) hostTabs.set(tab.id, { ...tab });
+      return;
+    }
+    if (message.eventName === "onRemoved") {
+      const tabId = message.args?.[0];
+      if (Number.isInteger(tabId)) hostTabs.delete(tabId);
+      return;
+    }
+    if (message.eventName === "onActivated") {
+      const tabId = message.args?.[0]?.tabId;
+      if (!Number.isInteger(tabId)) return;
+      for (const [id, tab] of hostTabs) {
+        hostTabs.set(id, { ...tab, active: id === tabId, highlighted: id === tabId, selected: id === tabId });
+      }
+    }
   };
   if (extensionHostBridge?.subscribe) {
     extensionHostBridge.subscribe((message) => {
       if (!message) return;
       if (message.type === "host-ready") {
-        for (const hostEvent of hostEvents.values()) hostEvent.sync();
+        for (const hostEvent of webRequestHostEvents.values()) hostEvent.sync();
+        sendTabsSubscriptions();
         return;
       }
       if (message.type === "webRequest-event" && message.eventName === "onBeforeRequest") {
-        hostEvents.get(message.eventName)?.dispatch(message.details);
+        webRequestHostEvents.get(message.eventName)?.dispatch(message.details);
+        return;
+      }
+      if (message.type === "tabs-snapshot" && Array.isArray(message.tabs)) {
+        hostTabs.clear();
+        for (const tab of message.tabs) {
+          if (Number.isInteger(tab?.id)) hostTabs.set(tab.id, { ...tab });
+        }
+        hostTabsReady = true;
+        return;
+      }
+      if (message.type === "tabs-event" && Array.isArray(message.args)) {
+        applyTabsEvent(message);
+        tabsHostEvents.get(message.eventName)?.dispatch(message.args);
       }
     });
     extensionHostBridge.send({ type: "worker-ready" });
@@ -2347,15 +2423,85 @@ function extensionCompatibilitySource(): string {
 
     if (serviceWorkerContext) {
       const webRequest = ensureNamespace(api, "webRequest");
-      setOverride(webRequest, "onBeforeRequest", makeHostEvent("onBeforeRequest"));
+      setOverride(webRequest, "onBeforeRequest", makeWebRequestHostEvent("onBeforeRequest"));
     }
 
     const tabs = ensureNamespace(api, "tabs");
     setDefault(tabs, "getCurrent", (callback) => complete(callback, undefined));
+    const bridgedTabsEvents = new Set(["onActivated", "onCreated", "onRemoved", "onUpdated"]);
     for (const name of ["onActivated", "onAttached", "onCreated", "onDetached", "onHighlighted", "onMoved", "onRemoved", "onReplaced", "onUpdated", "onZoomChange"]) {
+      if (serviceWorkerContext && bridgedTabsEvents.has(name)) {
+        setOverride(tabs, name, makeTabsHostEvent(name));
+        continue;
+      }
       ensureEvent(tabs, name);
     }
     const nativeTabsQuery = typeof tabs.query === "function" ? tabs.query.bind(tabs) : null;
+    const nativeTabsGet = typeof tabs.get === "function" ? tabs.get.bind(tabs) : null;
+    const wildcardTextMatch = (pattern, value) => {
+      if (typeof pattern !== "string" || typeof value !== "string") return false;
+      const escaped = pattern
+        .split("*")
+        .map((part) => part.replace(/[|\\\\{}()[\\]^$+?.]/g, "\\\\$&"))
+        .join(".*");
+      return new RegExp("^" + escaped + "$", "i").test(value);
+    };
+    const matchesTabQuery = (tab, queryInfo = {}) => {
+      for (const key of ["active", "highlighted", "pinned", "audible", "discarded", "autoDiscardable", "muted"]) {
+        if (typeof queryInfo[key] === "boolean" && Boolean(tab[key]) !== queryInfo[key]) return false;
+      }
+      for (const key of ["index", "windowId", "groupId"]) {
+        if (Number.isInteger(queryInfo[key]) && tab[key] !== queryInfo[key]) return false;
+      }
+      if (typeof queryInfo.status === "string" && tab.status !== queryInfo.status) return false;
+      if (typeof queryInfo.title === "string" && !wildcardTextMatch(queryInfo.title, tab.title)) return false;
+      if (queryInfo.url !== undefined) {
+        const patterns = Array.isArray(queryInfo.url) ? queryInfo.url : [queryInfo.url];
+        if (!patterns.some((pattern) => typeof pattern === "string" && wildcardMatch(pattern, tab.url))) return false;
+      }
+      return true;
+    };
+    const mergeHostTabs = (nativeItems) => {
+      const nativeById = new Map((Array.isArray(nativeItems) ? nativeItems : [])
+        .filter((tab) => Number.isInteger(tab?.id))
+        .map((tab) => [tab.id, tab]));
+      return [...hostTabs.values()]
+        .sort((left, right) => Number(left.index ?? 0) - Number(right.index ?? 0))
+        .map((tab) => ({ ...(nativeById.get(tab.id) ?? {}), ...tab }));
+    };
+    if (serviceWorkerContext && nativeTabsQuery) {
+      setOverride(tabs, "query", (queryInfo = {}, callback) => {
+        if (!hostTabsReady) return nativeTabsQuery(queryInfo, callback);
+        const operation = new Promise((resolve, reject) => {
+          nativeTabsQuery({}, (items) => {
+            const error = runtime.lastError;
+            if (error) {
+              reject(new Error(error.message ?? String(error)));
+              return;
+            }
+            resolve(mergeHostTabs(items).filter((tab) => matchesTabQuery(tab, queryInfo)));
+          });
+        });
+        return completeAsync(callback, operation);
+      });
+    }
+    if (serviceWorkerContext && nativeTabsGet) {
+      setOverride(tabs, "get", (tabId, callback) => {
+        const hostTab = hostTabs.get(tabId);
+        if (!hostTabsReady || !hostTab) return nativeTabsGet(tabId, callback);
+        const operation = new Promise((resolve, reject) => {
+          nativeTabsGet(tabId, (nativeTab) => {
+            const error = runtime.lastError;
+            if (error) {
+              reject(new Error(error.message ?? String(error)));
+              return;
+            }
+            resolve({ ...(nativeTab ?? {}), ...hostTab });
+          });
+        });
+        return completeAsync(callback, operation);
+      });
+    }
     const actionPopupContext = typeof globalThis.document === "object" &&
       globalThis.location?.protocol === "chrome-extension:" &&
       (globalThis.location.pathname.includes("/popup/") || globalThis.location.pathname.endsWith("/popup.html"));

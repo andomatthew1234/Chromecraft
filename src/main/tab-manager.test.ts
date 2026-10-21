@@ -7,22 +7,22 @@ import {
 } from "./tab-manager";
 
 describe("ExtensionTabLifecycle", () => {
-  it("assigns stable, unique positive integer identifiers", () => {
+  it("uses stable Electron WebContents identifiers", () => {
     const lifecycle = new ExtensionTabLifecycle();
-    const first = lifecycle.create("browser-a", {
+    const first = lifecycle.attach("browser-a", 42, {
       title: "First",
       url: "https://example.test/first",
       status: "complete",
     });
-    const second = lifecycle.create("browser-b", {
+    const second = lifecycle.attach("browser-b", 73, {
       title: "Second",
       url: "https://example.test/second",
       status: "complete",
     });
 
     expect(Number.isSafeInteger(first.id)).toBe(true);
-    expect(first.id).toBeGreaterThan(0);
-    expect(second.id).toBeGreaterThan(first.id);
+    expect(first.id).toBe(42);
+    expect(second.id).toBe(73);
     expect(lifecycle.idForBrowserTab("browser-a")).toBe(first.id);
     expect(lifecycle.get(first.id)).toEqual(first);
 
@@ -37,7 +37,7 @@ describe("ExtensionTabLifecycle", () => {
     const transitions: ExtensionTabTransition[] = [];
     lifecycle.subscribe((transition) => transitions.push(transition));
 
-    const created = lifecycle.create("browser-a", {
+    const created = lifecycle.attach("browser-a", 42, {
       title: "New Tab",
       url: "",
       status: "complete",
@@ -102,7 +102,7 @@ describe("ExtensionTabLifecycle", () => {
     const lifecycle = new ExtensionTabLifecycle();
     const transitions: ExtensionTabTransition[] = [];
     lifecycle.subscribe((transition) => transitions.push(transition));
-    lifecycle.create("browser-a", {
+    lifecycle.attach("browser-a", 42, {
       title: "Example",
       url: "https://example.test/",
       status: "loading",
@@ -123,7 +123,7 @@ describe("ExtensionTabLifecycle", () => {
 
   it("resolves live Electron contents IDs without exposing WebContents", () => {
     const lifecycle = new ExtensionTabLifecycle();
-    const tab = lifecycle.create("browser-a", {
+    const tab = lifecycle.attach("browser-a", 42, {
       title: "Example",
       url: "https://example.test/",
       status: "complete",
@@ -155,5 +155,56 @@ describe("ExtensionTabLifecycle", () => {
 
     destroyed = true;
     expect(manager.getExtensionTabIdForWebContents(42)).toBeNull();
+  });
+
+  it("rejects invalid and colliding Electron WebContents identifiers", () => {
+    const lifecycle = new ExtensionTabLifecycle();
+    lifecycle.attach("browser-a", 42, {
+      title: "First",
+      url: "https://example.test/first",
+      status: "complete",
+    });
+
+    expect(() =>
+      lifecycle.attach("browser-b", 42, {
+        title: "Second",
+        url: "https://example.test/second",
+        status: "complete",
+      }),
+    ).toThrow("already attached");
+    expect(() =>
+      lifecycle.attach("browser-c", 0, {
+        title: "Invalid",
+        url: "",
+        status: "complete",
+      }),
+    ).toThrow("positive integers");
+  });
+
+  it("activates an attached target after a virtual tab became active", () => {
+    const lifecycle = new ExtensionTabLifecycle();
+    const transitions: ExtensionTabTransition[] = [];
+    lifecycle.subscribe((transition) => transitions.push(transition));
+
+    lifecycle.activate("browser-a");
+    lifecycle.attach("browser-a", 42, {
+      title: "Example",
+      url: "https://example.test/",
+      status: "loading",
+    });
+
+    expect(transitions).toEqual([
+      {
+        type: "created",
+        tab: {
+          id: 42,
+          active: false,
+          title: "Example",
+          url: "https://example.test/",
+          status: "loading",
+        },
+      },
+      { type: "activated", tabId: 42, previousTabId: null },
+    ]);
   });
 });

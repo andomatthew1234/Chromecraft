@@ -116,8 +116,8 @@ export class ExtensionTabLifecycle {
   private readonly tabsByBrowserId = new Map<TabId, ExtensionTabSnapshot>();
   private readonly tabsByExtensionId = new Map<number, ExtensionTabSnapshot>();
   private readonly listeners = new Set<ExtensionTabTransitionListener>();
-  private nextId = 1;
   private activeId: number | null = null;
+  private activeBrowserTabId: TabId | null = null;
 
   get snapshots(): ExtensionTabSnapshot[] {
     return [...this.tabsByBrowserId.values()].map(cloneExtensionTab);
@@ -137,34 +137,47 @@ export class ExtensionTabLifecycle {
     return () => this.listeners.delete(listener);
   }
 
-  create(
+  attach(
     browserTabId: TabId,
+    nativeWebContentsId: number,
     initial: Pick<ExtensionTabSnapshot, "title" | "url" | "status">,
   ): ExtensionTabSnapshot {
     const existing = this.tabsByBrowserId.get(browserTabId);
-    if (existing) return cloneExtensionTab(existing);
-    if (!Number.isSafeInteger(this.nextId) || this.nextId < 1) {
-      throw new Error("Extension tab identifier space is exhausted.");
+    if (existing) {
+      if (existing.id !== nativeWebContentsId) {
+        throw new Error("A browser tab cannot own multiple extension targets.");
+      }
+      return cloneExtensionTab(existing);
+    }
+    if (!Number.isSafeInteger(nativeWebContentsId) || nativeWebContentsId < 1) {
+      throw new Error("Extension tab identifiers must be positive integers.");
+    }
+    if (this.tabsByExtensionId.has(nativeWebContentsId)) {
+      throw new Error("An extension tab identifier is already attached.");
     }
     const tab: ExtensionTabSnapshot = {
-      id: this.nextId++,
+      id: nativeWebContentsId,
       active: false,
       ...initial,
     };
     this.tabsByBrowserId.set(browserTabId, tab);
     this.tabsByExtensionId.set(tab.id, tab);
     this.emit({ type: "created", tab: cloneExtensionTab(tab) });
+    if (this.activeBrowserTabId === browserTabId) this.activate(browserTabId);
     return cloneExtensionTab(tab);
   }
 
   activate(browserTabId: TabId): void {
+    this.activeBrowserTabId = browserTabId;
     const tab = this.tabsByBrowserId.get(browserTabId);
-    if (!tab || tab.id === this.activeId) return;
+    if (tab?.id === this.activeId) return;
     const previousTabId = this.activeId;
     if (previousTabId !== null) {
       const previous = this.tabsByExtensionId.get(previousTabId);
       if (previous) previous.active = false;
     }
+    this.activeId = null;
+    if (!tab) return;
     tab.active = true;
     this.activeId = tab.id;
     this.emit({ type: "activated", tabId: tab.id, previousTabId });
@@ -190,13 +203,16 @@ export class ExtensionTabLifecycle {
     });
   }
 
-  remove(browserTabId: TabId): void {
+  remove(browserTabId: TabId, expectedNativeId?: number): void {
     const tab = this.tabsByBrowserId.get(browserTabId);
     if (!tab) return;
+    if (expectedNativeId !== undefined && tab.id !== expectedNativeId) return;
     this.tabsByBrowserId.delete(browserTabId);
     this.tabsByExtensionId.delete(tab.id);
     const wasActive = this.activeId === tab.id;
     if (wasActive) this.activeId = null;
+    if (this.activeBrowserTabId === browserTabId)
+      this.activeBrowserTabId = null;
     this.emit({ type: "removed", tabId: tab.id, wasActive });
   }
 
@@ -205,6 +221,7 @@ export class ExtensionTabLifecycle {
     this.tabsByExtensionId.clear();
     this.listeners.clear();
     this.activeId = null;
+    this.activeBrowserTabId = null;
   }
 
   private emit(transition: ExtensionTabTransition): void {
@@ -503,6 +520,7 @@ export class TabManager {
     const tab = this.makeTab(id, "New Tab", "", true);
     this.tabs.set(id, tab);
     this.order.push(id);
+    this.ensureView(tab);
     if (activate) this.activateTab(id);
     else this.emitSnapshot();
     if (input) {
@@ -535,7 +553,7 @@ export class TabManager {
       );
     }
     this.layoutActiveView();
-    next.view?.setVisible(true);
+    next.view?.setVisible(!next.isNewTab);
     this.emitSnapshot();
     this.scheduleSessionSave();
   }
@@ -924,11 +942,6 @@ export class TabManager {
       webStoreListingTitle: null,
       webStoreListingDescription: null,
     };
-    this.extensionTabs.create(id, {
-      title: tab.title,
-      url: tab.url,
-      status: "complete",
-    });
     return tab;
   }
 
@@ -945,6 +958,10 @@ export class TabManager {
       await this.ublock.readyForNavigation();
       if (!this.tabs.has(tab.id)) return;
     }
+    // Attach the real Electron target before mutating navigation state so the
+    // extension event stream observes one canonical native tab ID from
+    // creation through the first navigation.
+    const view = this.ensureView(tab);
     this.resetWebStoreVisitIfChanged(tab, target);
     tab.title = "Loading…";
     tab.url = target;
@@ -954,12 +971,12 @@ export class TabManager {
     tab.crashed = false;
     tab.error = null;
     tab.nextHistoryEntryTyped = typed;
+    if (tab.id === this.activeTabId) view.setVisible(true);
     this.extensionTabs.update(tab.id, {
       title: tab.title,
       url: tab.url,
       status: "loading",
     });
-    const view = this.ensureView(tab);
     const changedActiveTab = activate && tab.id !== this.activeTabId;
     if (activate) this.activateTab(tab.id);
     if (!changedActiveTab) this.scheduleSnapshot();
@@ -993,6 +1010,17 @@ export class TabManager {
     view.setVisible(tab.id === this.activeTabId);
     this.attachShortcutHandler(view);
     const contents = view.webContents;
+    this.extensionTabs.attach(tab.id, contents.id, {
+      title: tab.title,
+      url: tab.url,
+      status: tab.isLoading ? "loading" : "complete",
+    });
+    contents.once("destroyed", () => {
+      this.extensionTabs.remove(tab.id, contents.id);
+      if (tab.view === view) tab.view = null;
+      if (this.tabs.has(tab.id) && tab.id === this.activeTabId)
+        this.extensionTabs.activate(tab.id);
+    });
     contents.ipc.on(channels.closeExtensionPopup, () => {
       if (tab.id !== this.activeTabId || contents.isDestroyed()) return;
       this.closeExtensionPopup();

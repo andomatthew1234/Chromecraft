@@ -1191,6 +1191,7 @@ async function createMainWindow(): Promise<void> {
     () => void sendExtensionsSnapshot(),
   );
   tabManager = manager;
+  extensionWebRequestHost.attachTabs(manager);
   manager.initialize();
   registerIpc();
 
