@@ -40,16 +40,11 @@ const snapshot: BrowserSnapshot = {
 describe("QuickSettingsPanel", () => {
   it("renders the compact control-centre settings and no advanced controls", () => {
     const markup = renderToStaticMarkup(
-      <QuickSettingsPanel
-        snapshot={snapshot}
-        open
-        close={vi.fn()}
-        openFullSettings={vi.fn()}
-      />,
+      <QuickSettingsPanel snapshot={snapshot} openFullSettings={vi.fn()} />,
     );
 
-    expect(markup).toContain("Quick settings");
     expect(markup).toContain("Common browser controls");
+    expect(markup).toContain('class="quick-settings-sidebar"');
     expect(markup).toContain('aria-label="Hyperdrive"');
     expect(markup).toContain('aria-label="Show bookmarks bar"');
     expect(markup).toContain('aria-label="uBlock Origin"');
@@ -61,17 +56,13 @@ describe("QuickSettingsPanel", () => {
     expect(markup).not.toContain("Maximum RAM to reserve");
   });
 
-  it("keeps the dialog mounted but hidden for a smooth closing transition", () => {
+  it("renders as sidebar content instead of a floating dialog", () => {
     const markup = renderToStaticMarkup(
-      <QuickSettingsPanel
-        snapshot={snapshot}
-        open={false}
-        close={vi.fn()}
-        openFullSettings={vi.fn()}
-      />,
+      <QuickSettingsPanel snapshot={snapshot} openFullSettings={vi.fn()} />,
     );
 
-    expect(markup).toContain('data-open="false"');
-    expect(markup).toContain('aria-hidden="true"');
+    expect(markup).not.toContain('role="dialog"');
+    expect(markup).not.toContain("quick-settings-layer");
+    expect(markup).not.toContain("Close quick settings");
   });
 });

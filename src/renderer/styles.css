@@ -1300,68 +1300,6 @@ input::placeholder {
   width: var(--rail-width);
 }
 
-.sidebar.quick-settings-open {
-  overflow: visible;
-}
-
-.quick-settings-layer {
-  position: fixed;
-  z-index: 8;
-  inset: var(--base-chrome-height) 0 0 var(--rail-width);
-  visibility: hidden;
-  background: rgb(0 0 0 / 7%);
-  opacity: 0;
-  pointer-events: none;
-  transition:
-    opacity var(--motion-standard),
-    visibility 0s linear 200ms;
-}
-
-.quick-settings-layer[data-open="true"] {
-  visibility: visible;
-  opacity: 1;
-  pointer-events: auto;
-  transition-delay: 0s;
-}
-
-.quick-settings-panel {
-  position: absolute;
-  top: var(--space-3);
-  left: var(--space-3);
-  width: min(440px, calc(100vw - var(--rail-width) - 24px));
-  padding: var(--space-4);
-  border: 1px solid
-    color-mix(in srgb, var(--md-outline-variant) 74%, transparent);
-  border-radius: var(--shape-xl);
-  color: var(--md-on-surface);
-  background: color-mix(
-    in srgb,
-    var(--md-surface-container-high) 96%,
-    transparent
-  );
-  box-shadow: var(--elevation-3);
-  opacity: 0;
-  transform: translateY(-10px) scale(0.97);
-  transform-origin: 24px 0;
-  transition:
-    opacity var(--motion-standard),
-    transform var(--motion-emphasized);
-}
-
-.quick-settings-layer[data-open="true"] .quick-settings-panel {
-  opacity: 1;
-  transform: translateY(0) scale(1);
-}
-
-.quick-settings-header {
-  min-height: 54px;
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  padding: 0 var(--space-1) var(--space-3);
-}
-
-.quick-settings-header-icon,
 .full-settings-mark {
   width: 42px;
   height: 42px;
@@ -1373,66 +1311,42 @@ input::placeholder {
   background: var(--md-primary-container);
 }
 
-.quick-settings-heading {
-  min-width: 0;
-  display: grid;
+.quick-settings-sidebar {
+  min-height: 0;
+  display: flex;
   flex: 1;
+  flex-direction: column;
+  overflow: hidden;
 }
 
-.quick-settings-heading h2,
-.quick-settings-heading small {
-  margin: 0;
-}
-
-.quick-settings-heading h2 {
-  font: var(--type-title-large);
-}
-
-.quick-settings-heading small {
+.quick-settings-subtitle {
+  flex: 0 0 auto;
+  margin: -6px var(--space-3) var(--space-2);
   color: var(--md-on-surface-variant);
   font: var(--type-body-small);
 }
 
-.quick-settings-close {
-  width: 40px;
-  height: 40px;
-  display: grid;
-  flex: 0 0 40px;
-  padding: 0;
-  place-items: center;
-  border-radius: var(--shape-full);
-  color: var(--md-on-surface-variant);
-  background: transparent;
-  transition:
-    color var(--motion-standard),
-    background-color var(--motion-standard),
-    transform var(--motion-standard);
-}
-
-.quick-settings-close:hover {
-  color: var(--md-on-surface);
-  background: var(--md-hover);
-}
-
-.quick-settings-close:active {
-  transform: scale(0.92);
-}
-
 .quick-settings-grid {
+  min-height: 0;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-3);
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2) var(--space-3);
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
 }
 
 .quick-setting-tile {
   position: relative;
   min-width: 0;
-  min-height: 126px;
+  min-height: 72px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-rows: auto 1fr;
-  gap: var(--space-3);
-  padding: var(--space-4);
+  grid-template-columns: 38px minmax(0, 1fr) auto;
+  grid-template-rows: 1fr;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 10px var(--space-3);
   overflow: hidden;
   border: 1px solid transparent;
   border-radius: var(--shape-lg);
@@ -1479,11 +1393,7 @@ input::placeholder {
 }
 
 .quick-setting-hero {
-  min-height: 112px;
-  grid-column: 1 / -1;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  grid-template-rows: 1fr;
-  align-items: center;
+  min-height: 82px;
   color: var(--md-on-secondary-container);
   background: var(--md-secondary-container);
 }
@@ -1494,8 +1404,8 @@ input::placeholder {
 }
 
 .quick-setting-icon {
-  width: 42px;
-  height: 42px;
+  width: 38px;
+  height: 38px;
   display: grid;
   grid-column: 1;
   grid-row: 1;
@@ -1528,19 +1438,16 @@ input::placeholder {
 .quick-setting-copy {
   min-width: 0;
   display: grid;
-  grid-column: 1 / -1;
-  grid-row: 2;
-  align-content: end;
-  gap: 2px;
-}
-
-.quick-setting-hero .quick-setting-copy {
+  z-index: 1;
   grid-column: 2;
   grid-row: 1;
   align-content: center;
+  gap: 2px;
 }
 
 .quick-setting-copy strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
   overflow-wrap: anywhere;
   font: var(--type-title-small);
 }
@@ -1553,16 +1460,14 @@ input::placeholder {
 
 .quick-setting-tile > .switch-input {
   z-index: 1;
-  grid-column: 2;
+  grid-column: 3;
   grid-row: 1;
   align-self: center;
 }
 
-.quick-setting-hero > .switch-input {
-  grid-column: 3;
-}
-
 .quick-setting-theme {
+  min-height: 112px;
+  grid-template-rows: 38px 40px;
   cursor: default;
 }
 
@@ -1570,7 +1475,6 @@ input::placeholder {
   position: relative;
   grid-column: 1 / -1;
   grid-row: 2;
-  align-self: end;
 }
 
 .quick-theme-select-wrap select {
@@ -1596,6 +1500,7 @@ input::placeholder {
 }
 
 .quick-setting-open-all {
+  min-height: 76px;
   border: 0;
   color: var(--md-on-tertiary-container);
   background: var(--md-tertiary-container);
@@ -1608,7 +1513,7 @@ input::placeholder {
 
 .quick-setting-open-all > .material-icon {
   z-index: 1;
-  grid-column: 2;
+  grid-column: 3;
   grid-row: 1;
   align-self: center;
 }
@@ -4877,25 +4782,6 @@ select:focus-visible,
     font-size: 24px;
   }
 
-  .quick-settings-panel {
-    left: var(--space-2);
-    width: calc(100vw - var(--rail-width) - 16px);
-    padding: var(--space-3);
-  }
-
-  .quick-settings-grid {
-    gap: var(--space-2);
-  }
-
-  .quick-setting-tile {
-    min-height: 116px;
-    padding: var(--space-3);
-  }
-
-  .quick-setting-hero {
-    min-height: 96px;
-  }
-
   .full-settings-content {
     width: calc(100% - 24px);
     padding-top: var(--space-6);
@@ -4907,34 +4793,22 @@ select:focus-visible,
 }
 
 @media (max-height: 680px) {
-  .quick-settings-panel {
-    top: var(--space-2);
-    padding: var(--space-3);
-  }
-
-  .quick-settings-header {
-    min-height: 44px;
-    padding-bottom: var(--space-2);
-  }
-
-  .quick-settings-header-icon {
-    width: 36px;
-    height: 36px;
-    flex-basis: 36px;
-    border-radius: var(--shape-md);
-  }
-
   .quick-settings-grid {
-    gap: var(--space-2);
+    gap: var(--space-1);
+    padding-top: 0;
   }
 
   .quick-setting-tile {
-    min-height: 106px;
-    padding: var(--space-3);
+    min-height: 64px;
+    padding-block: var(--space-2);
   }
 
   .quick-setting-hero {
-    min-height: 82px;
+    min-height: 72px;
+  }
+
+  .quick-setting-theme {
+    min-height: 104px;
   }
 }
 

@@ -19,6 +19,11 @@ const updatesScreenshotPath = path.join(
   ".artifacts",
   "updates-and-versions.png",
 );
+const quickSettingsScreenshotPath = path.join(
+  root,
+  ".artifacts",
+  "quick-settings-sidebar.png",
+);
 
 async function freePort() {
   const server = net.createServer();
@@ -142,13 +147,21 @@ try {
     },
     (targets) =>
       targets.some(
-        (entry) => entry.type === "page" && entry.webSocketDebuggerUrl,
+        (entry) =>
+          entry.type === "page" &&
+          (entry.url.startsWith("file://") ||
+            entry.url.includes("main_window")) &&
+          entry.webSocketDebuggerUrl,
       ),
     "the Chromecraft shell target",
     20_000,
   ).then((targets) =>
     targets.find(
-      (entry) => entry.type === "page" && entry.webSocketDebuggerUrl,
+      (entry) =>
+        entry.type === "page" &&
+        (entry.url.startsWith("file://") ||
+          entry.url.includes("main_window")) &&
+        entry.webSocketDebuggerUrl,
     ),
   );
   cdp = await CdpClient.connect(target.webSocketDebuggerUrl);
@@ -266,6 +279,63 @@ try {
   );
 
   await cdp.evaluate(
+    "document.querySelector('button[aria-label=\"Extensions\"]')?.click()",
+  );
+  const extensionsSidebarWidth = await poll(
+    () =>
+      cdp.evaluate(
+        "document.querySelector('.sidebar.panel-open')?.getBoundingClientRect().width || 0",
+      ),
+    (width) => width >= 280 && width <= 292,
+    "the Extensions sidebar to reach its open width",
+  );
+  await cdp.evaluate(
+    "document.querySelector('button[aria-label=\"Settings\"]')?.click()",
+  );
+  const quickSettingsState = await poll(
+    () =>
+      cdp.evaluate(`(async () => {
+        const sidebar = document.querySelector('.sidebar');
+        const panel = document.querySelector('.quick-settings-sidebar');
+        const grid = document.querySelector('.quick-settings-grid');
+        const tiles = [...document.querySelectorAll('.quick-setting-tile')];
+        const panelBox = panel?.getBoundingClientRect();
+        return {
+          sidebarOpen: (await window.chromecraft.getSnapshot()).preferences.sidebarOpen,
+          settingsActive: Boolean(document.querySelector('button[aria-label="Settings"].active')),
+          title: document.querySelector('#sidebar-panel-title')?.textContent,
+          width: sidebar?.getBoundingClientRect().width ?? 0,
+          tileCount: tiles.length,
+          hasOverlay: Boolean(document.querySelector('.quick-settings-layer')),
+          horizontalOverflow: Boolean(grid && grid.scrollWidth > grid.clientWidth),
+          verticalOverflow: Boolean(grid && grid.scrollHeight > grid.clientHeight + 1),
+          tilesContained: Boolean(panelBox && tiles.every((tile) => {
+            const box = tile.getBoundingClientRect();
+            return box.left >= panelBox.left && box.right <= panelBox.right + 0.5;
+          })),
+        };
+      })()`),
+    (state) =>
+      state.sidebarOpen &&
+      state.settingsActive &&
+      state.title === "Quick settings" &&
+      Math.abs(state.width - extensionsSidebarWidth) < 0.5 &&
+      state.tileCount === 5 &&
+      !state.hasOverlay &&
+      !state.horizontalOverflow &&
+      !state.verticalOverflow &&
+      state.tilesContained,
+    "Quick settings to render inside the standard sidebar",
+  );
+  const quickSettingsScreenshot = await cdp.send("Page.captureScreenshot", {
+    format: "png",
+  });
+  await fs.writeFile(
+    quickSettingsScreenshotPath,
+    Buffer.from(quickSettingsScreenshot.data, "base64"),
+  );
+
+  await cdp.evaluate(
     "document.querySelector('button[aria-label=\"History\"]')?.click()",
   );
   await poll(
@@ -314,10 +384,13 @@ try {
         versionsInitiallyHidden,
         versionsRevealed,
         portableUpdateStatus,
+        extensionsSidebarWidth,
+        quickSettingsState,
         toggledClosed,
         railCollapse,
         screenshotPath,
         updatesScreenshotPath,
+        quickSettingsScreenshotPath,
       },
       null,
       2,
