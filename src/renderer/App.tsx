@@ -1403,6 +1403,23 @@ function humaniseHyperdriveValue(value: string): string {
     .join(" ");
 }
 
+function hyperdriveRamMaximum(
+  totalMemoryMb: number,
+  configuredBudgetMb: number,
+): number {
+  const sensibleMaximum = Math.max(
+    256,
+    Math.min(4_096, Math.floor(totalMemoryMb / 4 / 64) * 64),
+  );
+  return Math.max(sensibleMaximum, configuredBudgetMb);
+}
+
+function formatHyperdriveMemory(megabytes: number): string {
+  return megabytes >= 1_024
+    ? `${Number((megabytes / 1_024).toFixed(2))} GB`
+    : `${megabytes} MB`;
+}
+
 function normaliseExcludedHosts(value: string): string[] {
   return [
     ...new Set(
@@ -1423,12 +1440,465 @@ function normaliseExcludedHosts(value: string): string[] {
   ].slice(0, 100);
 }
 
+export type FullSettingsCategoryId =
+  | "general"
+  | "privacy"
+  | "appearance"
+  | "hyperdrive"
+  | "extensions"
+  | "advanced";
+
+type FullSettingsCategory = {
+  id: FullSettingsCategoryId;
+  label: string;
+  description: string;
+  icon: IconName;
+};
+
+export type FullSettingsSearchItem = {
+  id: string;
+  category: FullSettingsCategoryId;
+  title: string;
+  description: string;
+  keywords: string;
+};
+
+export const fullSettingsCategories: FullSettingsCategory[] = [
+  {
+    id: "general",
+    label: "General",
+    description: "Startup, bookmarks and browser layout",
+    icon: "settings",
+  },
+  {
+    id: "privacy",
+    label: "Privacy & security",
+    description: "Protection and search privacy",
+    icon: "shield",
+  },
+  {
+    id: "appearance",
+    label: "Appearance",
+    description: "Choose how new tabs feel",
+    icon: "tune",
+  },
+  {
+    id: "hyperdrive",
+    label: "Hyperdrive",
+    description: "Prediction, preloading and memory",
+    icon: "bolt",
+  },
+  {
+    id: "extensions",
+    label: "Extensions",
+    description: "Manage tools from the Chrome Web Store",
+    icon: "extension",
+  },
+  {
+    id: "advanced",
+    label: "Advanced",
+    description: "Exceptions, diagnostics and developer tools",
+    icon: "memory",
+  },
+];
+
+export const fullSettingsSearchItems: FullSettingsSearchItem[] = [
+  {
+    id: "restore-session",
+    category: "general",
+    title: "Restore tabs on launch",
+    description: "Reopen locally stored tabs when Chromecraft starts.",
+    keywords: "startup session launch reopen tabs",
+  },
+  {
+    id: "bookmarks-bar",
+    category: "general",
+    title: "Show bookmarks bar",
+    description: "Keep saved sites below the address bar.",
+    keywords: "bookmarks favorites saved sites bar",
+  },
+  {
+    id: "browser-sidebar",
+    category: "general",
+    title: "Show browser sidebar",
+    description: "Keep browser tools available in the navigation rail.",
+    keywords: "sidebar rail layout tools attached",
+  },
+  {
+    id: "ublock-origin",
+    category: "privacy",
+    title: "uBlock Origin",
+    description: "Use Chromecraft's preinstalled content blocker.",
+    keywords: "ad blocker ads privacy tracking content protection",
+  },
+  {
+    id: "live-search-suggestions",
+    category: "privacy",
+    title: "Live search suggestions",
+    description: "Share typed search text with DuckDuckGo for suggestions.",
+    keywords: "duckduckgo remote suggestions autocomplete privacy search",
+  },
+  {
+    id: "new-tab-theme",
+    category: "appearance",
+    title: "New tab theme",
+    description: "Choose the colour mood for new tabs.",
+    keywords: "theme color colour style appearance new tab",
+  },
+  {
+    id: "hyperdrive-enabled",
+    category: "hyperdrive",
+    title: "Hyperdrive",
+    description: "Predict and prepare likely destinations before navigation.",
+    keywords: "enable preload prefetch performance speed",
+  },
+  {
+    id: "hyperdrive-mode",
+    category: "hyperdrive",
+    title: "Performance mode",
+    description: "Choose how aggressively Hyperdrive prepares destinations.",
+    keywords: "balanced aggressive maximum performance mode",
+  },
+  {
+    id: "hyperdrive-ram",
+    category: "hyperdrive",
+    title: "Maximum RAM to reserve",
+    description: "Set Hyperdrive's memory safety ceiling.",
+    keywords: "ram memory budget reserve limit ceiling",
+  },
+  {
+    id: "hyperdrive-cross-site",
+    category: "hyperdrive",
+    title: "Allow cross-site preparation",
+    description: "Permit preparation of a different site before a click.",
+    keywords: "cross site privacy connection preload preparation",
+  },
+  {
+    id: "hyperdrive-search",
+    category: "hyperdrive",
+    title: "Prepare search destinations",
+    description: "Prepare eligible destinations selected from search.",
+    keywords: "search destination suggestion speculative prefetch",
+  },
+  {
+    id: "extension-management",
+    category: "extensions",
+    title: "Manage extensions",
+    description: "Review installed extensions and add new ones.",
+    keywords: "chrome web store installed add remove options manage",
+  },
+  {
+    id: "ublock-settings",
+    category: "extensions",
+    title: "Open uBlock settings",
+    description: "Open uBlock Origin's complete dashboard.",
+    keywords: "ublock dashboard filters allowlist content blocker",
+  },
+  {
+    id: "extension-developer-mode",
+    category: "extensions",
+    title: "Extension developer mode",
+    description: "Show loading errors and compatibility warnings.",
+    keywords: "extension developer dev unpacked warnings errors",
+  },
+  {
+    id: "hyperdrive-exclusions",
+    category: "advanced",
+    title: "Websites excluded from Hyperdrive",
+    description: "Keep listed websites out of Hyperdrive preparation.",
+    keywords: "exceptions exclusions never hosts domains websites",
+  },
+  {
+    id: "hyperdrive-monitor",
+    category: "advanced",
+    title: "Hyperdrive Monitor",
+    description: "Show live prediction and preloading activity.",
+    keywords: "monitor live predictions preloads developer panel",
+  },
+  {
+    id: "clear-speculative-work",
+    category: "advanced",
+    title: "Clear speculative work",
+    description: "Cancel and remove current Hyperdrive preparation.",
+    keywords: "clear reset troubleshoot cancel cache speculative",
+  },
+];
+
+export function searchFullSettings(query: string): FullSettingsSearchItem[] {
+  const tokens = query.trim().toLocaleLowerCase().split(/\s+/u).filter(Boolean);
+  if (tokens.length === 0) return fullSettingsSearchItems;
+  return fullSettingsSearchItems.filter((item) => {
+    const category = fullSettingsCategories.find(
+      (candidate) => candidate.id === item.category,
+    );
+    const haystack =
+      `${item.title} ${item.description} ${item.keywords} ${category?.label ?? ""}`.toLocaleLowerCase();
+    return tokens.every((token) => haystack.includes(token));
+  });
+}
+
+function settingTargetClass(
+  id: string,
+  highlightedSettingId: string | null,
+  className = "setting-row",
+): string {
+  return `${className} ${highlightedSettingId === id ? "setting-search-target" : ""}`;
+}
+
 function HyperdriveSettings({
   snapshot,
   hyperdrive,
+  highlightedSettingId,
 }: {
   snapshot: BrowserSnapshot;
   hyperdrive: HyperdriveSnapshot;
+  highlightedSettingId: string | null;
+}) {
+  const preferences = snapshot.preferences;
+  const modeEnabled = preferences.hyperdriveMode !== "off";
+  const sliderMaximum = hyperdriveRamMaximum(
+    hyperdrive.totalMemoryMb,
+    preferences.hyperdriveRamBudgetMb,
+  );
+  const estimatedUsageMb =
+    hyperdrive.metrics.estimatedSpeculativeMemoryBytes / 1_048_576;
+  const usagePercent = Math.min(
+    100,
+    (estimatedUsageMb / Math.max(1, preferences.hyperdriveRamBudgetMb)) * 100,
+  );
+
+  return (
+    <>
+      <section
+        className="settings-card"
+        aria-labelledby="hyperdrive-main-title"
+      >
+        <header className="settings-card-header">
+          <span className="settings-card-icon">
+            <Icon name="bolt" />
+          </span>
+          <span>
+            <h3 id="hyperdrive-main-title">Main control</h3>
+            <p>Turn Chromecraft's predictive loading on or off.</p>
+          </span>
+        </header>
+        <label
+          id="setting-hyperdrive-enabled"
+          data-setting-id="hyperdrive-enabled"
+          className={settingTargetClass(
+            "hyperdrive-enabled",
+            highlightedSettingId,
+          )}
+        >
+          <span className="setting-copy">
+            <span className="setting-title">Hyperdrive</span>
+            <small className="setting-description">
+              Predict and prepare likely destinations before you navigate.
+            </small>
+          </span>
+          <input
+            type="checkbox"
+            role="switch"
+            className="switch-input"
+            aria-label="Hyperdrive enabled"
+            checked={modeEnabled}
+            onChange={(event) =>
+              void window.chromecraft.setHyperdriveMode(
+                event.target.checked ? "balanced" : "off",
+              )
+            }
+          />
+        </label>
+      </section>
+
+      <section
+        className="settings-card"
+        aria-labelledby="hyperdrive-performance-title"
+      >
+        <header className="settings-card-header">
+          <span className="settings-card-icon">
+            <Icon name="memory" />
+          </span>
+          <span>
+            <h3 id="hyperdrive-performance-title">Performance</h3>
+            <p>Balance loading strength with memory use.</p>
+          </span>
+        </header>
+        <label
+          id="setting-hyperdrive-mode"
+          data-setting-id="hyperdrive-mode"
+          className={settingTargetClass(
+            "hyperdrive-mode",
+            highlightedSettingId,
+            "setting-row setting-row-stacked",
+          )}
+        >
+          <span className="setting-copy">
+            <span className="setting-title">Performance mode</span>
+            <small className="setting-description">
+              Balanced warms connections. Stronger modes may prefetch eligible
+              documents within your privacy rules.
+            </small>
+          </span>
+          <select
+            className="settings-select"
+            value={preferences.hyperdriveMode}
+            disabled={!modeEnabled}
+            aria-label="Hyperdrive performance mode"
+            onChange={(event) =>
+              void window.chromecraft.setHyperdriveMode(
+                event.target.value as HyperdriveMode,
+              )
+            }
+          >
+            <option value="off">Off</option>
+            <option value="balanced">Balanced</option>
+            <option value="aggressive">Aggressive</option>
+            <option value="maximum">Maximum</option>
+          </select>
+        </label>
+        <label
+          id="setting-hyperdrive-ram"
+          data-setting-id="hyperdrive-ram"
+          className={settingTargetClass(
+            "hyperdrive-ram",
+            highlightedSettingId,
+            "setting-row setting-row-stacked hyperdrive-ram-setting",
+          )}
+        >
+          <span className="setting-copy">
+            <span className="setting-title">Maximum RAM to reserve</span>
+            <small className="setting-description">
+              A safety ceiling, not a target. Current estimated use is{" "}
+              {estimatedUsageMb.toFixed(1)} MB.
+            </small>
+          </span>
+          <span className="hyperdrive-ram-value">
+            {formatHyperdriveMemory(preferences.hyperdriveRamBudgetMb)}
+          </span>
+          <input
+            className="hyperdrive-ram-slider"
+            type="range"
+            min={64}
+            max={sliderMaximum}
+            step={64}
+            value={preferences.hyperdriveRamBudgetMb}
+            disabled={!modeEnabled}
+            aria-label="Hyperdrive RAM reserve"
+            aria-valuetext={formatHyperdriveMemory(
+              preferences.hyperdriveRamBudgetMb,
+            )}
+            onChange={(event) =>
+              void window.chromecraft.setHyperdriveRamBudgetMb(
+                Number(event.target.value),
+              )
+            }
+          />
+          <span className="hyperdrive-ram-scale" aria-hidden="true">
+            <span>64 MB</span>
+            <span>{formatHyperdriveMemory(sliderMaximum)}</span>
+          </span>
+          <span
+            className="hyperdrive-budget-meter"
+            role="progressbar"
+            aria-label="Estimated Hyperdrive memory usage"
+            aria-valuemin={0}
+            aria-valuemax={preferences.hyperdriveRamBudgetMb}
+            aria-valuenow={Math.min(
+              preferences.hyperdriveRamBudgetMb,
+              Math.round(estimatedUsageMb),
+            )}
+          >
+            <span style={{ width: `${usagePercent}%` }} />
+          </span>
+        </label>
+      </section>
+
+      <section
+        className="settings-card"
+        aria-labelledby="hyperdrive-prediction-title"
+      >
+        <header className="settings-card-header">
+          <span className="settings-card-icon">
+            <Icon name="search" />
+          </span>
+          <span>
+            <h3 id="hyperdrive-prediction-title">
+              Prediction &amp; preloading
+            </h3>
+            <p>Control when Hyperdrive may prepare a destination.</p>
+          </span>
+        </header>
+        <label
+          id="setting-hyperdrive-cross-site"
+          data-setting-id="hyperdrive-cross-site"
+          className={settingTargetClass(
+            "hyperdrive-cross-site",
+            highlightedSettingId,
+          )}
+        >
+          <span className="setting-copy">
+            <span className="setting-title">Allow cross-site preparation</span>
+            <small className="setting-description">
+              Off by default. May contact a different website before you click.
+            </small>
+          </span>
+          <input
+            type="checkbox"
+            role="switch"
+            className="switch-input"
+            aria-label="Allow cross-site preparation"
+            checked={preferences.hyperdriveCrossSitePreloadingEnabled}
+            disabled={!modeEnabled}
+            onChange={(event) =>
+              void window.chromecraft.setHyperdriveCrossSitePreloadingEnabled(
+                event.target.checked,
+              )
+            }
+          />
+        </label>
+        <label
+          id="setting-hyperdrive-search"
+          data-setting-id="hyperdrive-search"
+          className={settingTargetClass(
+            "hyperdrive-search",
+            highlightedSettingId,
+          )}
+        >
+          <span className="setting-copy">
+            <span className="setting-title">Prepare search destinations</span>
+            <small className="setting-description">
+              Allows a selected search suggestion to make a speculative request.
+              Unfinished queries remain local when this is off.
+            </small>
+          </span>
+          <input
+            type="checkbox"
+            role="switch"
+            className="switch-input"
+            aria-label="Prepare search destinations"
+            checked={preferences.hyperdriveSearchPreloadingEnabled}
+            disabled={
+              !modeEnabled || !preferences.hyperdriveCrossSitePreloadingEnabled
+            }
+            onChange={(event) =>
+              void window.chromecraft.setHyperdriveSearchPreloadingEnabled(
+                event.target.checked,
+              )
+            }
+          />
+        </label>
+      </section>
+    </>
+  );
+}
+
+function HyperdriveAdvancedSettings({
+  snapshot,
+  highlightedSettingId,
+}: {
+  snapshot: BrowserSnapshot;
+  highlightedSettingId: string | null;
 }) {
   const preferences = snapshot.preferences;
   const [excludedHosts, setExcludedHosts] = useState(
@@ -1447,227 +1917,124 @@ function HyperdriveSettings({
     void window.chromecraft.setHyperdriveExcludedHosts(hosts);
   };
   const modeEnabled = preferences.hyperdriveMode !== "off";
-  const sensibleMaximum = Math.max(
-    256,
-    Math.min(4_096, Math.floor(hyperdrive.totalMemoryMb / 4 / 64) * 64),
-  );
-  const sliderMaximum = Math.max(
-    sensibleMaximum,
-    preferences.hyperdriveRamBudgetMb,
-  );
-  const formatMemory = (megabytes: number) =>
-    megabytes >= 1_024
-      ? `${Number((megabytes / 1_024).toFixed(2))} GB`
-      : `${megabytes} MB`;
-  const estimatedUsageMb =
-    hyperdrive.metrics.estimatedSpeculativeMemoryBytes / 1_048_576;
-  const usagePercent = Math.min(
-    100,
-    (estimatedUsageMb / Math.max(1, preferences.hyperdriveRamBudgetMb)) * 100,
-  );
 
   return (
-    <section
-      className="settings-section hyperdrive-settings"
-      aria-labelledby="settings-hyperdrive"
-    >
-      <div className="settings-section-heading">
-        <span className="settings-section-icon">
-          <Icon name="bolt" />
-        </span>
-        <span>
-          <h3 className="settings-section-label" id="settings-hyperdrive">
-            Performance · Hyperdrive
-          </h3>
-          <small>Predict and prepare likely navigations locally</small>
-        </span>
-      </div>
-      <label className="setting-row">
-        <span className="setting-copy">
-          <span className="setting-title">Hyperdrive</span>
-          <small className="setting-description">
-            Predict and prepare likely destinations before you navigate.
-          </small>
-        </span>
-        <input
-          type="checkbox"
-          role="switch"
-          className="switch-input"
-          aria-label="Hyperdrive enabled"
-          checked={modeEnabled}
-          onChange={(event) =>
-            void window.chromecraft.setHyperdriveMode(
-              event.target.checked ? "balanced" : "off",
-            )
-          }
-        />
-      </label>
-      <label className="setting-row setting-row-stacked">
-        <span className="setting-copy">
-          <span className="setting-title">Performance mode</span>
-          <small className="setting-description">
-            Hyperdrive is opt-in. Balanced warms connections; stronger modes may
-            prefetch eligible documents within your privacy rules.
-          </small>
-        </span>
-        <select
-          className="settings-select"
-          value={preferences.hyperdriveMode}
-          disabled={!modeEnabled}
-          onChange={(event) =>
-            void window.chromecraft.setHyperdriveMode(
-              event.target.value as HyperdriveMode,
-            )
-          }
-        >
-          <option value="off">Off</option>
-          <option value="balanced">Balanced</option>
-          <option value="aggressive">Aggressive</option>
-          <option value="maximum">Maximum</option>
-        </select>
-      </label>
-      <label className="setting-row setting-row-stacked hyperdrive-ram-setting">
-        <span className="setting-copy">
-          <span className="setting-title">Maximum RAM to reserve</span>
-          <small className="setting-description">
-            A safety ceiling, not a target. Hyperdrive currently estimates{" "}
-            {estimatedUsageMb.toFixed(1)} MB.
-          </small>
-        </span>
-        <input
-          className="hyperdrive-ram-slider"
-          type="range"
-          min={64}
-          max={sliderMaximum}
-          step={64}
-          value={preferences.hyperdriveRamBudgetMb}
-          disabled={!modeEnabled}
-          aria-label="Hyperdrive RAM reserve"
-          aria-valuetext={formatMemory(preferences.hyperdriveRamBudgetMb)}
-          onChange={(event) =>
-            void window.chromecraft.setHyperdriveRamBudgetMb(
-              Number(event.target.value),
-            )
-          }
-        />
-        <span className="hyperdrive-ram-scale" aria-hidden="true">
-          <span>64 MB</span>
-          <output>{formatMemory(preferences.hyperdriveRamBudgetMb)}</output>
-          <span>{formatMemory(sliderMaximum)}</span>
-        </span>
-        <span
-          className="hyperdrive-budget-meter"
-          role="progressbar"
-          aria-label="Estimated Hyperdrive memory usage"
-          aria-valuemin={0}
-          aria-valuemax={preferences.hyperdriveRamBudgetMb}
-          aria-valuenow={Math.min(
-            preferences.hyperdriveRamBudgetMb,
-            Math.round(estimatedUsageMb),
+    <>
+      <section
+        className="settings-card"
+        aria-labelledby="advanced-exceptions-title"
+      >
+        <header className="settings-card-header">
+          <span className="settings-card-icon">
+            <Icon name="shield" />
+          </span>
+          <span>
+            <h3 id="advanced-exceptions-title">Exceptions</h3>
+            <p>Keep sensitive or incompatible sites out of Hyperdrive.</p>
+          </span>
+        </header>
+        <div
+          id="setting-hyperdrive-exclusions"
+          data-setting-id="hyperdrive-exclusions"
+          className={settingTargetClass(
+            "hyperdrive-exclusions",
+            highlightedSettingId,
+            "setting-row setting-row-stacked",
           )}
         >
-          <span style={{ width: `${usagePercent}%` }} />
-        </span>
-      </label>
-      <label className="setting-row">
-        <span className="setting-copy">
-          <span className="setting-title">Allow cross-site preparation</span>
-          <small className="setting-description">
-            Off by default. May contact a different website before you click.
-          </small>
-        </span>
-        <input
-          type="checkbox"
-          role="switch"
-          className="switch-input"
-          checked={preferences.hyperdriveCrossSitePreloadingEnabled}
-          disabled={!modeEnabled}
-          onChange={(event) =>
-            void window.chromecraft.setHyperdriveCrossSitePreloadingEnabled(
-              event.target.checked,
-            )
-          }
-        />
-      </label>
-      <label className="setting-row">
-        <span className="setting-copy">
-          <span className="setting-title">Prepare search destinations</span>
-          <small className="setting-description">
-            Allows selected search suggestions to make a speculative request.
-            Unfinished queries remain local when this is off.
-          </small>
-        </span>
-        <input
-          type="checkbox"
-          role="switch"
-          className="switch-input"
-          checked={preferences.hyperdriveSearchPreloadingEnabled}
-          disabled={
-            !modeEnabled || !preferences.hyperdriveCrossSitePreloadingEnabled
-          }
-          onChange={(event) =>
-            void window.chromecraft.setHyperdriveSearchPreloadingEnabled(
-              event.target.checked,
-            )
-          }
-        />
-      </label>
-      <div className="setting-row setting-row-stacked">
-        <span className="setting-copy">
-          <span className="setting-title">Never use Hyperdrive on</span>
-          <small className="setting-description">
-            Comma-separated website hostnames. Sensitive actions and private
-            networks are excluded automatically.
-          </small>
-        </span>
-        <input
-          className="settings-text-field"
-          value={excludedHosts}
-          disabled={!modeEnabled}
-          onFocus={() => {
-            editingExclusions.current = true;
-          }}
-          onChange={(event) => setExcludedHosts(event.target.value)}
-          onBlur={saveExcludedHosts}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") event.currentTarget.blur();
-          }}
-          placeholder="example.com, work.example"
-          aria-label="Websites excluded from Hyperdrive"
-        />
-      </div>
-      <label className="setting-row">
-        <span className="setting-copy">
-          <span className="setting-title">Dev mode</span>
-          <small className="setting-description">
-            Show the live Hyperdrive Monitor with pages currently being
-            predicted and preloaded.
-          </small>
-        </span>
-        <input
-          type="checkbox"
-          role="switch"
-          className="switch-input"
-          aria-label="Hyperdrive Dev mode"
-          checked={preferences.hyperdriveMonitorOpen}
-          onChange={(event) =>
-            void window.chromecraft.setHyperdriveMonitorOpen(
-              event.target.checked,
-            )
-          }
-        />
-      </label>
-      <div className="settings-inline-actions">
-        <button
-          type="button"
-          className="tonal-button"
-          disabled={!modeEnabled}
-          onClick={() => void window.chromecraft.clearHyperdriveSpeculation()}
+          <span className="setting-copy">
+            <span className="setting-title">Never use Hyperdrive on</span>
+            <small className="setting-description">
+              Comma-separated website hostnames. Sensitive actions and private
+              networks are excluded automatically.
+            </small>
+          </span>
+          <input
+            className="settings-text-field"
+            value={excludedHosts}
+            disabled={!modeEnabled}
+            onFocus={() => {
+              editingExclusions.current = true;
+            }}
+            onChange={(event) => setExcludedHosts(event.target.value)}
+            onBlur={saveExcludedHosts}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") event.currentTarget.blur();
+            }}
+            placeholder="example.com, work.example"
+            aria-label="Websites excluded from Hyperdrive"
+          />
+        </div>
+      </section>
+
+      <section
+        className="settings-card"
+        aria-labelledby="advanced-developer-title"
+      >
+        <header className="settings-card-header">
+          <span className="settings-card-icon">
+            <Icon name="memory" />
+          </span>
+          <span>
+            <h3 id="advanced-developer-title">
+              Developer &amp; troubleshooting
+            </h3>
+            <p>Inspect live preparation or clear current speculative work.</p>
+          </span>
+        </header>
+        <label
+          id="setting-hyperdrive-monitor"
+          data-setting-id="hyperdrive-monitor"
+          className={settingTargetClass(
+            "hyperdrive-monitor",
+            highlightedSettingId,
+          )}
         >
-          Clear speculative work
-        </button>
-      </div>
-    </section>
+          <span className="setting-copy">
+            <span className="setting-title">Hyperdrive Monitor</span>
+            <small className="setting-description">
+              Keep the live prediction and preloading panel open.
+            </small>
+          </span>
+          <input
+            type="checkbox"
+            role="switch"
+            className="switch-input"
+            aria-label="Hyperdrive Monitor"
+            checked={preferences.hyperdriveMonitorOpen}
+            onChange={(event) =>
+              void window.chromecraft.setHyperdriveMonitorOpen(
+                event.target.checked,
+              )
+            }
+          />
+        </label>
+        <div
+          id="setting-clear-speculative-work"
+          data-setting-id="clear-speculative-work"
+          className={settingTargetClass(
+            "clear-speculative-work",
+            highlightedSettingId,
+            "settings-action-row",
+          )}
+        >
+          <span className="setting-copy">
+            <span className="setting-title">Clear speculative work</span>
+            <small className="setting-description">
+              Cancel prepared destinations and release their reserved resources.
+            </small>
+          </span>
+          <button
+            type="button"
+            className="tonal-button"
+            disabled={!modeEnabled}
+            onClick={() => void window.chromecraft.clearHyperdriveSpeculation()}
+          >
+            Clear now
+          </button>
+        </div>
+      </section>
+    </>
   );
 }
 
@@ -1818,153 +2185,614 @@ export function QuickSettingsPanel({
 export function FullSettingsPage({
   snapshot,
   hyperdrive,
+  openExtensionsPage,
 }: {
   snapshot: BrowserSnapshot;
   hyperdrive: HyperdriveSnapshot;
+  openExtensionsPage: () => void;
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
+  const searchResultRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const [selectedCategory, setSelectedCategory] =
+    useState<FullSettingsCategoryId>("general");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [highlightedSettingId, setHighlightedSettingId] = useState<
+    string | null
+  >(null);
+  const searchResults = useMemo(
+    () => (searchQuery.trim() ? searchFullSettings(searchQuery) : []),
+    [searchQuery],
+  );
+  const category =
+    fullSettingsCategories.find((item) => item.id === selectedCategory) ??
+    fullSettingsCategories[0];
   useEffect(() => heading.current?.focus(), []);
+  useLayoutEffect(() => {
+    if (!highlightedSettingId) return;
+    const target = document.getElementById(`setting-${highlightedSettingId}`);
+    if (!target) return;
+    const reducedMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    target.scrollIntoView({
+      behavior: reducedMotion ? "auto" : "smooth",
+      block: "center",
+    });
+    const focusTarget = target.querySelector<HTMLElement>(
+      "input:not(:disabled), select:not(:disabled), button:not(:disabled), [tabindex]:not([tabindex='-1'])",
+    );
+    if (focusTarget) {
+      focusTarget.focus({ preventScroll: true });
+    } else {
+      target.tabIndex = -1;
+      target.focus({ preventScroll: true });
+    }
+    const timer = window.setTimeout(() => setHighlightedSettingId(null), 1_800);
+    return () => clearTimeout(timer);
+  }, [highlightedSettingId, selectedCategory]);
+
+  const chooseCategory = (nextCategory: FullSettingsCategoryId) => {
+    setSelectedCategory(nextCategory);
+    setHighlightedSettingId(null);
+    setSearchOpen(false);
+  };
+  const chooseSearchResult = (item: FullSettingsSearchItem) => {
+    setSelectedCategory(item.category);
+    setHighlightedSettingId(item.id);
+    setSearchOpen(false);
+  };
+  const moveCategoryFocus = (
+    currentCategory: FullSettingsCategoryId,
+    direction: -1 | 1,
+  ) => {
+    const currentIndex = fullSettingsCategories.findIndex(
+      (item) => item.id === currentCategory,
+    );
+    const nextIndex =
+      (currentIndex + direction + fullSettingsCategories.length) %
+      fullSettingsCategories.length;
+    const nextCategory = fullSettingsCategories[nextIndex];
+    chooseCategory(nextCategory.id);
+    requestAnimationFrame(() => {
+      document
+        .querySelector<HTMLButtonElement>(
+          `[data-settings-category="${nextCategory.id}"]`,
+        )
+        ?.focus();
+    });
+  };
+
+  let categoryContent;
+  if (selectedCategory === "general") {
+    categoryContent = (
+      <section className="settings-card" aria-labelledby="general-layout-title">
+        <header className="settings-card-header">
+          <span className="settings-card-icon">
+            <Icon name="settings" />
+          </span>
+          <span>
+            <h3 id="general-layout-title">Startup &amp; layout</h3>
+            <p>Choose what Chromecraft restores and keeps within reach.</p>
+          </span>
+        </header>
+        <label
+          id="setting-restore-session"
+          data-setting-id="restore-session"
+          className={settingTargetClass(
+            "restore-session",
+            highlightedSettingId,
+          )}
+        >
+          <span className="setting-copy">
+            <span className="setting-title">Restore tabs on launch</span>
+            <small className="setting-description">
+              Stored locally on this device.
+            </small>
+          </span>
+          <input
+            type="checkbox"
+            role="switch"
+            className="switch-input"
+            aria-label="Restore tabs on launch"
+            checked={snapshot.preferences.restoreSession}
+            onChange={(event) =>
+              void window.chromecraft.setRestoreSession(event.target.checked)
+            }
+          />
+        </label>
+        <label
+          id="setting-bookmarks-bar"
+          data-setting-id="bookmarks-bar"
+          className={settingTargetClass("bookmarks-bar", highlightedSettingId)}
+        >
+          <span className="setting-copy">
+            <span className="setting-title">Show bookmarks bar</span>
+            <small className="setting-description">
+              Keep saved sites below the address bar.
+            </small>
+          </span>
+          <input
+            type="checkbox"
+            role="switch"
+            className="switch-input"
+            aria-label="Show bookmarks bar"
+            checked={snapshot.preferences.bookmarkBarVisible}
+            onChange={(event) =>
+              void window.chromecraft.setBookmarkBarVisible(
+                event.target.checked,
+              )
+            }
+          />
+        </label>
+        <label
+          id="setting-browser-sidebar"
+          data-setting-id="browser-sidebar"
+          className={settingTargetClass(
+            "browser-sidebar",
+            highlightedSettingId,
+          )}
+        >
+          <span className="setting-copy">
+            <span className="setting-title">Show browser sidebar</span>
+            <small className="setting-description">
+              Keep bookmarks, history, downloads and quick settings available.
+            </small>
+          </span>
+          <input
+            type="checkbox"
+            role="switch"
+            className="switch-input"
+            aria-label="Show browser sidebar"
+            checked={snapshot.preferences.sidebarAttached}
+            onChange={(event) =>
+              void window.chromecraft.setSidebarAttached(event.target.checked)
+            }
+          />
+        </label>
+      </section>
+    );
+  } else if (selectedCategory === "privacy") {
+    categoryContent = (
+      <section
+        className="settings-card"
+        aria-labelledby="privacy-controls-title"
+      >
+        <header className="settings-card-header">
+          <span className="settings-card-icon">
+            <Icon name="shield" />
+          </span>
+          <span>
+            <h3 id="privacy-controls-title">Protection &amp; suggestions</h3>
+            <p>
+              Control content blocking and when typed text leaves this device.
+            </p>
+          </span>
+        </header>
+        <label
+          id="setting-ublock-origin"
+          data-setting-id="ublock-origin"
+          className={settingTargetClass("ublock-origin", highlightedSettingId)}
+        >
+          <span className="setting-copy">
+            <span className="setting-title">uBlock Origin</span>
+            <small className="setting-description">
+              {ublockLabel(snapshot.ublock)}
+              {snapshot.ublock.version
+                ? ` · Version ${snapshot.ublock.version}`
+                : " · Preinstalled content blocking"}
+            </small>
+          </span>
+          <input
+            type="checkbox"
+            role="switch"
+            className="switch-input"
+            aria-label="uBlock Origin"
+            checked={snapshot.ublock.enabled}
+            disabled={snapshot.ublock.initializing}
+            onChange={(event) =>
+              void window.chromecraft.setUblockEnabled(event.target.checked)
+            }
+          />
+        </label>
+        <label
+          id="setting-live-search-suggestions"
+          data-setting-id="live-search-suggestions"
+          className={settingTargetClass(
+            "live-search-suggestions",
+            highlightedSettingId,
+          )}
+        >
+          <span className="setting-copy">
+            <span className="setting-title">Live search suggestions</span>
+            <small className="setting-description">
+              Share typed search text with DuckDuckGo for live suggestions.
+              Local history and bookmark autocomplete stays available.
+            </small>
+          </span>
+          <input
+            type="checkbox"
+            role="switch"
+            className="switch-input"
+            aria-label="Live search suggestions"
+            checked={snapshot.preferences.remoteSearchSuggestionsEnabled}
+            onChange={(event) =>
+              void window.chromecraft.setRemoteSearchSuggestionsEnabled(
+                event.target.checked,
+              )
+            }
+          />
+        </label>
+      </section>
+    );
+  } else if (selectedCategory === "appearance") {
+    categoryContent = (
+      <section
+        className="settings-card"
+        aria-labelledby="appearance-theme-title"
+      >
+        <header className="settings-card-header">
+          <span className="settings-card-icon settings-card-icon-tertiary">
+            <Icon name="tune" />
+          </span>
+          <span>
+            <h3 id="appearance-theme-title">New tab appearance</h3>
+            <p>Choose a restrained colour mood for every new tab.</p>
+          </span>
+        </header>
+        <label
+          id="setting-new-tab-theme"
+          data-setting-id="new-tab-theme"
+          className={settingTargetClass(
+            "new-tab-theme",
+            highlightedSettingId,
+            "setting-row setting-row-stacked",
+          )}
+        >
+          <span className="setting-copy">
+            <span className="setting-title">New tab theme</span>
+            <small className="setting-description">
+              Applies to Chromecraft's built-in new tab page.
+            </small>
+          </span>
+          <select
+            className="settings-select"
+            value={snapshot.preferences.newTabTheme}
+            aria-label="New tab theme"
+            onChange={(event) =>
+              void window.chromecraft.setNewTabTheme(
+                event.target.value as NewTabTheme,
+              )
+            }
+          >
+            <option value="overworld">Chromecraft blue</option>
+            <option value="nether">Soft violet</option>
+            <option value="end">Blue grey</option>
+            <option value="minimal">Minimal</option>
+          </select>
+        </label>
+      </section>
+    );
+  } else if (selectedCategory === "hyperdrive") {
+    categoryContent = (
+      <HyperdriveSettings
+        snapshot={snapshot}
+        hyperdrive={hyperdrive}
+        highlightedSettingId={highlightedSettingId}
+      />
+    );
+  } else if (selectedCategory === "extensions") {
+    categoryContent = (
+      <>
+        <section
+          className="settings-card"
+          aria-labelledby="extension-management-title"
+        >
+          <header className="settings-card-header">
+            <span className="settings-card-icon">
+              <Icon name="extension" />
+            </span>
+            <span>
+              <h3 id="extension-management-title">Extension management</h3>
+              <p>Review installed tools and add compatible extensions.</p>
+            </span>
+          </header>
+          <div
+            id="setting-extension-management"
+            data-setting-id="extension-management"
+            className={settingTargetClass(
+              "extension-management",
+              highlightedSettingId,
+              "settings-action-row",
+            )}
+          >
+            <span className="setting-copy">
+              <span className="setting-title">Manage extensions</span>
+              <small className="setting-description">
+                Enable, disable, remove or install Chrome Web Store extensions.
+              </small>
+            </span>
+            <button
+              type="button"
+              className="tonal-button settings-action-button"
+              onClick={openExtensionsPage}
+            >
+              <Icon name="extension" />
+              Open manager
+            </button>
+          </div>
+          <div
+            id="setting-ublock-settings"
+            data-setting-id="ublock-settings"
+            className={settingTargetClass(
+              "ublock-settings",
+              highlightedSettingId,
+              "settings-action-row",
+            )}
+          >
+            <span className="setting-copy">
+              <span className="setting-title">uBlock Origin settings</span>
+              <small className="setting-description">
+                Manage filter lists, trusted sites and advanced blocking rules.
+              </small>
+            </span>
+            <button
+              type="button"
+              className="tonal-button settings-action-button"
+              onClick={() => void window.chromecraft.openUblockDashboard()}
+            >
+              <Icon name="open" />
+              Open uBlock
+            </button>
+          </div>
+        </section>
+        <section
+          className="settings-card"
+          aria-labelledby="extension-developer-title"
+        >
+          <header className="settings-card-header">
+            <span className="settings-card-icon settings-card-icon-tertiary">
+              <Icon name="tune" />
+            </span>
+            <span>
+              <h3 id="extension-developer-title">Developer tools</h3>
+              <p>Expose compatibility details for unpacked extensions.</p>
+            </span>
+          </header>
+          <label
+            id="setting-extension-developer-mode"
+            data-setting-id="extension-developer-mode"
+            className={settingTargetClass(
+              "extension-developer-mode",
+              highlightedSettingId,
+            )}
+          >
+            <span className="setting-copy">
+              <span className="setting-title">Extension developer mode</span>
+              <small className="setting-description">
+                Show extension warnings, loading errors and unpacked tools.
+              </small>
+            </span>
+            <input
+              type="checkbox"
+              role="switch"
+              className="switch-input"
+              aria-label="Extension developer mode"
+              checked={snapshot.preferences.extensionDeveloperMode}
+              onChange={(event) =>
+                void window.chromecraft.setExtensionDeveloperMode(
+                  event.target.checked,
+                )
+              }
+            />
+          </label>
+        </section>
+      </>
+    );
+  } else {
+    categoryContent = (
+      <HyperdriveAdvancedSettings
+        snapshot={snapshot}
+        highlightedSettingId={highlightedSettingId}
+      />
+    );
+  }
 
   return (
     <main className="full-settings-page" aria-labelledby="full-settings-title">
       <div className="full-settings-content">
         <header className="full-settings-header">
-          <span className="full-settings-mark">
-            <Icon name="settings" />
+          <span className="full-settings-heading">
+            <span className="full-settings-mark">
+              <Icon name="settings" />
+            </span>
+            <span>
+              <h1 ref={heading} id="full-settings-title" tabIndex={-1}>
+                Settings
+              </h1>
+              <p>Shape Chromecraft around the way you browse.</p>
+            </span>
           </span>
-          <span>
-            <h1 ref={heading} id="full-settings-title" tabIndex={-1}>
-              Settings
-            </h1>
-            <p>Shape Chromecraft around the way you browse.</p>
-          </span>
-        </header>
-        <div className="settings-list full-settings-list">
-          <section
-            className="settings-section"
-            aria-labelledby="settings-general"
+          <div
+            className="settings-search"
+            data-open={searchOpen && Boolean(searchQuery.trim())}
+            onBlur={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget)) {
+                setSearchOpen(false);
+              }
+            }}
           >
-            <h2 className="settings-section-label" id="settings-general">
-              General
-            </h2>
-            <label className="setting-row">
-              <span className="setting-copy">
-                <span className="setting-title">Restore tabs on launch</span>
-                <small className="setting-description">
-                  Stored locally on this device
-                </small>
-              </span>
+            <div className="settings-search-field">
+              <Icon name="search" />
               <input
-                type="checkbox"
-                role="switch"
-                className="switch-input"
-                checked={snapshot.preferences.restoreSession}
-                onChange={(event) =>
-                  void window.chromecraft.setRestoreSession(
-                    event.target.checked,
-                  )
-                }
+                type="search"
+                value={searchQuery}
+                placeholder="Search settings"
+                aria-label="Search settings"
+                role="combobox"
+                aria-autocomplete="list"
+                aria-controls="settings-search-results"
+                aria-expanded={searchOpen && Boolean(searchQuery.trim())}
+                onFocus={() => setSearchOpen(Boolean(searchQuery.trim()))}
+                onChange={(event) => {
+                  setSearchQuery(event.target.value);
+                  setSearchOpen(Boolean(event.target.value.trim()));
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "ArrowDown" && searchResults.length > 0) {
+                    event.preventDefault();
+                    searchResultRefs.current[0]?.focus();
+                  } else if (event.key === "Enter" && searchResults[0]) {
+                    event.preventDefault();
+                    chooseSearchResult(searchResults[0]);
+                  } else if (event.key === "Escape") {
+                    event.stopPropagation();
+                    setSearchQuery("");
+                    setSearchOpen(false);
+                  }
+                }}
               />
-            </label>
-            <label className="setting-row">
-              <span className="setting-copy">
-                <span className="setting-title">Show bookmarks bar</span>
-                <small className="setting-description">
-                  Keep saved sites below the address bar
-                </small>
-              </span>
-              <input
-                type="checkbox"
-                role="switch"
-                className="switch-input"
-                checked={snapshot.preferences.bookmarkBarVisible}
-                onChange={(event) =>
-                  void window.chromecraft.setBookmarkBarVisible(
-                    event.target.checked,
-                  )
-                }
-              />
-            </label>
-          </section>
-          <section
-            className="settings-section"
-            aria-labelledby="settings-privacy"
-          >
-            <h2 className="settings-section-label" id="settings-privacy">
-              Privacy &amp; appearance
-            </h2>
-            <label className="setting-row">
-              <span className="setting-copy">
-                <span className="setting-title">uBlock Origin</span>
-                <small className="setting-description">
-                  {ublockLabel(snapshot.ublock)}
-                  {snapshot.ublock.version
-                    ? ` · Version ${snapshot.ublock.version}`
-                    : " · Preinstalled content blocking"}
-                </small>
-              </span>
-              <input
-                type="checkbox"
-                role="switch"
-                className="switch-input"
-                checked={snapshot.ublock.enabled}
-                disabled={snapshot.ublock.initializing}
-                onChange={(event) =>
-                  void window.chromecraft.setUblockEnabled(event.target.checked)
-                }
-              />
-            </label>
-            <label className="setting-row">
-              <span className="setting-copy">
-                <span className="setting-title">Live search suggestions</span>
-                <small className="setting-description">
-                  Share typed search text with DuckDuckGo for live suggestions.
-                  Local history and bookmark autocomplete always stays
-                  available.
-                </small>
-              </span>
-              <input
-                type="checkbox"
-                role="switch"
-                className="switch-input"
-                checked={snapshot.preferences.remoteSearchSuggestionsEnabled}
-                onChange={(event) =>
-                  void window.chromecraft.setRemoteSearchSuggestionsEnabled(
-                    event.target.checked,
-                  )
-                }
-              />
-            </label>
-            <label className="theme-setting setting-row">
-              <span className="setting-copy">
-                <span className="setting-title">New tab theme</span>
-                <small className="setting-description">
-                  Choose a restrained colour mood
-                </small>
-              </span>
-              <select
-                value={snapshot.preferences.newTabTheme}
-                onChange={(event) =>
-                  void window.chromecraft.setNewTabTheme(
-                    event.target.value as NewTabTheme,
-                  )
-                }
+              {searchQuery && (
+                <button
+                  type="button"
+                  className="settings-search-clear"
+                  aria-label="Clear settings search"
+                  title="Clear settings search"
+                  onClick={() => {
+                    setSearchQuery("");
+                    setSearchOpen(false);
+                  }}
+                >
+                  <Icon name="close" />
+                </button>
+              )}
+            </div>
+            <span className="visually-hidden" role="status" aria-live="polite">
+              {searchQuery.trim()
+                ? `${searchResults.length} settings found`
+                : ""}
+            </span>
+            {searchOpen && searchQuery.trim() && (
+              <div
+                className="settings-search-results"
+                id="settings-search-results"
+                role="listbox"
+                aria-label="Settings search results"
               >
-                <option value="overworld">Chromecraft blue</option>
-                <option value="nether">Soft violet</option>
-                <option value="end">Blue grey</option>
-                <option value="minimal">Minimal</option>
-              </select>
-            </label>
-            <button
-              type="button"
-              className="tonal-button"
-              onClick={() => void window.chromecraft.openUblockDashboard()}
-            >
-              Open uBlock settings
-            </button>
+                {searchResults.map((item, index) => {
+                  const itemCategory = fullSettingsCategories.find(
+                    (candidate) => candidate.id === item.category,
+                  );
+                  return (
+                    <button
+                      type="button"
+                      key={item.id}
+                      ref={(element) => {
+                        searchResultRefs.current[index] = element;
+                      }}
+                      role="option"
+                      aria-selected="false"
+                      onClick={() => chooseSearchResult(item)}
+                      onKeyDown={(event) => {
+                        if (event.key === "ArrowDown") {
+                          event.preventDefault();
+                          searchResultRefs.current[
+                            (index + 1) % searchResults.length
+                          ]?.focus();
+                        } else if (event.key === "ArrowUp") {
+                          event.preventDefault();
+                          searchResultRefs.current[
+                            (index - 1 + searchResults.length) %
+                              searchResults.length
+                          ]?.focus();
+                        } else if (event.key === "Escape") {
+                          event.stopPropagation();
+                          setSearchOpen(false);
+                          document
+                            .querySelector<HTMLInputElement>(
+                              '.settings-search input[type="search"]',
+                            )
+                            ?.focus();
+                        }
+                      }}
+                    >
+                      <span className="settings-search-result-icon">
+                        <Icon name={itemCategory?.icon ?? "settings"} />
+                      </span>
+                      <span>
+                        <strong>{item.title}</strong>
+                        <small>{itemCategory?.label}</small>
+                      </span>
+                      <Icon name="chevronRight" />
+                    </button>
+                  );
+                })}
+                {searchResults.length === 0 && (
+                  <div className="settings-search-empty">
+                    <Icon name="search" />
+                    <span>
+                      <strong>No settings found</strong>
+                      <small>Try another word or phrase.</small>
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </header>
+        <div className="full-settings-layout">
+          <nav
+            className="settings-category-nav"
+            aria-label="Settings categories"
+          >
+            <span className="settings-category-label">Categories</span>
+            {fullSettingsCategories.map((item) => (
+              <button
+                type="button"
+                key={item.id}
+                data-settings-category={item.id}
+                className={selectedCategory === item.id ? "active" : ""}
+                aria-current={selectedCategory === item.id ? "page" : undefined}
+                onClick={() => chooseCategory(item.id)}
+                onKeyDown={(event) => {
+                  if (event.key === "ArrowDown" || event.key === "ArrowRight") {
+                    event.preventDefault();
+                    moveCategoryFocus(item.id, 1);
+                  } else if (
+                    event.key === "ArrowUp" ||
+                    event.key === "ArrowLeft"
+                  ) {
+                    event.preventDefault();
+                    moveCategoryFocus(item.id, -1);
+                  }
+                }}
+              >
+                <span className="settings-category-icon">
+                  <Icon name={item.icon} />
+                </span>
+                <span>{item.label}</span>
+              </button>
+            ))}
+          </nav>
+          <section
+            className="full-settings-detail"
+            data-settings-detail={selectedCategory}
+            aria-labelledby={`settings-category-${selectedCategory}`}
+          >
+            <header className="settings-category-header">
+              <span className="settings-category-header-icon">
+                <Icon name={category.icon} />
+              </span>
+              <span>
+                <small>Chromecraft settings</small>
+                <h2 id={`settings-category-${selectedCategory}`}>
+                  {category.label}
+                </h2>
+                <p>{category.description}</p>
+              </span>
+            </header>
+            <div className="settings-category-content">{categoryContent}</div>
           </section>
-          <HyperdriveSettings snapshot={snapshot} hyperdrive={hyperdrive} />
         </div>
       </div>
     </main>
@@ -4066,7 +4894,14 @@ export function App() {
         }}
       />
       {activeTab.id === fullSettingsTabId ? (
-        <FullSettingsPage snapshot={snapshot} hyperdrive={hyperdrive} />
+        <FullSettingsPage
+          snapshot={snapshot}
+          hyperdrive={hyperdrive}
+          openExtensionsPage={() => {
+            setUpdatesOpen(false);
+            setExtensionsPageOpen(true);
+          }}
+        />
       ) : (
         <NewTabSurface tab={activeTab} snapshot={snapshot} data={data} />
       )}
