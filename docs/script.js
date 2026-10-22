@@ -566,6 +566,143 @@ if (
   }
 }
 
+const sidebarShowcase = document.querySelector(".sidebar-showcase");
+const sidebarProductFrame = document.querySelector(".sidebar-product-frame");
+const sidebarFinePointer = window.matchMedia(
+  "(hover: hover) and (pointer: fine)",
+);
+let sidebarObserver;
+let sidebarVisible = false;
+let sidebarParallaxFrame;
+let sidebarTiltFrame;
+let sidebarPointerX = 0.5;
+let sidebarPointerY = 0.5;
+
+function updateSidebarParallax() {
+  sidebarParallaxFrame = undefined;
+  if (!sidebarShowcase || !sidebarVisible || reduceMotion) return;
+  const bounds = sidebarShowcase.getBoundingClientRect();
+  const viewportCenter = window.innerHeight * 0.5;
+  const sectionCenter = bounds.top + bounds.height * 0.5;
+  const distance = clamp(
+    (viewportCenter - sectionCenter) / (window.innerHeight + bounds.height),
+    -0.5,
+    0.5,
+  );
+  sidebarShowcase.style.setProperty(
+    "--sidebar-parallax",
+    `${(distance * 28).toFixed(2)}px`,
+  );
+}
+
+function requestSidebarParallax() {
+  if (sidebarParallaxFrame || !sidebarVisible || reduceMotion) return;
+  sidebarParallaxFrame = window.requestAnimationFrame(updateSidebarParallax);
+}
+
+function renderSidebarTilt() {
+  sidebarTiltFrame = undefined;
+  if (!sidebarProductFrame) return;
+  const tiltX = (0.5 - sidebarPointerY) * 5;
+  const tiltY = (sidebarPointerX - 0.5) * 6;
+  sidebarProductFrame.style.setProperty(
+    "--sidebar-tilt-x",
+    `${tiltX.toFixed(2)}deg`,
+  );
+  sidebarProductFrame.style.setProperty(
+    "--sidebar-tilt-y",
+    `${tiltY.toFixed(2)}deg`,
+  );
+  sidebarProductFrame.style.setProperty(
+    "--sidebar-light-x",
+    `${(sidebarPointerX * 100).toFixed(1)}%`,
+  );
+  sidebarProductFrame.style.setProperty(
+    "--sidebar-light-y",
+    `${(sidebarPointerY * 100).toFixed(1)}%`,
+  );
+}
+
+function handleSidebarPointerMove(event) {
+  if (!sidebarProductFrame) return;
+  const bounds = sidebarProductFrame.getBoundingClientRect();
+  sidebarPointerX = clamp((event.clientX - bounds.left) / bounds.width);
+  sidebarPointerY = clamp((event.clientY - bounds.top) / bounds.height);
+  if (!sidebarTiltFrame) {
+    sidebarTiltFrame = window.requestAnimationFrame(renderSidebarTilt);
+  }
+}
+
+function handleSidebarPointerEnter() {
+  sidebarProductFrame?.classList.add("is-hovered");
+}
+
+function handleSidebarPointerLeave() {
+  sidebarPointerX = 0.5;
+  sidebarPointerY = 0.5;
+  sidebarProductFrame?.classList.remove("is-hovered");
+  if (!sidebarTiltFrame) {
+    sidebarTiltFrame = window.requestAnimationFrame(renderSidebarTilt);
+  }
+}
+
+function cleanupSidebarShowcase() {
+  sidebarObserver?.disconnect();
+  window.cancelAnimationFrame(sidebarParallaxFrame);
+  window.cancelAnimationFrame(sidebarTiltFrame);
+  window.removeEventListener("scroll", requestSidebarParallax);
+  window.removeEventListener("resize", requestSidebarParallax);
+  sidebarProductFrame?.removeEventListener(
+    "pointerenter",
+    handleSidebarPointerEnter,
+  );
+  sidebarProductFrame?.removeEventListener(
+    "pointermove",
+    handleSidebarPointerMove,
+  );
+  sidebarProductFrame?.removeEventListener(
+    "pointerleave",
+    handleSidebarPointerLeave,
+  );
+}
+
+if (sidebarShowcase) {
+  if (reduceMotion) {
+    sidebarShowcase.classList.add("is-visible");
+  } else {
+    sidebarObserver = new IntersectionObserver(
+      ([entry]) => {
+        sidebarVisible = entry.isIntersecting;
+        if (sidebarVisible) {
+          sidebarShowcase.classList.add("is-visible");
+          requestSidebarParallax();
+        }
+      },
+      { rootMargin: "80px", threshold: 0.18 },
+    );
+    sidebarObserver.observe(sidebarShowcase);
+    window.addEventListener("scroll", requestSidebarParallax, {
+      passive: true,
+    });
+    window.addEventListener("resize", requestSidebarParallax);
+  }
+
+  if (!reduceMotion && sidebarFinePointer.matches && sidebarProductFrame) {
+    sidebarProductFrame.addEventListener(
+      "pointerenter",
+      handleSidebarPointerEnter,
+    );
+    sidebarProductFrame.addEventListener(
+      "pointermove",
+      handleSidebarPointerMove,
+    );
+    sidebarProductFrame.addEventListener(
+      "pointerleave",
+      handleSidebarPointerLeave,
+    );
+  }
+}
+
 const hyperdriveSection = document.querySelector(".hyperdrive-feature");
 const hyperdriveStage = document.querySelector(".hyperdrive-stage");
 const hyperdriveCanvas = document.querySelector(".hyperdrive-field");
@@ -1144,5 +1281,6 @@ window.addEventListener("beforeunload", () => {
   window.cancelAnimationFrame(hyperdriveFrame);
   window.cancelAnimationFrame(hyperdriveScrollFrame);
   cleanupExtensionsShowcase();
+  cleanupSidebarShowcase();
   clearSilenceTimers();
 });
