@@ -70,6 +70,8 @@ export function buildYtDlpArguments(
     "--no-color",
     "--newline",
     "--progress",
+    "--encoding",
+    "utf-8",
     "--js-runtimes",
     `deno:${denoPath}`,
     "--format",
@@ -79,9 +81,21 @@ export function buildYtDlpArguments(
     "--progress-template",
     `download:${PROGRESS_PREFIX}%(progress)j`,
     "--print",
-    `after_move:${FILE_PREFIX}%(filepath)s`,
+    `after_move:${FILE_PREFIX}%(filepath)j`,
     canonicalUrl,
   ];
+}
+
+export function parseYtDlpFileLine(line: string): string | null {
+  if (!line.startsWith(FILE_PREFIX)) return null;
+  try {
+    const value = JSON.parse(line.slice(FILE_PREFIX.length)) as unknown;
+    return typeof value === "string" && value.trim() && value.length <= 32_768
+      ? value
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 export function parseYtDlpProgressLine(
@@ -258,8 +272,10 @@ export class YouTubeDownloadService {
       if (progress) {
         Object.assign(job.snapshot, progress);
         this.emit();
-      } else if (line.startsWith(FILE_PREFIX)) {
-        job.reportedPath = line.slice(FILE_PREFIX.length).trim();
+      } else {
+        const reportedPath = parseYtDlpFileLine(line.trim());
+        if (!reportedPath) continue;
+        job.reportedPath = reportedPath;
         job.snapshot.stage = "finishing";
         job.snapshot.percent = 100;
         this.emit();

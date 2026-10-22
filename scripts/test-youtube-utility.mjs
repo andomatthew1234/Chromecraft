@@ -16,13 +16,17 @@ const profile = await fs.mkdtemp(
 );
 const reportPath = path.join(artifacts, "youtube-utility-report.json");
 const screenshotPath = path.join(artifacts, "youtube-utility-banner.png");
+const requestedUrl =
+  process.argv
+    .find((argument) => argument.startsWith("--url="))
+    ?.slice("--url=".length) ?? "https://www.youtube.com/watch?v=jNQXAC9IVRw";
 await fs.mkdir(artifacts, { recursive: true });
 
 const child = spawn(
   executable,
   [
     `--chromecraft-user-data=${profile}`,
-    "--chromecraft-youtube-smoke-url=https://www.youtube.com/watch?v=jNQXAC9IVRw",
+    `--chromecraft-youtube-smoke-url=${requestedUrl}`,
     `--chromecraft-youtube-smoke-report=${reportPath}`,
     `--chromecraft-youtube-smoke-screenshot=${screenshotPath}`,
   ],

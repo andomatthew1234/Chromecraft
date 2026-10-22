@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   buildYtDlpArguments,
+  parseYtDlpFileLine,
   parseYtDlpProgressLine,
 } from "./youtube-download-service";
 
@@ -19,6 +20,9 @@ describe("YouTubeDownloadService helpers", () => {
     expect(args).toContain("--ignore-config");
     expect(args).toContain("--no-update");
     expect(args).toContain("--no-playlist");
+    expect(args).toContain("--encoding");
+    expect(args).toContain("utf-8");
+    expect(args).toContain("after_move:CHROMECRAFT_FILE:%(filepath)j");
     expect(args.at(-1)).toBe("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
     expect(args.join(" ")).not.toContain("list=ignored");
   });
@@ -39,5 +43,15 @@ describe("YouTubeDownloadService helpers", () => {
   it("ignores malformed and unrelated output", () => {
     expect(parseYtDlpProgressLine("[download] 50%")).toBeNull();
     expect(parseYtDlpProgressLine("CHROMECRAFT_PROGRESS:{bad")).toBeNull();
+  });
+
+  it("parses Unicode output paths without relying on the Windows code page", () => {
+    expect(
+      parseYtDlpFileLine(
+        'CHROMECRAFT_FILE:"C:\\\\Downloads\\\\I\\u2019ve Killed My MacBook Air.mp4"',
+      ),
+    ).toBe("C:\\Downloads\\I’ve Killed My MacBook Air.mp4");
+    expect(parseYtDlpFileLine("CHROMECRAFT_FILE:not-json")).toBeNull();
+    expect(parseYtDlpFileLine("unrelated output")).toBeNull();
   });
 });
