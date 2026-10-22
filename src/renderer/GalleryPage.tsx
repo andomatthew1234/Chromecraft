@@ -49,6 +49,25 @@ const GalleryPreview = memo(function GalleryPreview({
 }: {
   item: GalleryEntrySnapshot;
 }) {
+  if (item.thumbnailUrl) {
+    return (
+      <img
+        className="gallery-preview"
+        src={item.thumbnailUrl}
+        alt=""
+        loading="lazy"
+        decoding="async"
+      />
+    );
+  }
+  return <GalleryVideoPreview item={item} />;
+});
+
+const GalleryVideoPreview = memo(function GalleryVideoPreview({
+  item,
+}: {
+  item: GalleryEntrySnapshot;
+}) {
   const video = useRef<HTMLVideoElement>(null);
   const [failed, setFailed] = useState(false);
   const [visible, setVisible] = useState(
@@ -186,6 +205,20 @@ function GalleryMenu({
             Copy original URL
           </button>
         )}
+        {item.managedBy === "smart" && (
+          <button
+            onClick={() =>
+              run(() =>
+                window.chromecraft.setSmartDownloadKeepForever(
+                  item.id,
+                  !item.keepForever,
+                ),
+              )
+            }
+          >
+            {item.keepForever ? "Allow automatic cleanup" : "Keep forever"}
+          </button>
+        )}
         <button onClick={remove}>Remove from gallery</button>
         <button className="danger" onClick={destroy}>
           Delete from disk
@@ -213,11 +246,13 @@ function GalleryPlayer({
   const [muted, setMuted] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(item.durationSeconds ?? 0);
+  const watchedReported = useRef(Boolean(item.watchedAt));
   useEffect(() => {
     setUnsupported(false);
     setPlaying(false);
     setCurrentTime(0);
     setDuration(item.durationSeconds ?? 0);
+    watchedReported.current = Boolean(item.watchedAt);
   }, [item.id]);
   const index = items.findIndex((candidate) => candidate.id === item.id);
   const select = (offset: number) => {
@@ -304,9 +339,22 @@ function GalleryPlayer({
                   : 0,
               )
             }
-            onTimeUpdate={(event) =>
-              setCurrentTime(event.currentTarget.currentTime)
-            }
+            onTimeUpdate={(event) => {
+              const current = event.currentTarget.currentTime;
+              setCurrentTime(current);
+              const usefulThreshold = Math.min(
+                60,
+                Math.max(20, event.currentTarget.duration * 0.1),
+              );
+              if (
+                item.managedBy === "smart" &&
+                !watchedReported.current &&
+                current >= usefulThreshold
+              ) {
+                watchedReported.current = true;
+                void window.chromecraft.markGalleryItemWatched(item.id);
+              }
+            }}
             onPlay={() => setPlaying(true)}
             onPause={() => setPlaying(false)}
             onEnded={() => setPlaying(false)}

@@ -34,6 +34,11 @@ let lastEmitAt = 0;
 let scheduled = false;
 let geometryTimer: number | null = null;
 const speculativeLinks = new Map<string, HTMLLinkElement>();
+let observedVideo: HTMLVideoElement | null = null;
+let observedVideoLastTime = 0;
+let observedPlaybackSeconds = 0;
+let observationBucket = 0;
+let observationVideoId: string | null = null;
 
 function cleanHttpUrl(raw: string): string | null {
   try {
@@ -253,7 +258,69 @@ function initialize(): void {
     attributes: true,
     attributeFilter: ["href", "hidden", "aria-hidden"],
   });
+  initializeYouTubePlaybackObserver();
   scheduleEmit(true);
+}
+
+function currentYouTubeVideoId(): string | null {
+  try {
+    if (
+      location.protocol !== "https:" ||
+      location.hostname !== "www.youtube.com" ||
+      location.pathname !== "/watch"
+    )
+      return null;
+    const id = new URL(location.href).searchParams.get("v") ?? "";
+    return /^[A-Za-z0-9_-]{11}$/u.test(id) ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+function initializeYouTubePlaybackObserver(): void {
+  const tick = () => {
+    const videoId = currentYouTubeVideoId();
+    const candidate = document.querySelector<HTMLVideoElement>(
+      "video.html5-main-video",
+    );
+    if (videoId !== observationVideoId || candidate !== observedVideo) {
+      observationVideoId = videoId;
+      observedVideo = candidate;
+      observedVideoLastTime = candidate?.currentTime ?? 0;
+      observedPlaybackSeconds = 0;
+      observationBucket = 0;
+      return;
+    }
+    if (
+      !videoId ||
+      !candidate ||
+      candidate.paused ||
+      candidate.ended ||
+      document.visibilityState !== "visible" ||
+      window.top !== window
+    ) {
+      observedVideoLastTime = candidate?.currentTime ?? 0;
+      return;
+    }
+    const nextTime = candidate.currentTime;
+    const delta = nextTime - observedVideoLastTime;
+    observedVideoLastTime = nextTime;
+    if (delta <= 0 || delta > 3) return;
+    observedPlaybackSeconds += delta;
+    const nextBucket = Math.floor(observedPlaybackSeconds / 30);
+    if (nextBucket <= observationBucket) return;
+    observationBucket = nextBucket;
+    ipcRenderer.send(channels.smartDownloadsPlayback, {
+      observationId: `${Math.floor(performance.timeOrigin)}:${videoId}:${nextBucket}`,
+      videoId,
+      playbackSeconds: 30,
+      occurredAt: Date.now(),
+    });
+  };
+  const timer = window.setInterval(tick, 1_000);
+  addEventListener("pagehide", () => window.clearInterval(timer), {
+    once: true,
+  });
 }
 
 ipcRenderer.on(channels.hyperdrivePrepareDocument, (_event, value: unknown) => {

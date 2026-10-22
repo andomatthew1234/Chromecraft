@@ -284,6 +284,7 @@ try {
     "general",
     "privacy",
     "appearance",
+    "downloads",
     "hyperdrive",
     "extensions",
     "advanced",
@@ -325,6 +326,41 @@ try {
       `${category} category`,
     );
   }
+
+  await selectCategory(app.cdp, "downloads");
+  await app.cdp.evaluate(
+    "document.querySelector('#setting-smart-downloads button')?.click()",
+  );
+  const smartDownloads = await poll(
+    () =>
+      app.cdp.evaluate(`(async () => ({
+        pageVisible: Boolean(document.querySelector('.smart-downloads-page')),
+        heading: document.querySelector('.smart-downloads-page h2')?.textContent,
+        snapshot: await window.chromecraft.getSmartDownloads(),
+        horizontalOverflow: (() => {
+          const page = document.querySelector('.smart-downloads-page');
+          return Boolean(page && page.scrollWidth > page.clientWidth + 1);
+        })(),
+      }))()`),
+    (state) =>
+      state.pageVisible &&
+      state.heading === "Smart Downloads" &&
+      state.snapshot?.config?.enabled === false &&
+      state.snapshot?.config?.storageQuotaBytes > 0 &&
+      !state.horizontalOverflow,
+    "the packaged Smart Downloads page and IPC snapshot",
+  );
+  await app.cdp.evaluate(
+    "document.querySelector('.smart-downloads-hero .smart-icon-button')?.click()",
+  );
+  await poll(
+    () =>
+      app.cdp.evaluate(
+        "Boolean(document.querySelector('#setting-smart-downloads'))",
+      ),
+    Boolean,
+    "return to Downloads settings",
+  );
 
   await app.cdp.evaluate(`(() => {
     const input = document.querySelector('.settings-search input');
@@ -655,6 +691,7 @@ try {
         pass: true,
         initialLayout,
         categoryChecks,
+        smartDownloads,
         searchResult,
         searchNavigation,
         darkSurface,

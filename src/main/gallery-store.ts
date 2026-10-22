@@ -26,6 +26,14 @@ const MEDIA_EXTENSIONS = new Set([
   ".webm",
   ".wmv",
 ]);
+const THUMBNAIL_EXTENSIONS = new Set([
+  ".avif",
+  ".gif",
+  ".jpeg",
+  ".jpg",
+  ".png",
+  ".webp",
+]);
 
 export interface GalleryCompletedInput {
   filePath: string;
@@ -36,11 +44,15 @@ export interface GalleryCompletedInput {
   downloadedAt?: number;
   sourceName?: string | null;
   sourceUrl?: string | null;
+  thumbnailPath?: string | null;
+  managedBy?: "manual" | "smart";
+  smartChannelId?: string | null;
 }
 
 export interface GalleryStoreOptions {
   filePath: string;
   downloadsDirectory: string;
+  thumbnailDirectory?: string;
   maxEntries?: number;
   now?: () => number;
   generateId?: () => string;
@@ -64,6 +76,7 @@ function emptyGallery(): PersistedGallery {
 export class GalleryStore {
   private readonly filePath: string;
   private readonly downloadsDirectory: string;
+  private readonly thumbnailDirectory: string | null;
   private readonly maxEntries: number;
   private readonly now: () => number;
   private readonly generateId: () => string;
@@ -85,6 +98,9 @@ export class GalleryStore {
     }
     this.filePath = path.resolve(options.filePath);
     this.downloadsDirectory = path.resolve(options.downloadsDirectory);
+    this.thumbnailDirectory = options.thumbnailDirectory
+      ? path.resolve(options.thumbnailDirectory)
+      : null;
     this.now = options.now ?? Date.now;
     this.generateId = options.generateId ?? randomUUID;
     this.onChange = options.onChange;
@@ -131,6 +147,12 @@ export class GalleryStore {
     const durationSeconds = cleanDuration(input.durationSeconds);
     const width = cleanDimension(input.width);
     const height = cleanDimension(input.height);
+    const thumbnailPath = await this.inspectThumbnailFile(input.thumbnailPath);
+    const managedBy = input.managedBy === "smart" ? "smart" : "manual";
+    const smartChannelId =
+      managedBy === "smart"
+        ? cleanOptionalString(input.smartChannelId, 256)
+        : null;
 
     return this.mutate((draft) => {
       const pathKey = normalizePathKey(inspected.filePath);
@@ -150,6 +172,12 @@ export class GalleryStore {
           sourceName,
           sourceUrl,
           available: true,
+          thumbnailPath,
+          thumbnailUrl: thumbnailPath ? thumbnailUrl(existing.id) : null,
+          managedBy,
+          smartChannelId,
+          keepForever: existing.keepForever ?? false,
+          watchedAt: existing.watchedAt ?? null,
         });
         return { result: structuredClone(existing), changed: true };
       }
@@ -175,6 +203,8 @@ export class GalleryStore {
         filename: inspected.filename,
         filePath: inspected.filePath,
         mediaUrl: mediaUrl(id),
+        thumbnailPath,
+        thumbnailUrl: thumbnailPath ? thumbnailUrl(id) : null,
         durationSeconds,
         width,
         height,
@@ -183,6 +213,10 @@ export class GalleryStore {
         sourceName,
         sourceUrl,
         available: true,
+        managedBy,
+        smartChannelId,
+        keepForever: false,
+        watchedAt: null,
       };
       draft.items.unshift(entry);
       draft.items.length = Math.min(draft.items.length, this.maxEntries);
@@ -287,6 +321,19 @@ export class GalleryStore {
       });
     }
     return inspected.filePath;
+  }
+
+  async resolveThumbnail(id: string): Promise<string | null> {
+    this.requireInitialized();
+    const clean = cleanId(id);
+    if (!clean || !this.thumbnailDirectory) return null;
+    const entry = this.data.items.find((item) => item.id === clean);
+    if (!entry?.thumbnailPath) return null;
+    return this.resolveOwnedFile(
+      entry.thumbnailPath,
+      this.thumbnailDirectory,
+      THUMBNAIL_EXTENSIONS,
+    );
   }
 
   async rename(
@@ -396,6 +443,29 @@ export class GalleryStore {
     });
   }
 
+  async setKeepForever(id: string, keepForever: boolean): Promise<void> {
+    const clean = requireId(id);
+    await this.mutate((draft) => {
+      const entry = draft.items.find((candidate) => candidate.id === clean);
+      if (!entry) throw new Error("Unknown Gallery item.");
+      const changed = entry.keepForever !== keepForever;
+      entry.keepForever = keepForever;
+      return { result: undefined, changed };
+    });
+  }
+
+  async markWatched(id: string, watchedAt = this.now()): Promise<void> {
+    const clean = requireId(id);
+    const timestamp = cleanTimestamp(watchedAt);
+    if (timestamp === null) throw new TypeError("watchedAt is invalid.");
+    await this.mutate((draft) => {
+      const entry = draft.items.find((candidate) => candidate.id === clean);
+      if (!entry) throw new Error("Unknown Gallery item.");
+      entry.watchedAt = timestamp;
+      return { result: undefined, changed: true };
+    });
+  }
+
   private async setAvailability(id: string, available: boolean): Promise<void> {
     await this.mutate((draft) => {
       const entry = draft.items.find((candidate) => candidate.id === id);
@@ -413,6 +483,7 @@ export class GalleryStore {
       return validateDocument(
         JSON.parse(raw) as unknown,
         this.downloadsDirectory,
+        this.thumbnailDirectory,
         this.maxEntries,
       );
     } catch (error) {
@@ -462,6 +533,40 @@ export class GalleryStore {
         filename: path.basename(realFile),
         fileSize: stat.size,
       };
+    } catch {
+      return null;
+    }
+  }
+
+  private async inspectThumbnailFile(
+    candidate: string | null | undefined,
+  ): Promise<string | null> {
+    if (!candidate || !this.thumbnailDirectory) return null;
+    return this.resolveOwnedFile(
+      candidate,
+      this.thumbnailDirectory,
+      THUMBNAIL_EXTENSIONS,
+    );
+  }
+
+  private async resolveOwnedFile(
+    candidate: string,
+    root: string,
+    allowedExtensions: ReadonlySet<string>,
+  ): Promise<string | null> {
+    const resolved = path.resolve(candidate);
+    if (!isDirectChild(root, resolved)) return null;
+    if (!allowedExtensions.has(path.extname(resolved).toLowerCase()))
+      return null;
+    try {
+      const [realRoot, realFile, stat] = await Promise.all([
+        fs.realpath(root),
+        fs.realpath(resolved),
+        fs.stat(resolved),
+      ]);
+      return stat.isFile() && isDirectChild(realRoot, realFile)
+        ? realFile
+        : null;
     } catch {
       return null;
     }
@@ -531,6 +636,10 @@ function mediaUrl(id: string): string {
   return `chromecraft-media://video/${encodeURIComponent(id)}`;
 }
 
+function thumbnailUrl(id: string): string {
+  return `chromecraft-media://thumbnail/${encodeURIComponent(id)}`;
+}
+
 function normalizePathKey(candidate: string): string {
   const resolved = path.resolve(candidate);
   return process.platform === "win32" ? resolved.toLowerCase() : resolved;
@@ -545,8 +654,7 @@ function isDirectChild(directory: string, candidate: string): boolean {
     relative.length > 0 &&
     relative !== ".." &&
     !relative.startsWith(`..${path.sep}`) &&
-    !path.isAbsolute(relative) &&
-    !relative.includes(path.sep)
+    !path.isAbsolute(relative)
   );
 }
 
@@ -649,6 +757,7 @@ function requireSafeRenameTitle(value: unknown): string {
 function validateDocument(
   value: unknown,
   downloadsDirectory: string,
+  thumbnailDirectory: string | null,
   maximum: number,
 ): PersistedGallery {
   if (
@@ -662,7 +771,7 @@ function validateDocument(
   const paths = new Set<string>();
   const items: GalleryEntrySnapshot[] = [];
   for (const raw of value.items.slice(0, maximum)) {
-    const entry = validateEntry(raw, downloadsDirectory);
+    const entry = validateEntry(raw, downloadsDirectory, thumbnailDirectory);
     if (!entry) continue;
     const pathKey = normalizePathKey(entry.filePath);
     if (ids.has(entry.id) || paths.has(pathKey)) continue;
@@ -676,6 +785,7 @@ function validateDocument(
 function validateEntry(
   value: unknown,
   downloadsDirectory: string,
+  thumbnailDirectory: string | null,
 ): GalleryEntrySnapshot | null {
   if (!isRecord(value)) return null;
   const id = cleanId(value.id);
@@ -690,12 +800,14 @@ function validateEntry(
   let height: number | null;
   let sourceName: string | null;
   let sourceUrl: string | null;
+  let smartChannelId: string | null;
   try {
     durationSeconds = cleanDuration(value.durationSeconds);
     width = cleanDimension(value.width);
     height = cleanDimension(value.height);
     sourceName = cleanOptionalString(value.sourceName, MAX_SOURCE_NAME_LENGTH);
     sourceUrl = cleanOptionalWebUrl(value.sourceUrl);
+    smartChannelId = cleanOptionalString(value.smartChannelId, 256);
   } catch {
     return null;
   }
@@ -720,6 +832,19 @@ function validateEntry(
     filename,
     filePath,
     mediaUrl: mediaUrl(id),
+    thumbnailPath:
+      typeof value.thumbnailPath === "string" &&
+      thumbnailDirectory &&
+      isDirectChild(thumbnailDirectory, value.thumbnailPath) &&
+      THUMBNAIL_EXTENSIONS.has(path.extname(value.thumbnailPath).toLowerCase())
+        ? path.resolve(value.thumbnailPath)
+        : null,
+    thumbnailUrl:
+      typeof value.thumbnailPath === "string" &&
+      thumbnailDirectory &&
+      isDirectChild(thumbnailDirectory, value.thumbnailPath)
+        ? thumbnailUrl(id)
+        : null,
     durationSeconds,
     width,
     height,
@@ -728,5 +853,9 @@ function validateEntry(
     sourceName,
     sourceUrl,
     available: value.available,
+    managedBy: value.managedBy === "smart" ? "smart" : "manual",
+    smartChannelId: value.managedBy === "smart" ? smartChannelId : null,
+    keepForever: value.keepForever === true,
+    watchedAt: cleanTimestamp(value.watchedAt),
   };
 }

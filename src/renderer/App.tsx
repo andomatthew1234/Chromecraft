@@ -26,6 +26,7 @@ import type {
   HyperdrivePreparationState,
   HyperdriveSnapshot,
   NewTabTheme,
+  SmartDownloadsSnapshot,
   UblockSnapshot,
   YouTubeDownloadsSnapshot,
 } from "../shared/browser";
@@ -45,6 +46,7 @@ import { ExpressiveLoadingIndicator } from "./ExpressiveLoadingIndicator";
 import { YouTubeDownloadBanner } from "./YouTubeDownloadBanner";
 import { YouTubeDownloadProgress } from "./YouTubeDownloadProgress";
 import { GalleryPage } from "./GalleryPage";
+import { SmartDownloadsPage } from "./SmartDownloadsPage";
 import {
   deriveDownloadIndicator,
   didAnyDownloadComplete,
@@ -79,6 +81,40 @@ const emptyYouTubeDownloads: YouTubeDownloadsSnapshot = {
   items: [],
 };
 const emptyGallery: GallerySnapshot = { items: [] };
+const emptySmartDownloads: SmartDownloadsSnapshot = {
+  config: {
+    enabled: false,
+    storageQuotaBytes: 10 * 1024 ** 3,
+    quality: "720p",
+    cleanupPolicy: "pause",
+    checkIntervalMinutes: 60,
+    includeShorts: false,
+    includeLivestreamReplays: false,
+    pauseDuringHeavyActivity: true,
+    backgroundEnabled: false,
+    startWithWindows: false,
+    recommendationsEnabled: false,
+  },
+  storage: {
+    quotaBytes: 10 * 1024 ** 3,
+    usedBytes: 0,
+    availableBytes: 10 * 1024 ** 3,
+    reservedBytes: 0,
+    diskAvailableBytes: null,
+    maximumQuotaBytes: 10 * 1024 ** 3,
+    managedDownloadCount: 0,
+  },
+  channels: [],
+  queue: [],
+  recommendations: [],
+  cleanupPreview: [],
+  queuePaused: false,
+  checking: false,
+  lastCheckAt: null,
+  nextCheckAt: null,
+  backgroundRunning: false,
+  error: null,
+};
 const emptyExtensions: ExtensionsSnapshot = {
   initialized: false,
   operation: "idle",
@@ -1498,8 +1534,8 @@ export const fullSettingsCategories: FullSettingsCategory[] = [
   },
   {
     id: "downloads",
-    label: "Downloads & gallery",
-    description: "Video progress, notifications and My Gallery",
+    label: "Utilities & tweaks",
+    description: "YouTube downloads, My Gallery and useful extras",
     icon: "download",
   },
   {
@@ -1585,6 +1621,14 @@ export const fullSettingsSearchItems: FullSettingsSearchItem[] = [
     title: "Automatically add videos to My Gallery",
     description: "Index completed yt-dlp videos in the local gallery.",
     keywords: "gallery youtube video automatic local library",
+  },
+  {
+    id: "smart-downloads",
+    category: "downloads",
+    title: "Smart Downloads",
+    description: "Automatically download new videos from followed channels.",
+    keywords:
+      "youtube channels automatic offline storage quality background recommendations",
   },
   {
     id: "hyperdrive-enabled",
@@ -2226,10 +2270,14 @@ export function QuickSettingsPanel({
 export function FullSettingsPage({
   snapshot,
   hyperdrive,
+  smartDownloads = emptySmartDownloads,
+  openSmartDownloadsRequest = 0,
   openExtensionsPage,
 }: {
   snapshot: BrowserSnapshot;
   hyperdrive: HyperdriveSnapshot;
+  smartDownloads?: SmartDownloadsSnapshot;
+  openSmartDownloadsRequest?: number;
   openExtensionsPage: () => void;
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
@@ -2238,6 +2286,7 @@ export function FullSettingsPage({
     useState<FullSettingsCategoryId>("general");
   const [searchQuery, setSearchQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
+  const [smartDownloadsOpen, setSmartDownloadsOpen] = useState(false);
   const [highlightedSettingId, setHighlightedSettingId] = useState<
     string | null
   >(null);
@@ -2249,6 +2298,11 @@ export function FullSettingsPage({
     fullSettingsCategories.find((item) => item.id === selectedCategory) ??
     fullSettingsCategories[0];
   useEffect(() => heading.current?.focus(), []);
+  useEffect(() => {
+    if (openSmartDownloadsRequest <= 0) return;
+    setSelectedCategory("downloads");
+    setSmartDownloadsOpen(true);
+  }, [openSmartDownloadsRequest]);
   useLayoutEffect(() => {
     if (!highlightedSettingId) return;
     const target = document.getElementById(`setting-${highlightedSettingId}`);
@@ -2275,11 +2329,13 @@ export function FullSettingsPage({
 
   const chooseCategory = (nextCategory: FullSettingsCategoryId) => {
     setSelectedCategory(nextCategory);
+    setSmartDownloadsOpen(false);
     setHighlightedSettingId(null);
     setSearchOpen(false);
   };
   const chooseSearchResult = (item: FullSettingsSearchItem) => {
     setSelectedCategory(item.category);
+    setSmartDownloadsOpen(item.id === "smart-downloads");
     setHighlightedSettingId(item.id);
     setSearchOpen(false);
   };
@@ -2515,7 +2571,12 @@ export function FullSettingsPage({
       </section>
     );
   } else if (selectedCategory === "downloads") {
-    categoryContent = (
+    categoryContent = smartDownloadsOpen ? (
+      <SmartDownloadsPage
+        snapshot={smartDownloads}
+        onBack={() => setSmartDownloadsOpen(false)}
+      />
+    ) : (
       <section
         className="settings-card"
         aria-labelledby="download-gallery-title"
@@ -2525,7 +2586,7 @@ export function FullSettingsPage({
             <Icon name="download" />
           </span>
           <span>
-            <h3 id="download-gallery-title">Downloads &amp; My Gallery</h3>
+            <h3 id="download-gallery-title">YouTube downloads + Gallery</h3>
             <p>
               Videos stay in your system Downloads folder and remain local to
               this device.
@@ -2547,6 +2608,29 @@ export function FullSettingsPage({
           >
             <Icon name="videoLibrary" />
             Open My Gallery
+          </button>
+        </div>
+        <div
+          id="setting-smart-downloads"
+          data-setting-id="smart-downloads"
+          className="settings-action-row settings-smart-downloads-link"
+        >
+          <span className="setting-copy">
+            <span className="setting-title">Smart Downloads</span>
+            <small className="setting-description">
+              Follow channels, set a private storage allocation and keep new
+              videos ready offline.{" "}
+              {smartDownloads.config.enabled ? "On" : "Off"} ·{" "}
+              {smartDownloads.channels.length} channel(s)
+            </small>
+          </span>
+          <button
+            type="button"
+            className="tonal-button settings-action-button"
+            onClick={() => setSmartDownloadsOpen(true)}
+          >
+            <Icon name="chevronRight" />
+            Manage
           </button>
         </div>
         <label
@@ -3935,22 +4019,31 @@ function Sidebar({
                     onClick={() => void openGalleryFromSidebar(item.id)}
                   >
                     <span className="gallery-sidebar-thumb">
-                      <video
-                        src={item.mediaUrl}
-                        muted
-                        preload="metadata"
-                        playsInline
-                        onLoadedMetadata={(event) => {
-                          const preview = event.currentTarget;
-                          if (preview.duration > 2) {
-                            preview.currentTime = Math.min(
-                              3,
-                              preview.duration * 0.08,
-                            );
-                          }
-                        }}
-                        aria-hidden="true"
-                      />
+                      {item.thumbnailUrl ? (
+                        <img
+                          src={item.thumbnailUrl}
+                          alt=""
+                          loading="lazy"
+                          decoding="async"
+                        />
+                      ) : (
+                        <video
+                          src={item.mediaUrl}
+                          muted
+                          preload="metadata"
+                          playsInline
+                          onLoadedMetadata={(event) => {
+                            const preview = event.currentTarget;
+                            if (preview.duration > 2) {
+                              preview.currentTime = Math.min(
+                                3,
+                                preview.duration * 0.08,
+                              );
+                            }
+                          }}
+                          aria-hidden="true"
+                        />
+                      )}
                       {item.available && <Icon name="play" />}
                       {!item.available && <Icon name="warning" />}
                     </span>
@@ -4957,6 +5050,8 @@ export function App() {
     emptyYouTubeDownloads,
   );
   const [gallery, setGallery] = useState(emptyGallery);
+  const [smartDownloads, setSmartDownloads] = useState(emptySmartDownloads);
+  const [openSmartDownloadsRequest, setOpenSmartDownloadsRequest] = useState(0);
   const [extensions, setExtensions] = useState(emptyExtensions);
   const [updates, setUpdates] = useState<UpdateSnapshot | null>(null);
   const [tool, setTool] = useState<SidebarTool | null>(null);
@@ -4974,6 +5069,8 @@ export function App() {
   const [youtubeProgressExpanded, setYouTubeProgressExpanded] = useState(false);
   const [dialog, setDialog] = useState<BrowserDialogState | null>(null);
   const receivedDownloadEvent = useRef(false);
+  const latestSnapshot = useRef<BrowserSnapshot | null>(null);
+  const latestFullSettingsTabId = useRef<string | null>(null);
   const [tabMenu, setTabMenu] = useState<{
     x: number;
     y: number;
@@ -4990,6 +5087,7 @@ export function App() {
       window.chromecraft.getUpdateSnapshot(),
       window.chromecraft.getYouTubeDownloads(),
       window.chromecraft.getGallery(),
+      window.chromecraft.getSmartDownloads(),
     ]).then(
       ([
         nextSnapshot,
@@ -5000,8 +5098,10 @@ export function App() {
         nextUpdates,
         nextYouTubeDownloads,
         nextGallery,
+        nextSmartDownloads,
       ]) => {
         if (mounted) {
+          latestSnapshot.current = nextSnapshot;
           setSnapshot(nextSnapshot);
           setTool(nextSnapshot.preferences.sidebarOpen ? "bookmarks" : null);
           setData(nextData);
@@ -5011,11 +5111,15 @@ export function App() {
           setUpdates(nextUpdates);
           setYouTubeDownloads(nextYouTubeDownloads);
           setGallery(nextGallery);
+          setSmartDownloads(nextSmartDownloads);
         }
       },
     );
     const cleanups = [
-      window.chromecraft.onSnapshot(setSnapshot),
+      window.chromecraft.onSnapshot((nextSnapshot) => {
+        latestSnapshot.current = nextSnapshot;
+        setSnapshot(nextSnapshot);
+      }),
       window.chromecraft.onBrowserData(setData),
       window.chromecraft.onDownloads((nextDownloads) => {
         receivedDownloadEvent.current = true;
@@ -5026,6 +5130,26 @@ export function App() {
       window.chromecraft.onUpdateSnapshot(setUpdates),
       window.chromecraft.onYouTubeDownloads(setYouTubeDownloads),
       window.chromecraft.onGallery(setGallery),
+      window.chromecraft.onSmartDownloads(setSmartDownloads),
+      window.chromecraft.onShowSmartDownloadsSettings(() => {
+        void (async () => {
+          const currentSettingsId = latestFullSettingsTabId.current;
+          const existingTab = currentSettingsId
+            ? latestSnapshot.current?.tabs.find(
+                (tab) => tab.id === currentSettingsId,
+              )
+            : null;
+          if (existingTab) await window.chromecraft.activateTab(existingTab.id);
+          else {
+            const created = await window.chromecraft.createTab();
+            latestFullSettingsTabId.current = created;
+            setFullSettingsTabId(created);
+          }
+          setOpenSmartDownloadsRequest((value) => value + 1);
+          setTool(null);
+          await window.chromecraft.setSidebarOpen(false);
+        })();
+      }),
       window.chromecraft.onShowFind(() => setFindOpen(true)),
       window.chromecraft.onOpenCommandPalette(() => setPaletteOpen(true)),
     ];
@@ -5038,6 +5162,12 @@ export function App() {
     () => snapshot?.tabs.find((tab) => tab.id === snapshot.activeTabId) ?? null,
     [snapshot],
   );
+  useEffect(() => {
+    latestSnapshot.current = snapshot;
+  }, [snapshot]);
+  useEffect(() => {
+    latestFullSettingsTabId.current = fullSettingsTabId;
+  }, [fullSettingsTabId]);
   useEffect(() => {
     if (
       fullSettingsTabId &&
@@ -5199,7 +5329,9 @@ export function App() {
       if (existingTab) {
         await window.chromecraft.activateTab(existingTab.id);
       } else {
-        setFullSettingsTabId(await window.chromecraft.createTab());
+        const created = await window.chromecraft.createTab();
+        latestFullSettingsTabId.current = created;
+        setFullSettingsTabId(created);
       }
       setTool(null);
       await window.chromecraft.setSidebarOpen(false);
@@ -5435,6 +5567,8 @@ export function App() {
         <FullSettingsPage
           snapshot={snapshot}
           hyperdrive={hyperdrive}
+          smartDownloads={smartDownloads}
+          openSmartDownloadsRequest={openSmartDownloadsRequest}
           openExtensionsPage={() => {
             setUpdatesOpen(false);
             setExtensionsPageOpen(true);

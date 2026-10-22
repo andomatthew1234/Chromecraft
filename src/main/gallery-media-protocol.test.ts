@@ -45,12 +45,27 @@ describe("registerGalleryMediaProtocol", () => {
       new Request("chromecraft-media://video/entry_123"),
     );
 
-    expect(resolveEntryPathById).toHaveBeenCalledWith("entry_123");
+    expect(resolveEntryPathById).toHaveBeenCalledWith("video", "entry_123");
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("video/mp4");
     expect(response.headers.get("content-length")).toBe("10");
     expect(response.headers.get("accept-ranges")).toBe("bytes");
     expect(await response.text()).toBe("0123456789");
+  });
+
+  it("serves an original thumbnail only through the thumbnail resource kind", async () => {
+    const thumbnailPath = path.join(directory, "sample.webp");
+    await writeFile(thumbnailPath, Buffer.from("thumbnail"));
+    resolveEntryPathById.mockResolvedValue(thumbnailPath);
+
+    const response = await handler(
+      new Request("chromecraft-media://thumbnail/entry_123"),
+    );
+
+    expect(resolveEntryPathById).toHaveBeenCalledWith("thumbnail", "entry_123");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/webp");
+    expect(await response.text()).toBe("thumbnail");
   });
 
   it("handles HEAD without reading a response body", async () => {

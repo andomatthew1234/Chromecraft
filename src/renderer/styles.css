@@ -2130,7 +2130,8 @@ input::placeholder {
   border-radius: var(--shape-md);
   background: var(--md-surface-container-highest);
 }
-.gallery-sidebar-thumb video {
+.gallery-sidebar-thumb video,
+.gallery-sidebar-thumb img {
   width: 100%;
   height: 100%;
   object-fit: cover;

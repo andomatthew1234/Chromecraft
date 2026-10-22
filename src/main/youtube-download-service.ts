@@ -9,6 +9,25 @@ import type {
 } from "../shared/browser";
 import type { YouTubeWatchTarget } from "../shared/youtube-watch";
 
+export type YouTubeDownloadQuality =
+  | "best"
+  | "1080p"
+  | "720p"
+  | "480p"
+  | "audio";
+
+export interface YouTubeDownloadRequestOptions {
+  origin?: "manual" | "smart";
+  quality?: YouTubeDownloadQuality;
+  smartChannelId?: string | null;
+}
+
+export interface YouTubeDownloadCompletionContext {
+  origin: "manual" | "smart";
+  smartChannelId: string | null;
+  thumbnailPath: string | null;
+}
+
 export const YT_DLP_VERSION = "2026.10.21";
 const PROGRESS_PREFIX = "CHROMECRAFT_PROGRESS:";
 const POSTPROCESS_PREFIX = "CHROMECRAFT_POSTPROCESS:";
@@ -24,11 +43,14 @@ export interface MediaToolPaths {
 
 export interface YouTubeDownloadServiceOptions {
   downloadsDirectory: string;
+  smartDownloadsDirectory?: string;
+  thumbnailDirectory?: string;
   toolsDirectory: string;
   onChange?: (snapshot: YouTubeDownloadsSnapshot) => void;
   onCompleted?: (
     item: YouTubeDownloadItemSnapshot,
     savePath: string,
+    context: YouTubeDownloadCompletionContext,
   ) => boolean | Promise<boolean>;
   spawnProcess?: (
     executable: string,
@@ -45,6 +67,8 @@ interface DownloadJob {
   reportedPath: string | null;
   stdoutBuffer: string;
   diagnostics: string;
+  destinationDirectory: string;
+  quality: YouTubeDownloadQuality;
 }
 
 export function mediaToolPaths(toolsDirectory: string): MediaToolPaths {
@@ -67,8 +91,15 @@ export function buildYtDlpArguments(
   target: YouTubeWatchTarget,
   stagingDirectory: string,
   denoPath: string,
+  quality: YouTubeDownloadQuality = "best",
 ): string[] {
   const canonicalUrl = `https://www.youtube.com/watch?v=${target.videoId}`;
+  const format =
+    quality === "audio"
+      ? "bestaudio/best"
+      : quality === "best"
+        ? "best[ext=mp4]/best"
+        : `best[height<=${quality.slice(0, -1)}][ext=mp4]/best[height<=${quality.slice(0, -1)}]/best`;
   return [
     "--ignore-config",
     "--no-update",
@@ -83,7 +114,8 @@ export function buildYtDlpArguments(
     "--js-runtimes",
     `deno:${denoPath}`,
     "--format",
-    "best[ext=mp4]/best",
+    format,
+    "--write-thumbnail",
     "--output",
     path.join(stagingDirectory, "%(title).160s [%(id)s].%(ext)s"),
     "--progress-template",
@@ -195,6 +227,18 @@ export class YouTubeDownloadService {
     };
   }
 
+  canStartAutomaticDownload(): boolean {
+    const active = [...this.jobs.values()].filter((job) =>
+      isActiveStage(job.snapshot.stage),
+    );
+    return (
+      this.verified &&
+      !this.disposed &&
+      active.length < 2 &&
+      !active.some((job) => (job.snapshot.origin ?? "manual") === "manual")
+    );
+  }
+
   async initialize(): Promise<void> {
     await verifyMediaTools(mediaToolPaths(this.options.toolsDirectory));
     await this.recoverInterruptedJobs();
@@ -203,6 +247,13 @@ export class YouTubeDownloadService {
   }
 
   async start(target: YouTubeWatchTarget): Promise<string> {
+    return this.startWithOptions(target);
+  }
+
+  async startWithOptions(
+    target: YouTubeWatchTarget,
+    request: YouTubeDownloadRequestOptions = {},
+  ): Promise<string> {
     if (this.disposed) throw new Error("YouTube downloads are shutting down.");
     if (!this.verified)
       throw new Error("The bundled YouTube downloader is unavailable.");
@@ -225,6 +276,15 @@ export class YouTubeDownloadService {
       this.jobs.delete(oldJob.snapshot.id);
 
     const id = randomUUID();
+    const origin = request.origin ?? "manual";
+    const destinationDirectory =
+      origin === "smart"
+        ? (this.options.smartDownloadsDirectory ??
+          path.join(
+            this.options.downloadsDirectory,
+            ".chromecraft-smart-downloads",
+          ))
+        : this.options.downloadsDirectory;
     const stagingDirectory = path.join(
       this.options.downloadsDirectory,
       ".chromecraft-media",
@@ -238,6 +298,8 @@ export class YouTubeDownloadService {
       reportedPath: null,
       stdoutBuffer: "",
       diagnostics: "",
+      destinationDirectory,
+      quality: request.quality ?? "best",
       snapshot: {
         id,
         videoId: target.videoId,
@@ -251,6 +313,9 @@ export class YouTubeDownloadService {
         etaSeconds: null,
         error: null,
         savedToGallery: false,
+        origin,
+        smartChannelId:
+          origin === "smart" ? (request.smartChannelId ?? null) : null,
         startedAt: Date.now(),
         finishedAt: null,
       },
@@ -262,7 +327,7 @@ export class YouTubeDownloadService {
     try {
       child = this.spawnProcess(
         tools.ytDlp,
-        buildYtDlpArguments(target, stagingDirectory, tools.deno),
+        buildYtDlpArguments(target, stagingDirectory, tools.deno, job.quality),
         {
           cwd: stagingDirectory,
           shell: false,
@@ -313,10 +378,17 @@ export class YouTubeDownloadService {
         "Only failed, cancelled, or interrupted YouTube downloads can be retried.",
       );
     }
-    return this.start({
-      videoId: job.snapshot.videoId,
-      url: job.snapshot.sourceUrl,
-    });
+    return this.startWithOptions(
+      {
+        videoId: job.snapshot.videoId,
+        url: job.snapshot.sourceUrl,
+      },
+      {
+        origin: job.snapshot.origin ?? "manual",
+        smartChannelId: job.snapshot.smartChannelId ?? null,
+        quality: job.quality,
+      },
+    );
   }
 
   async resolveCompletedPath(id: string): Promise<string | null> {
@@ -409,6 +481,9 @@ export class YouTubeDownloadService {
         videoId: job.snapshot.videoId,
         sourceUrl: job.snapshot.sourceUrl,
         startedAt: job.snapshot.startedAt,
+        origin: job.snapshot.origin ?? "manual",
+        smartChannelId: job.snapshot.smartChannelId ?? null,
+        quality: job.quality,
       }),
       "utf8",
     );
@@ -443,7 +518,11 @@ export class YouTubeDownloadService {
           typeof raw.sourceUrl !== "string" ||
           raw.sourceUrl !== `https://www.youtube.com/watch?v=${raw.videoId}` ||
           typeof raw.startedAt !== "number" ||
-          !Number.isFinite(raw.startedAt)
+          !Number.isFinite(raw.startedAt) ||
+          !["manual", "smart"].includes(String(raw.origin ?? "manual")) ||
+          !["best", "1080p", "720p", "480p", "audio"].includes(
+            String(raw.quality ?? "best"),
+          )
         ) {
           throw new Error("Invalid recovery manifest.");
         }
@@ -454,6 +533,15 @@ export class YouTubeDownloadService {
           reportedPath: null,
           stdoutBuffer: "",
           diagnostics: "",
+          destinationDirectory:
+            raw.origin === "smart"
+              ? (this.options.smartDownloadsDirectory ??
+                path.join(
+                  this.options.downloadsDirectory,
+                  ".chromecraft-smart-downloads",
+                ))
+              : this.options.downloadsDirectory,
+          quality: (raw.quality ?? "best") as YouTubeDownloadQuality,
           snapshot: {
             id: raw.id,
             videoId: raw.videoId,
@@ -467,6 +555,11 @@ export class YouTubeDownloadService {
             etaSeconds: null,
             error: "Download interrupted when Chromecraft closed.",
             savedToGallery: false,
+            origin: raw.origin === "smart" ? "smart" : "manual",
+            smartChannelId:
+              raw.origin === "smart" && typeof raw.smartChannelId === "string"
+                ? raw.smartChannelId.slice(0, 256)
+                : null,
             startedAt: raw.startedAt,
             finishedAt: Date.now(),
           },
@@ -502,8 +595,9 @@ export class YouTubeDownloadService {
       );
       const destination = await moveWithoutOverwrite(
         source,
-        this.options.downloadsDirectory,
+        job.destinationDirectory,
       );
+      const thumbnailPath = await this.commitThumbnail(job);
       job.snapshot.filename = path.basename(destination);
       job.finalPath = destination;
       job.snapshot.finishedAt = Date.now();
@@ -515,6 +609,11 @@ export class YouTubeDownloadService {
           (await this.options.onCompleted?.(
             structuredClone(job.snapshot),
             destination,
+            {
+              origin: job.snapshot.origin ?? "manual",
+              smartChannelId: job.snapshot.smartChannelId ?? null,
+              thumbnailPath,
+            },
           )) ?? false;
       } catch (error) {
         job.snapshot.savedToGallery = false;
@@ -546,6 +645,41 @@ export class YouTubeDownloadService {
 
   private async cleanStaging(job: DownloadJob): Promise<void> {
     await fs.rm(job.stagingDirectory, { recursive: true, force: true });
+  }
+
+  private async commitThumbnail(job: DownloadJob): Promise<string | null> {
+    if (!this.options.thumbnailDirectory) return null;
+    let entries: import("node:fs").Dirent[];
+    try {
+      entries = await fs.readdir(job.stagingDirectory, { withFileTypes: true });
+    } catch {
+      return null;
+    }
+    const allowed = new Set([
+      ".avif",
+      ".gif",
+      ".jpeg",
+      ".jpg",
+      ".png",
+      ".webp",
+    ]);
+    const thumbnail = entries.find(
+      (entry) =>
+        entry.isFile() && allowed.has(path.extname(entry.name).toLowerCase()),
+    );
+    if (!thumbnail) return null;
+    const source = await assertFileInside(
+      path.join(job.stagingDirectory, thumbnail.name),
+      job.stagingDirectory,
+    );
+    await fs.mkdir(this.options.thumbnailDirectory, { recursive: true });
+    const extension = path.extname(thumbnail.name).toLowerCase();
+    const destination = path.join(
+      this.options.thumbnailDirectory,
+      `${job.snapshot.videoId}${extension}`,
+    );
+    await fs.copyFile(source, destination);
+    return destination;
   }
 
   private emit(immediate = false): void {

@@ -106,6 +106,45 @@ describe("GalleryStore", () => {
     expect(restored.snapshot.items[0].available).toBe(false);
   });
 
+  it("indexes verified managed media and original thumbnails under owned roots", async () => {
+    const paths = await fixture();
+    const managed = path.join(
+      paths.downloadsDirectory,
+      ".chromecraft-smart-downloads",
+    );
+    const thumbnails = path.join(paths.root, "profile", "smart", "thumbnails");
+    await fs.mkdir(managed, { recursive: true });
+    await fs.mkdir(thumbnails, { recursive: true });
+    const file = await video(managed, "smart [abcdefghijk].mp4");
+    const thumbnailPath = path.join(thumbnails, "abcdefghijk.webp");
+    await fs.writeFile(thumbnailPath, "image");
+    const store = new GalleryStore({
+      ...paths,
+      thumbnailDirectory: thumbnails,
+      generateId: () => "smart-gallery-id",
+    });
+    await store.initialize();
+
+    const entry = await store.addCompleted({
+      filePath: file,
+      thumbnailPath,
+      managedBy: "smart",
+      smartChannelId: "UC1234567890123456789012",
+    });
+
+    expect(entry).toMatchObject({
+      managedBy: "smart",
+      thumbnailUrl: "chromecraft-media://thumbnail/smart-gallery-id",
+      smartChannelId: "UC1234567890123456789012",
+    });
+    await expect(store.resolveThumbnail(entry.id)).resolves.toBe(
+      await fs.realpath(thumbnailPath),
+    );
+    await expect(store.resolveFile(entry.id)).resolves.toBe(
+      await fs.realpath(file),
+    );
+  });
+
   it("imports only bounded Chromecraft-named top-level media", async () => {
     const paths = await fixture();
     await video(paths.downloadsDirectory, "one [abcdefghijk].mp4");

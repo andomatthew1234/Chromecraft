@@ -10,6 +10,7 @@ import type {
   FindResultSnapshot,
   GallerySnapshot,
   HyperdriveSnapshot,
+  SmartDownloadsSnapshot,
   TabId,
   YouTubeDownloadsSnapshot,
 } from "../shared/browser";
@@ -203,6 +204,101 @@ const api: ChromecraftApi = {
     ipcRenderer.invoke(
       channels.getYouTubeDownloads,
     ) as Promise<YouTubeDownloadsSnapshot>,
+  getSmartDownloads: () =>
+    ipcRenderer.invoke(
+      channels.getSmartDownloads,
+    ) as Promise<SmartDownloadsSnapshot>,
+  setSmartDownloadsEnabled: (enabled) =>
+    ipcRenderer.invoke(
+      channels.setSmartDownloadsEnabled,
+      enabled,
+    ) as Promise<void>,
+  setSmartDownloadsQuotaBytes: (bytes) =>
+    ipcRenderer.invoke(channels.setSmartDownloadsQuota, bytes) as Promise<void>,
+  setSmartDownloadsQuality: (quality) =>
+    ipcRenderer.invoke(
+      channels.setSmartDownloadsQuality,
+      quality,
+    ) as Promise<void>,
+  setSmartDownloadsCleanupPolicy: (policy) =>
+    ipcRenderer.invoke(
+      channels.setSmartDownloadsCleanupPolicy,
+      policy,
+    ) as Promise<void>,
+  setSmartDownloadsCheckInterval: (minutes) =>
+    ipcRenderer.invoke(
+      channels.setSmartDownloadsCheckInterval,
+      minutes,
+    ) as Promise<void>,
+  setSmartDownloadsIncludeShorts: (enabled) =>
+    ipcRenderer.invoke(
+      channels.setSmartDownloadsIncludeShorts,
+      enabled,
+    ) as Promise<void>,
+  setSmartDownloadsIncludeLivestreamReplays: (enabled) =>
+    ipcRenderer.invoke(
+      channels.setSmartDownloadsIncludeLivestreamReplays,
+      enabled,
+    ) as Promise<void>,
+  setSmartDownloadsPauseDuringHeavyActivity: (enabled) =>
+    ipcRenderer.invoke(
+      channels.setSmartDownloadsPauseDuringHeavyActivity,
+      enabled,
+    ) as Promise<void>,
+  setSmartDownloadsBackgroundEnabled: (enabled) =>
+    ipcRenderer.invoke(
+      channels.setSmartDownloadsBackgroundEnabled,
+      enabled,
+    ) as Promise<void>,
+  setSmartDownloadsStartWithWindows: (enabled) =>
+    ipcRenderer.invoke(
+      channels.setSmartDownloadsStartWithWindows,
+      enabled,
+    ) as Promise<void>,
+  setSmartDownloadsRecommendationsEnabled: (enabled) =>
+    ipcRenderer.invoke(
+      channels.setSmartDownloadsRecommendationsEnabled,
+      enabled,
+    ) as Promise<void>,
+  addSmartDownloadsChannel: (input, initialMode) =>
+    ipcRenderer.invoke(
+      channels.addSmartDownloadsChannel,
+      input,
+      initialMode,
+    ) as Promise<void>,
+  setSmartDownloadsChannelEnabled: (id, enabled) =>
+    ipcRenderer.invoke(
+      channels.setSmartDownloadsChannelEnabled,
+      id,
+      enabled,
+    ) as Promise<void>,
+  checkSmartDownloads: (channelId) =>
+    ipcRenderer.invoke(
+      channels.checkSmartDownloads,
+      channelId,
+    ) as Promise<void>,
+  removeSmartDownloadsChannel: (id) =>
+    ipcRenderer.invoke(
+      channels.removeSmartDownloadsChannel,
+      id,
+    ) as Promise<void>,
+  pauseSmartDownloadsQueue: () =>
+    ipcRenderer.invoke(channels.pauseSmartDownloadsQueue) as Promise<void>,
+  resumeSmartDownloadsQueue: () =>
+    ipcRenderer.invoke(channels.resumeSmartDownloadsQueue) as Promise<void>,
+  retrySmartDownloadJob: (id) =>
+    ipcRenderer.invoke(channels.retrySmartDownloadJob, id) as Promise<void>,
+  cancelSmartDownloadJob: (id) =>
+    ipcRenderer.invoke(channels.cancelSmartDownloadJob, id) as Promise<void>,
+  dismissSmartDownloadsRecommendation: (channelId) =>
+    ipcRenderer.invoke(
+      channels.dismissSmartDownloadsRecommendation,
+      channelId,
+    ) as Promise<void>,
+  clearSmartDownloadsRecommendationHistory: () =>
+    ipcRenderer.invoke(
+      channels.clearSmartDownloadsRecommendationHistory,
+    ) as Promise<void>,
   downloadActiveYouTubeVideo: (tabId) =>
     ipcRenderer.invoke(channels.startYouTubeDownload, tabId) as Promise<string>,
   cancelYouTubeDownload: (id) =>
@@ -269,6 +365,14 @@ const api: ChromecraftApi = {
       width,
       height,
     ) as Promise<void>,
+  setSmartDownloadKeepForever: (id, keepForever) =>
+    ipcRenderer.invoke(
+      channels.setSmartDownloadKeepForever,
+      id,
+      keepForever,
+    ) as Promise<void>,
+  markGalleryItemWatched: (id) =>
+    ipcRenderer.invoke(channels.markGalleryItemWatched, id) as Promise<void>,
   setShowDownloadProgressInToolbar: (enabled) =>
     ipcRenderer.invoke(
       channels.setShowDownloadProgressInToolbar,
@@ -323,6 +427,21 @@ const api: ChromecraftApi = {
     ipcRenderer.on(channels.youtubeDownloadsChanged, handler);
     return () =>
       ipcRenderer.removeListener(channels.youtubeDownloadsChanged, handler);
+  },
+  onSmartDownloads: (listener) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      snapshot: SmartDownloadsSnapshot,
+    ) => listener(snapshot);
+    ipcRenderer.on(channels.smartDownloadsChanged, handler);
+    return () =>
+      ipcRenderer.removeListener(channels.smartDownloadsChanged, handler);
+  },
+  onShowSmartDownloadsSettings: (listener) => {
+    const handler = () => listener();
+    ipcRenderer.on(channels.showSmartDownloadsSettings, handler);
+    return () =>
+      ipcRenderer.removeListener(channels.showSmartDownloadsSettings, handler);
   },
   onGallery: (listener) => {
     const handler = (

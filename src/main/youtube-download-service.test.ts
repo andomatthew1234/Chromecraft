@@ -49,10 +49,27 @@ describe("YouTubeDownloadService helpers", () => {
     expect(args).toContain("--encoding");
     expect(args).toContain("utf-8");
     expect(args).toContain("0.1");
+    expect(args).toContain("--write-thumbnail");
     expect(args).toContain("postprocess:CHROMECRAFT_POSTPROCESS:%(progress)j");
     expect(args).toContain("after_move:CHROMECRAFT_FILE:%(filepath)j");
     expect(args.at(-1)).toBe("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
     expect(args.join(" ")).not.toContain("list=ignored");
+  });
+
+  it("applies a bounded quality ceiling without shell interpolation", () => {
+    const args = buildYtDlpArguments(
+      {
+        videoId: "dQw4w9WgXcQ",
+        url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      },
+      path.resolve("staging"),
+      path.resolve("deno"),
+      "720p",
+    );
+    expect(args[args.indexOf("--format") + 1]).toBe(
+      "best[height<=720][ext=mp4]/best[height<=720]/best",
+    );
+    expect(args.at(-1)).toBe("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
   });
 
   it("parses bounded structured progress", () => {

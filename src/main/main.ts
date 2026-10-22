@@ -9,11 +9,13 @@ import {
   clipboard,
   ipcMain,
   Menu,
+  nativeImage,
   nativeTheme,
   Notification,
   protocol,
   session,
   shell,
+  Tray,
   type IpcMainInvokeEvent,
   WebContentsView,
 } from "electron";
@@ -32,6 +34,10 @@ import type {
   HyperdriveOmniboxSignal,
   NewTabTheme,
   QuickLinkInput,
+  SmartDownloadCleanupPolicy,
+  SmartDownloadInitialMode,
+  SmartDownloadQuality,
+  SmartDownloadsSnapshot,
   YouTubeDownloadsSnapshot,
   GallerySnapshot,
 } from "../shared/browser";
@@ -68,6 +74,7 @@ import {
   WebsitePermissionController,
   type WebsitePermissionPrompt,
 } from "./website-permission-controller";
+import { SmartDownloadsService } from "./smart-downloads/service";
 
 const startedAt = performance.now();
 const profilePartition = "persist:chromecraft-default";
@@ -143,6 +150,9 @@ let updateManager: UpdateManager | null = null;
 let websitePermissionController: WebsitePermissionController | null = null;
 let youtubeDownloadService: YouTubeDownloadService | null = null;
 let galleryStore: GalleryStore | null = null;
+let smartDownloadsService: SmartDownloadsService | null = null;
+let smartDownloadsTray: Tray | null = null;
+let quittingCompletely = false;
 let deleteAllGalleryItemsInFlight = false;
 let youtubeIndicatorHideTimer: NodeJS.Timeout | null = null;
 
@@ -201,6 +211,7 @@ function prepareForUpdateRestart(): Promise<void> {
   updateShutdownPromise = Promise.all([
     tabManager?.flushSession() ?? Promise.resolve(),
     downloadManager?.dispose() ?? Promise.resolve(),
+    smartDownloadsService?.dispose() ?? Promise.resolve(),
     youtubeDownloadService?.dispose() ?? Promise.resolve(),
   ]).then(() => {
     updateRestartPrepared = true;
@@ -473,9 +484,107 @@ function requireGallery(event: IpcMainInvokeEvent): GalleryStore {
   return galleryStore;
 }
 
+function requireSmartDownloads(
+  event: IpcMainInvokeEvent,
+): SmartDownloadsService {
+  requireTrusted(event);
+  if (!smartDownloadsService) throw new Error("Smart Downloads is not ready.");
+  return smartDownloadsService;
+}
+
 function sendGallerySnapshot(snapshot: GallerySnapshot): void {
   if (!shellView || shellView.webContents.isDestroyed()) return;
   shellView.webContents.send(channels.galleryChanged, snapshot);
+}
+
+function sendSmartDownloadsSnapshot(snapshot: SmartDownloadsSnapshot): void {
+  if (!shellView || shellView.webContents.isDestroyed()) return;
+  shellView.webContents.send(channels.smartDownloadsChanged, snapshot);
+}
+
+function showChromecraft(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    void createMainWindow();
+    return;
+  }
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function rebuildSmartDownloadsTray(): void {
+  if (!smartDownloadsTray) return;
+  const paused = smartDownloadsService?.snapshot.queuePaused ?? false;
+  smartDownloadsTray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: "Open Chromecraft", click: showChromecraft },
+      {
+        label: "Open My Gallery",
+        click: () => {
+          showChromecraft();
+          void tabManager?.openGallery(undefined, true);
+        },
+      },
+      {
+        label: "View Smart Downloads",
+        click: () => {
+          showChromecraft();
+          shellView?.webContents.send(channels.showSmartDownloadsSettings);
+        },
+      },
+      { type: "separator" },
+      {
+        label: paused ? "Resume Smart Downloads" : "Pause Smart Downloads",
+        click: () => {
+          const operation = paused
+            ? smartDownloadsService?.resumeQueue()
+            : smartDownloadsService?.pauseQueue();
+          void operation?.finally(rebuildSmartDownloadsTray);
+        },
+      },
+      { type: "separator" },
+      {
+        label: "Quit Chromecraft completely",
+        click: () => {
+          quittingCompletely = true;
+          if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close();
+          else app.quit();
+        },
+      },
+    ]),
+  );
+}
+
+async function syncSmartBackgroundPreferences(
+  backgroundEnabled: boolean,
+  startWithWindows: boolean,
+): Promise<void> {
+  if (process.platform === "win32" && app.isPackaged) {
+    app.setLoginItemSettings({
+      openAtLogin: startWithWindows,
+      args: ["--chromecraft-background"],
+    });
+  }
+  if (backgroundEnabled && !smartDownloadsTray) {
+    const icon = nativeImage.createFromDataURL(
+      "data:image/svg+xml;charset=utf-8," +
+        encodeURIComponent(
+          '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><rect width="32" height="32" rx="9" fill="#0b57d0"/><path d="M9 10h14v4H13v8h10v-4h-6v-4h10v12H9z" fill="white"/></svg>',
+        ),
+    );
+    smartDownloadsTray = new Tray(icon);
+    smartDownloadsTray.setToolTip("Chromecraft Smart Downloads");
+    smartDownloadsTray.on("double-click", showChromecraft);
+  } else if (!backgroundEnabled && smartDownloadsTray) {
+    smartDownloadsTray.destroy();
+    smartDownloadsTray = null;
+  }
+  rebuildSmartDownloadsTray();
+}
+
+function requireBoolean(value: unknown, name: string): boolean {
+  if (typeof value !== "boolean")
+    throw new TypeError(`${name} must be a boolean.`);
+  return value;
 }
 
 function requireString(value: unknown, name: string, maximum = 8_192): string {
@@ -1122,6 +1231,142 @@ function registerIpc(): void {
     (event) => requireYouTubeDownloads(event).snapshot,
   );
   ipcMain.handle(
+    channels.getSmartDownloads,
+    (event) => requireSmartDownloads(event).snapshot,
+  );
+  ipcMain.handle(channels.setSmartDownloadsEnabled, (event, value: unknown) =>
+    requireSmartDownloads(event).setEnabled(requireBoolean(value, "enabled")),
+  );
+  ipcMain.handle(channels.setSmartDownloadsQuota, (event, value: unknown) => {
+    if (typeof value !== "number" || !Number.isSafeInteger(value)) {
+      throw new TypeError("Storage allocation must be an integer byte count.");
+    }
+    return requireSmartDownloads(event).setQuota(value);
+  });
+  ipcMain.handle(channels.setSmartDownloadsQuality, (event, value: unknown) => {
+    if (
+      !new Set(["best", "1080p", "720p", "480p", "audio"]).has(String(value))
+    ) {
+      throw new TypeError("Download quality is invalid.");
+    }
+    return requireSmartDownloads(event).setQuality(
+      value as SmartDownloadQuality,
+    );
+  });
+  ipcMain.handle(
+    channels.setSmartDownloadsCleanupPolicy,
+    (event, value: unknown) => {
+      if (!new Set(["oldest", "watched-first", "pause"]).has(String(value))) {
+        throw new TypeError("Cleanup policy is invalid.");
+      }
+      return requireSmartDownloads(event).setCleanupPolicy(
+        value as SmartDownloadCleanupPolicy,
+      );
+    },
+  );
+  ipcMain.handle(
+    channels.setSmartDownloadsCheckInterval,
+    (event, value: unknown) => {
+      if (typeof value !== "number" || !Number.isSafeInteger(value)) {
+        throw new TypeError("Check interval must be an integer.");
+      }
+      return requireSmartDownloads(event).setCheckInterval(value);
+    },
+  );
+  for (const [channel, field] of [
+    [channels.setSmartDownloadsIncludeShorts, "includeShorts"],
+    [
+      channels.setSmartDownloadsIncludeLivestreamReplays,
+      "includeLivestreamReplays",
+    ],
+    [
+      channels.setSmartDownloadsPauseDuringHeavyActivity,
+      "pauseDuringHeavyActivity",
+    ],
+    [channels.setSmartDownloadsBackgroundEnabled, "backgroundEnabled"],
+    [
+      channels.setSmartDownloadsRecommendationsEnabled,
+      "recommendationsEnabled",
+    ],
+  ] as const) {
+    ipcMain.handle(channel, (event, value: unknown) =>
+      requireSmartDownloads(event).setConfigFlag(
+        field,
+        requireBoolean(value, field),
+      ),
+    );
+  }
+  ipcMain.handle(
+    channels.setSmartDownloadsStartWithWindows,
+    (event, value: unknown) => {
+      const enabled = requireBoolean(value, "startWithWindows");
+      if (enabled && process.platform !== "win32") {
+        throw new Error("Start with Windows is available on Windows only.");
+      }
+      return requireSmartDownloads(event).setConfigFlag(
+        "startWithWindows",
+        enabled,
+      );
+    },
+  );
+  ipcMain.handle(
+    channels.addSmartDownloadsChannel,
+    (event, input: unknown, mode: unknown) => {
+      const initialMode =
+        mode === "future" || mode === 1 || mode === 3 || mode === 5
+          ? (mode as SmartDownloadInitialMode)
+          : null;
+      if (initialMode === null)
+        throw new TypeError("Initial download mode is invalid.");
+      return requireSmartDownloads(event).addChannel(
+        requireString(input, "channel", 2_048),
+        initialMode,
+      );
+    },
+  );
+  ipcMain.handle(
+    channels.setSmartDownloadsChannelEnabled,
+    (event, id: unknown, enabled: unknown) =>
+      requireSmartDownloads(event).setChannelEnabled(
+        requireString(id, "channelId", 64),
+        requireBoolean(enabled, "enabled"),
+      ),
+  );
+  ipcMain.handle(channels.checkSmartDownloads, (event, id: unknown) =>
+    requireSmartDownloads(event).checkNow(
+      id === undefined || id === null
+        ? undefined
+        : requireString(id, "channelId", 64),
+    ),
+  );
+  ipcMain.handle(channels.removeSmartDownloadsChannel, (event, id: unknown) =>
+    requireSmartDownloads(event).removeChannel(
+      requireString(id, "channelId", 64),
+    ),
+  );
+  ipcMain.handle(channels.pauseSmartDownloadsQueue, (event) =>
+    requireSmartDownloads(event).pauseQueue(),
+  );
+  ipcMain.handle(channels.resumeSmartDownloadsQueue, (event) =>
+    requireSmartDownloads(event).resumeQueue(),
+  );
+  ipcMain.handle(channels.retrySmartDownloadJob, (event, id: unknown) =>
+    requireSmartDownloads(event).retryJob(requireString(id, "jobId", 128)),
+  );
+  ipcMain.handle(channels.cancelSmartDownloadJob, (event, id: unknown) =>
+    requireSmartDownloads(event).cancelJob(requireString(id, "jobId", 128)),
+  );
+  ipcMain.handle(
+    channels.dismissSmartDownloadsRecommendation,
+    (event, id: unknown) =>
+      requireSmartDownloads(event).dismissRecommendation(
+        requireString(id, "channelId", 64),
+      ),
+  );
+  ipcMain.handle(channels.clearSmartDownloadsRecommendationHistory, (event) =>
+    requireSmartDownloads(event).clearRecommendationHistory(),
+  );
+  ipcMain.handle(
     channels.startYouTubeDownload,
     async (event, tabId: unknown) => {
       const manager = requireManager(event);
@@ -1275,6 +1520,7 @@ function registerIpc(): void {
     if (!file) throw new Error("The gallery file is unavailable.");
     await shell.trashItem(file);
     await gallery.remove(cleanId);
+    await smartDownloadsService?.recordGalleryDeletion(cleanId);
   });
   ipcMain.handle(channels.deleteAllGalleryItems, async (event) => {
     const gallery = requireGallery(event);
@@ -1309,6 +1555,11 @@ function registerIpc(): void {
         }
       }
       await gallery.removeMany(deletedIds);
+      await Promise.all(
+        deletedIds.map((id) =>
+          smartDownloadsService?.recordGalleryDeletion(id),
+        ),
+      );
       if (failures.length > 0) {
         throw new Error(
           `${failures.length} video${failures.length === 1 ? "" : "s"} could not be deleted and remain in My Gallery.`,
@@ -1344,6 +1595,19 @@ function registerIpc(): void {
         height,
       );
     },
+  );
+  ipcMain.handle(
+    channels.setSmartDownloadKeepForever,
+    (event, id: unknown, keepForever: unknown) =>
+      requireSmartDownloads(event).setKeepForever(
+        requireString(id, "galleryId", 128),
+        requireBoolean(keepForever, "keepForever"),
+      ),
+  );
+  ipcMain.handle(channels.markGalleryItemWatched, (event, id: unknown) =>
+    requireSmartDownloads(event).markGalleryItemWatched(
+      requireString(id, "galleryId", 128),
+    ),
   );
   ipcMain.handle(
     channels.setShowDownloadProgressInToolbar,
@@ -1577,6 +1841,21 @@ async function createMainWindow(): Promise<void> {
   const downloadsDirectory = smokeUserData
     ? path.join(app.getPath("userData"), "downloads")
     : app.getPath("downloads");
+  const smartDownloadsDirectory = path.join(
+    downloadsDirectory,
+    ".chromecraft-smart-downloads",
+  );
+  const smartDownloadsDataDirectory = path.join(
+    app.getPath("userData"),
+    "smart-downloads",
+  );
+  const smartDownloadsThumbnailDirectory = path.join(
+    smartDownloadsDataDirectory,
+    "thumbnails",
+  );
+  const mediaToolsDirectory = app.isPackaged
+    ? path.join(process.resourcesPath, "media-tools")
+    : path.join(app.getAppPath(), "resources", "media-tools");
   const downloads = new DownloadManager(browserSession, {
     downloadsDirectory,
     historyFilePath: path.join(app.getPath("userData"), "downloads.json"),
@@ -1591,20 +1870,24 @@ async function createMainWindow(): Promise<void> {
   const gallery = new GalleryStore({
     filePath: path.join(app.getPath("userData"), "gallery.json"),
     downloadsDirectory,
+    thumbnailDirectory: smartDownloadsThumbnailDirectory,
     onChange: sendGallerySnapshot,
   });
   await gallery.initialize();
   galleryStore = gallery;
-  registerGalleryMediaProtocol(view.webContents.session, (id) =>
-    gallery.resolveFile(id),
+  registerGalleryMediaProtocol(view.webContents.session, (kind, id) =>
+    kind === "thumbnail"
+      ? gallery.resolveThumbnail(id)
+      : gallery.resolveFile(id),
   );
 
   const youtubeDownloads = new YouTubeDownloadService({
     downloadsDirectory,
-    toolsDirectory: app.isPackaged
-      ? path.join(process.resourcesPath, "media-tools")
-      : path.join(app.getAppPath(), "resources", "media-tools"),
+    smartDownloadsDirectory,
+    thumbnailDirectory: smartDownloadsThumbnailDirectory,
+    toolsDirectory: mediaToolsDirectory,
     onChange: (snapshot: YouTubeDownloadsSnapshot) => {
+      smartDownloadsService?.syncDownloads(snapshot);
       const active = snapshot.items.some((item) =>
         ["pending", "downloading", "finishing"].includes(item.stage),
       );
@@ -1623,7 +1906,7 @@ async function createMainWindow(): Promise<void> {
         view.webContents.send(channels.youtubeDownloadsChanged, snapshot);
       }
     },
-    onCompleted: async (item, savePath) => {
+    onCompleted: async (item, savePath, context) => {
       try {
         downloads.recordCompletedExternalDownload({
           url: item.sourceUrl,
@@ -1642,9 +1925,13 @@ async function createMainWindow(): Promise<void> {
         );
       }
       let savedToGallery = false;
-      if (preferences.snapshot.addVideosToGallery) {
+      let galleryEntryId: string | null = null;
+      if (
+        preferences.snapshot.addVideosToGallery ||
+        context.origin === "smart"
+      ) {
         try {
-          await gallery.addCompleted({
+          const galleryEntry = await gallery.addCompleted({
             filePath: savePath,
             title: item.filename
               ?.replace(/\s+\[[a-zA-Z0-9_-]{6,}\](?=\.[^.]+$)/u, "")
@@ -1652,11 +1939,31 @@ async function createMainWindow(): Promise<void> {
             downloadedAt: item.finishedAt ?? Date.now(),
             sourceName: "YouTube",
             sourceUrl: item.sourceUrl,
+            thumbnailPath: context.thumbnailPath,
+            managedBy: context.origin,
+            smartChannelId: context.smartChannelId,
           });
+          galleryEntryId = galleryEntry.id;
           savedToGallery = true;
         } catch (error) {
           console.warn("Could not add video to My Gallery.", error);
         }
+      }
+      if (context.origin === "smart") {
+        try {
+          await smartDownloadsService?.registerCompletedDownload(
+            item,
+            savePath,
+            context,
+            galleryEntryId,
+          );
+        } catch (error) {
+          console.warn("Could not register managed Smart Download.", error);
+        }
+      } else if (!savedToGallery && context.thumbnailPath) {
+        await fs
+          .rm(context.thumbnailPath, { force: true })
+          .catch(() => undefined);
       }
       if (
         preferences.snapshot.showDownloadCompletionNotification &&
@@ -1679,6 +1986,49 @@ async function createMainWindow(): Promise<void> {
   } catch (error) {
     console.error("Bundled YouTube downloader is unavailable.", error);
   }
+
+  const smartDownloads = new SmartDownloadsService({
+    stateFilePath: path.join(smartDownloadsDataDirectory, "state.json"),
+    managedDirectory: smartDownloadsDirectory,
+    thumbnailDirectory: smartDownloadsThumbnailDirectory,
+    mediaToolsDirectory,
+    downloader: youtubeDownloads,
+    gallery,
+    onChange: sendSmartDownloadsSnapshot,
+    onBackgroundPreferenceChanged: syncSmartBackgroundPreferences,
+    isBrowserBusy: () => {
+      const snapshot = tabManager?.snapshot;
+      return (
+        snapshot?.tabs.find((tab) => tab.id === snapshot.activeTabId)
+          ?.isLoading ?? false
+      );
+    },
+    currentlyPlayingSourceKeys: () => {
+      const snapshot = tabManager?.snapshot;
+      const active = snapshot?.tabs.find(
+        (tab) => tab.id === snapshot.activeTabId,
+      );
+      if (!active?.url.startsWith("chromecraft://gallery/")) return [];
+      let galleryEntryId: string | null = null;
+      try {
+        galleryEntryId = new URL(active.url).searchParams.get("video");
+      } catch {
+        return [];
+      }
+      if (!galleryEntryId) return [];
+      const record = smartDownloadsService?.store.snapshot.downloads.find(
+        (download) =>
+          download.present && download.galleryEntryId === galleryEntryId,
+      );
+      return record ? [record.sourceKey] : [];
+    },
+  });
+  smartDownloadsService = smartDownloads;
+  await smartDownloads.initialize();
+  await syncSmartBackgroundPreferences(
+    smartDownloads.snapshot.config.backgroundEnabled,
+    smartDownloads.snapshot.config.startWithWindows,
+  );
 
   const hyperdrive = new HyperdriveController(browserSession, preferences, {
     learningFilePath: path.join(
@@ -1716,6 +2066,16 @@ async function createMainWindow(): Promise<void> {
     () => void sendExtensionsSnapshot(),
     (input) => actionHost.handleCommandInput(input),
     (contents) => websitePermissionController?.revoke(contents),
+    (signal) => {
+      void smartDownloads
+        .recordYouTubePlayback(signal)
+        .catch((error) =>
+          console.warn(
+            "Could not record local YouTube viewing activity.",
+            error,
+          ),
+        );
+    },
   );
   tabManager = manager;
   websitePermissionController = new WebsitePermissionController({
@@ -1754,9 +2114,25 @@ async function createMainWindow(): Promise<void> {
       manager.dispose();
       return;
     }
+    if (
+      !quittingCompletely &&
+      smartDownloads.snapshot.config.backgroundEnabled
+    ) {
+      event.preventDefault();
+      window.hide();
+      if (Notification.isSupported()) {
+        new Notification({
+          title: "Chromecraft is still running",
+          body: "Smart Downloads will keep checking from the system tray.",
+          silent: true,
+        }).show();
+      }
+      return;
+    }
     event.preventDefault();
     void Promise.all([
       manager.flushSession(),
+      smartDownloads.dispose(),
       youtubeDownloads.dispose(),
       downloads.dispose(),
     ]).finally(() => {
@@ -1784,6 +2160,9 @@ async function createMainWindow(): Promise<void> {
       websitePermissionController = null;
       youtubeDownloadService = null;
       galleryStore = null;
+      smartDownloadsService = null;
+      smartDownloadsTray?.destroy();
+      smartDownloadsTray = null;
       if (youtubeIndicatorHideTimer) clearTimeout(youtubeIndicatorHideTimer);
       youtubeIndicatorHideTimer = null;
     }
@@ -1808,7 +2187,14 @@ async function createMainWindow(): Promise<void> {
   const shellScreenshotPath = argumentValue(
     "chromecraft-smoke-shell-screenshot",
   );
-  window.show();
+  if (
+    process.argv.includes("--chromecraft-background") &&
+    smartDownloads.snapshot.config.backgroundEnabled
+  ) {
+    window.hide();
+  } else {
+    window.show();
+  }
   const ublockInitialization = ublock.initialize();
   void ublockInitialization.finally(() => manager.refreshProtectionState());
 
@@ -1848,6 +2234,7 @@ async function createMainWindow(): Promise<void> {
       },
     );
     await youtubeDownloads.dispose();
+    await smartDownloads.dispose();
     await downloads.dispose();
     app.exit(success ? 0 : 1);
   }
@@ -1866,10 +2253,23 @@ if (handlingSquirrelStartup) {
   });
 }
 
-app.on("window-all-closed", () => app.quit());
+app.on("before-quit", () => {
+  quittingCompletely = true;
+});
+
+app.on("window-all-closed", () => {
+  if (
+    !quittingCompletely &&
+    smartDownloadsService?.snapshot.config.backgroundEnabled
+  )
+    return;
+  app.quit();
+});
 
 app.on("activate", () => {
-  if (!handlingSquirrelStartup && !mainWindow) void createMainWindow();
+  if (handlingSquirrelStartup) return;
+  if (mainWindow && !mainWindow.isDestroyed()) showChromecraft();
+  else void createMainWindow();
 });
 
 app.on("web-contents-created", (_event, contents) => {

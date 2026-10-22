@@ -301,6 +301,12 @@ export class TabManager {
     private readonly onWebsiteDocumentInvalidated?: (
       contents: WebContents,
     ) => void,
+    private readonly onYouTubePlayback?: (signal: {
+      observationId: string;
+      videoId: string;
+      playbackSeconds: number;
+      occurredAt: number;
+    }) => void,
   ) {
     this.extensionPopup = extensions
       ? new ExtensionPopupController(window, browserSession, extensions, {
@@ -1372,6 +1378,46 @@ export class TabManager {
       }
       this.hyperdrive.updatePageSignals(tab.id, contents.getURL(), value);
     });
+    contents.ipc.on(
+      channels.smartDownloadsPlayback,
+      (event, value: unknown) => {
+        if (
+          event.senderFrame !== contents.mainFrame ||
+          tab.id !== this.activeTabId ||
+          contents.isDestroyed() ||
+          !value ||
+          typeof value !== "object"
+        ) {
+          return;
+        }
+        const current = parseYouTubeWatchUrl(contents.getURL());
+        const signal = value as Record<string, unknown>;
+        if (
+          !current ||
+          typeof signal.observationId !== "string" ||
+          signal.observationId.length < 1 ||
+          signal.observationId.length > 160 ||
+          typeof signal.videoId !== "string" ||
+          signal.videoId !== current.videoId ||
+          !/^[A-Za-z0-9_-]{11}$/u.test(signal.videoId) ||
+          typeof signal.playbackSeconds !== "number" ||
+          !Number.isFinite(signal.playbackSeconds) ||
+          signal.playbackSeconds < 5 ||
+          signal.playbackSeconds > 120 ||
+          typeof signal.occurredAt !== "number" ||
+          !Number.isSafeInteger(signal.occurredAt) ||
+          Math.abs(Date.now() - signal.occurredAt) > 60_000
+        ) {
+          return;
+        }
+        this.onYouTubePlayback?.({
+          observationId: signal.observationId,
+          videoId: signal.videoId,
+          playbackSeconds: signal.playbackSeconds,
+          occurredAt: signal.occurredAt,
+        });
+      },
+    );
     contents.ipc.on(
       channels.hyperdrivePreparationResult,
       (event, value: unknown) => {

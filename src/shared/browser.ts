@@ -51,6 +51,10 @@ export interface YouTubeDownloadItemSnapshot {
   error: string | null;
   /** True only after the completed file has been committed to My Gallery. */
   savedToGallery?: boolean;
+  /** Identifies user-requested work from locally scheduled Smart Downloads. */
+  origin?: "manual" | "smart";
+  /** Present only for Smart Downloads resolved from a canonical channel. */
+  smartChannelId?: string | null;
   startedAt: number;
   finishedAt: number | null;
 }
@@ -61,6 +65,9 @@ export interface GalleryEntrySnapshot {
   filename: string;
   filePath: string;
   mediaUrl: string;
+  thumbnailUrl?: string | null;
+  /** Main-process validated local path; renderer access still uses thumbnailUrl. */
+  thumbnailPath?: string | null;
   durationSeconds: number | null;
   width: number | null;
   height: number | null;
@@ -69,6 +76,10 @@ export interface GalleryEntrySnapshot {
   sourceName: string | null;
   sourceUrl: string | null;
   available: boolean;
+  managedBy?: "manual" | "smart";
+  smartChannelId?: string | null;
+  keepForever?: boolean;
+  watchedAt?: number | null;
 }
 
 export interface GallerySnapshot {
@@ -79,6 +90,99 @@ export interface YouTubeDownloadsSnapshot {
   available: boolean;
   ytDlpVersion: string;
   items: YouTubeDownloadItemSnapshot[];
+}
+
+export type SmartDownloadQuality = "best" | "1080p" | "720p" | "480p" | "audio";
+export type SmartDownloadCleanupPolicy = "oldest" | "watched-first" | "pause";
+export type SmartDownloadInitialMode = "future" | 1 | 3 | 5;
+
+export interface SmartDownloadsConfigSnapshot {
+  enabled: boolean;
+  storageQuotaBytes: number;
+  quality: SmartDownloadQuality;
+  cleanupPolicy: SmartDownloadCleanupPolicy;
+  checkIntervalMinutes: 15 | 30 | 60 | 180 | 360 | 720 | 1440;
+  includeShorts: boolean;
+  includeLivestreamReplays: boolean;
+  pauseDuringHeavyActivity: boolean;
+  backgroundEnabled: boolean;
+  startWithWindows: boolean;
+  recommendationsEnabled: boolean;
+}
+
+export interface SmartDownloadsChannelSnapshot {
+  id: string;
+  title: string;
+  handle: string | null;
+  avatarUrl: string | null;
+  enabled: boolean;
+  lastCheckedAt: number | null;
+  lastSuccessfulCheckAt: number | null;
+  nextCheckAt: number | null;
+  downloadedCount: number;
+  pendingCount: number;
+  status: "active" | "paused" | "checking" | "error";
+  error: string | null;
+}
+
+export interface SmartDownloadsQueueSnapshot {
+  id: string;
+  videoId: string;
+  channelId: string;
+  title: string | null;
+  state:
+    | "pending"
+    | "preparing"
+    | "downloading"
+    | "processing"
+    | "completed"
+    | "paused"
+    | "failed"
+    | "cancelled"
+    | "skipped";
+  attempts: number;
+  error: string | null;
+  createdAt: number;
+}
+
+export interface SmartDownloadsRecommendationSnapshot {
+  channelId: string;
+  title: string;
+  handle: string | null;
+  avatarUrl: string | null;
+  reason: string;
+  score: number;
+}
+
+export interface SmartDownloadsCleanupCandidateSnapshot {
+  sourceKey: string;
+  galleryEntryId: string | null;
+  bytes: number;
+  watched: boolean;
+  downloadedAt: number;
+}
+
+export interface SmartDownloadsSnapshot {
+  config: SmartDownloadsConfigSnapshot;
+  storage: {
+    quotaBytes: number;
+    usedBytes: number;
+    availableBytes: number;
+    reservedBytes: number;
+    diskAvailableBytes: number | null;
+    maximumQuotaBytes: number;
+    managedDownloadCount: number;
+  };
+  channels: SmartDownloadsChannelSnapshot[];
+  queue: SmartDownloadsQueueSnapshot[];
+  recommendations: SmartDownloadsRecommendationSnapshot[];
+  cleanupPreview: SmartDownloadsCleanupCandidateSnapshot[];
+  queuePaused: boolean;
+  checking: boolean;
+  lastCheckAt: number | null;
+  nextCheckAt: number | null;
+  backgroundRunning: boolean;
+  error: string | null;
 }
 
 export type NewTabTheme = "overworld" | "nether" | "end" | "minimal";
@@ -461,6 +565,33 @@ export interface ChromecraftApi {
   removeQuickLink(id: string): Promise<void>;
   getDownloads(): Promise<DownloadSnapshot>;
   getYouTubeDownloads(): Promise<YouTubeDownloadsSnapshot>;
+  getSmartDownloads(): Promise<SmartDownloadsSnapshot>;
+  setSmartDownloadsEnabled(enabled: boolean): Promise<void>;
+  setSmartDownloadsQuotaBytes(bytes: number): Promise<void>;
+  setSmartDownloadsQuality(quality: SmartDownloadQuality): Promise<void>;
+  setSmartDownloadsCleanupPolicy(
+    policy: SmartDownloadCleanupPolicy,
+  ): Promise<void>;
+  setSmartDownloadsCheckInterval(minutes: number): Promise<void>;
+  setSmartDownloadsIncludeShorts(enabled: boolean): Promise<void>;
+  setSmartDownloadsIncludeLivestreamReplays(enabled: boolean): Promise<void>;
+  setSmartDownloadsPauseDuringHeavyActivity(enabled: boolean): Promise<void>;
+  setSmartDownloadsBackgroundEnabled(enabled: boolean): Promise<void>;
+  setSmartDownloadsStartWithWindows(enabled: boolean): Promise<void>;
+  setSmartDownloadsRecommendationsEnabled(enabled: boolean): Promise<void>;
+  addSmartDownloadsChannel(
+    input: string,
+    initialMode: SmartDownloadInitialMode,
+  ): Promise<void>;
+  setSmartDownloadsChannelEnabled(id: string, enabled: boolean): Promise<void>;
+  checkSmartDownloads(channelId?: string): Promise<void>;
+  removeSmartDownloadsChannel(id: string): Promise<void>;
+  pauseSmartDownloadsQueue(): Promise<void>;
+  resumeSmartDownloadsQueue(): Promise<void>;
+  retrySmartDownloadJob(id: string): Promise<void>;
+  cancelSmartDownloadJob(id: string): Promise<void>;
+  dismissSmartDownloadsRecommendation(channelId: string): Promise<void>;
+  clearSmartDownloadsRecommendationHistory(): Promise<void>;
   downloadActiveYouTubeVideo(tabId: TabId): Promise<string>;
   cancelYouTubeDownload(id: string): Promise<void>;
   retryYouTubeDownload(id: string): Promise<string>;
@@ -492,6 +623,8 @@ export interface ChromecraftApi {
     width: number,
     height: number,
   ): Promise<void>;
+  setSmartDownloadKeepForever(id: string, keepForever: boolean): Promise<void>;
+  markGalleryItemWatched(id: string): Promise<void>;
   setShowDownloadProgressInToolbar(enabled: boolean): Promise<void>;
   setShowDownloadCompletionNotification(enabled: boolean): Promise<void>;
   setAddVideosToGallery(enabled: boolean): Promise<void>;
@@ -504,6 +637,10 @@ export interface ChromecraftApi {
   onYouTubeDownloads(
     listener: (snapshot: YouTubeDownloadsSnapshot) => void,
   ): () => void;
+  onSmartDownloads(
+    listener: (snapshot: SmartDownloadsSnapshot) => void,
+  ): () => void;
+  onShowSmartDownloadsSettings(listener: () => void): () => void;
   onGallery(listener: (snapshot: GallerySnapshot) => void): () => void;
   onFindResult(listener: (snapshot: FindResultSnapshot) => void): () => void;
   onShowFind(listener: () => void): () => void;

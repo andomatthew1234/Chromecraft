@@ -6,6 +6,7 @@ import type { Session } from "electron";
 
 const MEDIA_SCHEME = "chromecraft-media";
 const MEDIA_HOST = "video";
+const THUMBNAIL_HOST = "thumbnail";
 const OPAQUE_ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 
 const VIDEO_MIME_TYPES = new Map<string, string>([
@@ -15,8 +16,17 @@ const VIDEO_MIME_TYPES = new Map<string, string>([
   [".mp4", "video/mp4"],
   [".webm", "video/webm"],
 ]);
+const THUMBNAIL_MIME_TYPES = new Map<string, string>([
+  [".avif", "image/avif"],
+  [".gif", "image/gif"],
+  [".jpeg", "image/jpeg"],
+  [".jpg", "image/jpeg"],
+  [".png", "image/png"],
+  [".webp", "image/webp"],
+]);
 
 export type GalleryMediaPathResolver = (
+  kind: "video" | "thumbnail",
   entryId: string,
 ) => string | null | undefined | Promise<string | null | undefined>;
 
@@ -37,12 +47,14 @@ function errorResponse(status: number, message: string, headers?: HeadersInit) {
   });
 }
 
-function parseEntryId(requestUrl: string): string | null {
+function parseEntryId(
+  requestUrl: string,
+): { id: string; kind: "video" | "thumbnail" } | null {
   try {
     const url = new URL(requestUrl);
     if (
       url.protocol !== `${MEDIA_SCHEME}:` ||
-      url.hostname !== MEDIA_HOST ||
+      (url.hostname !== MEDIA_HOST && url.hostname !== THUMBNAIL_HOST) ||
       url.username ||
       url.password ||
       url.port ||
@@ -57,7 +69,12 @@ function parseEntryId(requestUrl: string): string | null {
     }
 
     const entryId = decodeURIComponent(encodedId);
-    return OPAQUE_ID_PATTERN.test(entryId) ? entryId : null;
+    return OPAQUE_ID_PATTERN.test(entryId)
+      ? {
+          id: entryId,
+          kind: url.hostname === THUMBNAIL_HOST ? "thumbnail" : "video",
+        }
+      : null;
   } catch {
     return null;
   }
@@ -125,14 +142,14 @@ export function registerGalleryMediaProtocol(
       return errorResponse(405, "Method not allowed", { allow: "GET, HEAD" });
     }
 
-    const entryId = parseEntryId(request.url);
-    if (!entryId) {
+    const parsed = parseEntryId(request.url);
+    if (!parsed) {
       return errorResponse(404, "Media not found");
     }
 
     let resolvedPath: string | null | undefined;
     try {
-      resolvedPath = await resolveEntryPathById(entryId);
+      resolvedPath = await resolveEntryPathById(parsed.kind, parsed.id);
     } catch {
       return errorResponse(404, "Media not found");
     }
@@ -141,9 +158,9 @@ export function registerGalleryMediaProtocol(
       return errorResponse(404, "Media not found");
     }
 
-    const contentType = VIDEO_MIME_TYPES.get(
-      path.extname(resolvedPath).toLowerCase(),
-    );
+    const contentType = (
+      parsed.kind === "thumbnail" ? THUMBNAIL_MIME_TYPES : VIDEO_MIME_TYPES
+    ).get(path.extname(resolvedPath).toLowerCase());
     if (!contentType) {
       return errorResponse(415, "Unsupported media type");
     }
@@ -175,7 +192,10 @@ export function registerGalleryMediaProtocol(
       const contentLength = isPartial ? end - start + 1 : stats.size;
       const headers: Record<string, string> = {
         "accept-ranges": "bytes",
-        "cache-control": "private, no-store",
+        "cache-control":
+          parsed.kind === "thumbnail"
+            ? "private, max-age=86400"
+            : "private, no-store",
         "content-length": String(contentLength),
         "content-type": contentType,
         "x-content-type-options": "nosniff",
