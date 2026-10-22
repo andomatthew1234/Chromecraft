@@ -20,7 +20,13 @@ const resources = path.join(root, "resources", "media-tools");
 const manifest = JSON.parse(
   await readFile(path.join(resources, "manifest.json"), "utf8"),
 );
-const key = `${process.platform}-${process.arch}`;
+const targetPlatform = process.argv[2] ?? process.platform;
+const targetArch = process.argv[3] ?? process.arch;
+if (!/^(?:win32|linux)$/.test(targetPlatform))
+  throw new Error(`Unsupported media-tool platform: ${targetPlatform}`);
+if (!/^(?:x64)$/.test(targetArch))
+  throw new Error(`Unsupported media-tool architecture: ${targetArch}`);
+const key = `${targetPlatform}-${targetArch}`;
 const platform = manifest.platforms[key];
 if (!platform)
   throw new Error(`No pinned media tools are configured for ${key}.`);
@@ -97,7 +103,7 @@ try {
   }
 }
 
-if (process.platform !== "win32") {
+if (targetPlatform !== "win32") {
   await chmod(ytDlpPath, 0o755);
   await chmod(denoPath, 0o755);
 }

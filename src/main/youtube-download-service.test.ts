@@ -1,11 +1,37 @@
+import { EventEmitter } from "node:events";
+import { promises as fs } from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { PassThrough } from "node:stream";
+
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import type { YouTubeDownloadsSnapshot } from "../shared/browser";
 
 import {
   buildYtDlpArguments,
+  isYtDlpPostprocessLine,
   parseYtDlpFileLine,
   parseYtDlpProgressLine,
+  YouTubeDownloadService,
 } from "./youtube-download-service";
+
+function fakeChildProcess(): ChildProcessWithoutNullStreams {
+  const child = new EventEmitter() as EventEmitter & {
+    stdout: PassThrough;
+    stderr: PassThrough;
+    stdin: PassThrough;
+    pid: number;
+    exitCode: number | null;
+  };
+  child.stdout = new PassThrough();
+  child.stderr = new PassThrough();
+  child.stdin = new PassThrough();
+  child.pid = 0;
+  child.exitCode = null;
+  return child as unknown as ChildProcessWithoutNullStreams;
+}
 
 describe("YouTubeDownloadService helpers", () => {
   it("builds a fixed, no-shell argument list from a canonical video id", () => {
@@ -22,6 +48,8 @@ describe("YouTubeDownloadService helpers", () => {
     expect(args).toContain("--no-playlist");
     expect(args).toContain("--encoding");
     expect(args).toContain("utf-8");
+    expect(args).toContain("0.1");
+    expect(args).toContain("postprocess:CHROMECRAFT_POSTPROCESS:%(progress)j");
     expect(args).toContain("after_move:CHROMECRAFT_FILE:%(filepath)j");
     expect(args.at(-1)).toBe("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
     expect(args.join(" ")).not.toContain("list=ignored");
@@ -36,8 +64,30 @@ describe("YouTubeDownloadService helpers", () => {
       receivedBytes: 50,
       totalBytes: 100,
       percent: 50,
+      bytesPerSecond: null,
+      etaSeconds: null,
       filename: "video.mp4",
     });
+  });
+
+  it("parses transfer rate and ETA without reporting stream completion", () => {
+    expect(
+      parseYtDlpProgressLine(
+        'CHROMECRAFT_PROGRESS:{"downloaded_bytes":100,"total_bytes":100,"_percent_str":"100%","speed":2048,"eta":0}',
+      ),
+    ).toMatchObject({
+      percent: 99,
+      bytesPerSecond: 2048,
+      etaSeconds: 0,
+    });
+  });
+
+  it("recognises only structured post-processing progress", () => {
+    expect(
+      isYtDlpPostprocessLine('CHROMECRAFT_POSTPROCESS:{"status":"started"}'),
+    ).toBe(true);
+    expect(isYtDlpPostprocessLine("CHROMECRAFT_POSTPROCESS:{bad")).toBe(false);
+    expect(isYtDlpPostprocessLine("[Merger] Merging formats")).toBe(false);
   });
 
   it("ignores malformed and unrelated output", () => {
@@ -54,4 +104,157 @@ describe("YouTubeDownloadService helpers", () => {
     expect(parseYtDlpFileLine("CHROMECRAFT_FILE:not-json")).toBeNull();
     expect(parseYtDlpFileLine("unrelated output")).toBeNull();
   });
+
+  it("throttles progress snapshots and supports cancellation and retry", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-22T00:00:00Z"));
+    const directory = await fs.mkdtemp(
+      path.join(os.tmpdir(), "chromecraft-youtube-service-"),
+    );
+    const children: ChildProcessWithoutNullStreams[] = [];
+    const changes: YouTubeDownloadsSnapshot[] = [];
+    const service = new YouTubeDownloadService({
+      downloadsDirectory: directory,
+      toolsDirectory: path.join(directory, "tools"),
+      spawnProcess: () => {
+        const child = fakeChildProcess();
+        children.push(child);
+        return child;
+      },
+      onChange: (snapshot) => changes.push(snapshot),
+    });
+    (service as unknown as { verified: boolean }).verified = true;
+
+    try {
+      const id = await service.start({
+        videoId: "dQw4w9WgXcQ",
+        url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      });
+      expect(service.snapshot.items[0]).toMatchObject({
+        id,
+        stage: "pending",
+        bytesPerSecond: null,
+        etaSeconds: null,
+      });
+
+      (children[0].stdout as PassThrough).write(
+        'CHROMECRAFT_PROGRESS:{"downloaded_bytes":25,"total_bytes":100,"_percent_str":"25%","speed":4096,"eta":3}\n',
+      );
+      (children[0].stdout as PassThrough).write(
+        'CHROMECRAFT_PROGRESS:{"downloaded_bytes":50,"total_bytes":100,"_percent_str":"50%","speed":8192,"eta":1}\n',
+      );
+      expect(changes).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(changes).toHaveLength(2);
+      expect(service.snapshot.items[0]).toMatchObject({
+        stage: "downloading",
+        percent: 50,
+        bytesPerSecond: 8192,
+        etaSeconds: 1,
+      });
+
+      (children[0].stdout as PassThrough).write(
+        'CHROMECRAFT_POSTPROCESS:{"status":"started"}\n',
+      );
+      expect(service.snapshot.items[0]).toMatchObject({
+        stage: "finishing",
+        percent: null,
+        bytesPerSecond: null,
+        etaSeconds: null,
+      });
+
+      await expect(service.cancel(id)).resolves.toBe(true);
+      expect(service.snapshot.items[0].stage).toBe("cancelled");
+      const retryId = await service.retry(id);
+      expect(retryId).not.toBe(id);
+      expect(children).toHaveLength(2);
+      expect(service.snapshot.items[0].stage).toBe("pending");
+    } finally {
+      await service.dispose();
+      vi.useRealTimers();
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("recovers a crash as an interrupted, retryable download and cleans staging", async () => {
+    const directory = await fs.mkdtemp(
+      path.join(os.tmpdir(), "chromecraft-youtube-recovery-"),
+    );
+    const id = "0c345b6f-0638-4d5f-9ef4-3ff89b56f80b";
+    const staging = path.join(directory, ".chromecraft-media", id);
+    await fs.mkdir(staging, { recursive: true });
+    await fs.writeFile(
+      path.join(staging, "job.json"),
+      JSON.stringify({
+        version: 1,
+        id,
+        videoId: "dQw4w9WgXcQ",
+        sourceUrl: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        startedAt: 42,
+      }),
+    );
+    const service = new YouTubeDownloadService({
+      downloadsDirectory: directory,
+      toolsDirectory: path.join(directory, "tools"),
+      spawnProcess: () => fakeChildProcess(),
+    });
+    (service as unknown as { verified: boolean }).verified = true;
+    try {
+      await (
+        service as unknown as { recoverInterruptedJobs(): Promise<void> }
+      ).recoverInterruptedJobs();
+      expect(service.snapshot.items[0]).toMatchObject({
+        id,
+        stage: "interrupted",
+        videoId: "dQw4w9WgXcQ",
+      });
+      await expect(fs.stat(staging)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(service.retry(id)).resolves.not.toBe(id);
+    } finally {
+      await service.dispose();
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves recovery state when the browser closes during a download", async () => {
+    const directory = await fs.mkdtemp(
+      path.join(os.tmpdir(), "chromecraft-youtube-close-recovery-"),
+    );
+    const service = new YouTubeDownloadService({
+      downloadsDirectory: directory,
+      toolsDirectory: path.join(directory, "tools"),
+      spawnProcess: () => fakeChildProcess(),
+    });
+    (service as unknown as { verified: boolean }).verified = true;
+    try {
+      const id = await service.start({
+        videoId: "dQw4w9WgXcQ",
+        url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      });
+      await service.dispose();
+      await expect(
+        fs.stat(path.join(directory, ".chromecraft-media", id, "job.json")),
+      ).resolves.toBeTruthy();
+
+      const restored = new YouTubeDownloadService({
+        downloadsDirectory: directory,
+        toolsDirectory: path.join(directory, "tools"),
+        spawnProcess: () => fakeChildProcess(),
+      });
+      (restored as unknown as { verified: boolean }).verified = true;
+      await (
+        restored as unknown as { recoverInterruptedJobs(): Promise<void> }
+      ).recoverInterruptedJobs();
+      expect(restored.snapshot.items).toHaveLength(1);
+      expect(restored.snapshot.items[0]).toMatchObject({
+        id,
+        stage: "interrupted",
+      });
+      await restored.dispose();
+    } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  });
 });
+
+afterEach(() => vi.useRealTimers());

@@ -35,6 +35,9 @@ const snapshot: BrowserSnapshot = {
     hyperdriveMonitorOpen: false,
     hyperdriveDeveloperMode: false,
     extensionDeveloperMode: false,
+    showDownloadProgressInToolbar: true,
+    showDownloadCompletionNotification: true,
+    addVideosToGallery: true,
   } as BrowserSnapshot["preferences"],
 };
 

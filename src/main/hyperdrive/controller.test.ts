@@ -26,6 +26,9 @@ function makePreferences(
     hyperdriveMonitorOpen: false,
     hyperdriveDeveloperMode: false,
     extensionDeveloperMode: false,
+    showDownloadProgressInToolbar: true,
+    showDownloadCompletionNotification: true,
+    addVideosToGallery: true,
     ...patch,
   };
   return {

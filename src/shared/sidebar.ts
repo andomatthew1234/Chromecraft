@@ -6,6 +6,7 @@ export type SidebarTool =
   | "bookmarks"
   | "history"
   | "downloads"
+  | "gallery"
   | "extensions"
   | "settings";
 

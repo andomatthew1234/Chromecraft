@@ -8,6 +8,7 @@ import type {
   ExtensionInstallPreviewSnapshot,
   ExtensionsSnapshot,
   FindResultSnapshot,
+  GallerySnapshot,
   HyperdriveSnapshot,
   TabId,
   YouTubeDownloadsSnapshot,
@@ -204,6 +205,14 @@ const api: ChromecraftApi = {
     ) as Promise<YouTubeDownloadsSnapshot>,
   downloadActiveYouTubeVideo: (tabId) =>
     ipcRenderer.invoke(channels.startYouTubeDownload, tabId) as Promise<string>,
+  cancelYouTubeDownload: (id) =>
+    ipcRenderer.invoke(channels.cancelYouTubeDownload, id) as Promise<void>,
+  retryYouTubeDownload: (id) =>
+    ipcRenderer.invoke(channels.retryYouTubeDownload, id) as Promise<string>,
+  openYouTubeDownload: (id) =>
+    ipcRenderer.invoke(channels.openYouTubeDownload, id) as Promise<void>,
+  dismissYouTubeDownload: (id) =>
+    ipcRenderer.invoke(channels.dismissYouTubeDownload, id) as Promise<void>,
   dismissYouTubeDownloadBanner: (tabId, videoId) =>
     ipcRenderer.invoke(
       channels.dismissYouTubeDownloadBanner,
@@ -226,6 +235,49 @@ const api: ChromecraftApi = {
     ipcRenderer.invoke(channels.removeDownload, id) as Promise<void>,
   clearFinishedDownloads: () =>
     ipcRenderer.invoke(channels.clearFinishedDownloads) as Promise<void>,
+  getGallery: () =>
+    ipcRenderer.invoke(channels.getGallery) as Promise<GallerySnapshot>,
+  openGallery: (entryId) =>
+    ipcRenderer.invoke(channels.openGallery, entryId) as Promise<TabId>,
+  openGalleryFile: (id) =>
+    ipcRenderer.invoke(channels.openGalleryFile, id) as Promise<void>,
+  showGalleryFile: (id) =>
+    ipcRenderer.invoke(channels.showGalleryFile, id) as Promise<void>,
+  copyGalleryPath: (id) =>
+    ipcRenderer.invoke(channels.copyGalleryPath, id) as Promise<void>,
+  copyGallerySourceUrl: (id) =>
+    ipcRenderer.invoke(channels.copyGallerySourceUrl, id) as Promise<void>,
+  renameGalleryItem: (id, title) =>
+    ipcRenderer.invoke(channels.renameGalleryItem, id, title) as Promise<void>,
+  removeGalleryItem: (id) =>
+    ipcRenderer.invoke(channels.removeGalleryItem, id) as Promise<void>,
+  deleteGalleryItem: (id) =>
+    ipcRenderer.invoke(channels.deleteGalleryItem, id) as Promise<void>,
+  importGalleryDownloads: () =>
+    ipcRenderer.invoke(channels.importGalleryDownloads) as Promise<number>,
+  updateGalleryMediaMetadata: (id, durationSeconds, width, height) =>
+    ipcRenderer.invoke(
+      channels.updateGalleryMediaMetadata,
+      id,
+      durationSeconds,
+      width,
+      height,
+    ) as Promise<void>,
+  setShowDownloadProgressInToolbar: (enabled) =>
+    ipcRenderer.invoke(
+      channels.setShowDownloadProgressInToolbar,
+      enabled,
+    ) as Promise<void>,
+  setShowDownloadCompletionNotification: (enabled) =>
+    ipcRenderer.invoke(
+      channels.setShowDownloadCompletionNotification,
+      enabled,
+    ) as Promise<void>,
+  setAddVideosToGallery: (enabled) =>
+    ipcRenderer.invoke(
+      channels.setAddVideosToGallery,
+      enabled,
+    ) as Promise<void>,
   getUpdateSnapshot: () =>
     ipcRenderer.invoke(channels.getUpdates) as Promise<UpdateSnapshot>,
   checkForUpdates: () =>
@@ -265,6 +317,14 @@ const api: ChromecraftApi = {
     ipcRenderer.on(channels.youtubeDownloadsChanged, handler);
     return () =>
       ipcRenderer.removeListener(channels.youtubeDownloadsChanged, handler);
+  },
+  onGallery: (listener) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      snapshot: GallerySnapshot,
+    ) => listener(snapshot);
+    ipcRenderer.on(channels.galleryChanged, handler);
+    return () => ipcRenderer.removeListener(channels.galleryChanged, handler);
   },
   onFindResult: (listener) => {
     const handler = (

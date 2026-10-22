@@ -159,12 +159,21 @@ describe("BrowserDataStore", () => {
           isNewTab: false,
           pinned: true,
         },
+        {
+          id: "tab-3",
+          title: "My Gallery",
+          url: "chromecraft://gallery/?video=gallery-entry",
+          isNewTab: false,
+        },
       ],
       "tab-2",
     );
 
     expect(saved.activeTabId).toBe("tab-2");
     expect(saved.tabs[1]!.pinned).toBe(true);
+    expect(saved.tabs[2]!.url).toBe(
+      "chromecraft://gallery/?video=gallery-entry",
+    );
     saved.tabs[0]!.title = "changed";
     expect(store.loadSession()?.tabs[0]?.title).toBe("New tab");
     expect(await store.clearSession()).toBe(true);

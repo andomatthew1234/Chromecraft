@@ -18,9 +18,11 @@ const config: ForgeConfig = {
     executableName: "chromecraft",
   },
   hooks: {
-    generateAssets: async () => {
+    generateAssets: async (_forgeConfig, platform, arch) => {
       await execFileAsync(process.execPath, [
         path.resolve("scripts/prepare-media-tools.mjs"),
+        platform,
+        arch,
       ]);
     },
   },

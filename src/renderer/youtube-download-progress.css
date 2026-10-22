@@ -1,0 +1,163 @@
+.youtube-global-progress {
+  position: relative;
+  min-height: 34px;
+  margin-left: var(--rail-width);
+  color: var(--md-on-surface);
+  background: var(--md-surface-container-low);
+  border-bottom: 1px solid var(--md-outline-variant);
+  z-index: 6;
+}
+
+.sidebar-panel-open .youtube-global-progress {
+  margin-left: var(--sidebar-width);
+}
+.sidebar-detached .youtube-global-progress {
+  margin-left: 0;
+}
+.hyperdrive-monitor-open .youtube-global-progress {
+  margin-right: var(--hyperdrive-monitor-width);
+}
+
+.youtube-global-progress__summary {
+  width: 100%;
+  min-height: 34px;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr) auto 22px;
+  gap: var(--space-2);
+  align-items: center;
+  padding: 3px var(--space-4);
+  text-align: left;
+  color: inherit;
+  background: transparent;
+}
+
+.youtube-global-progress__summary:hover {
+  background: var(--md-hover);
+}
+.youtube-global-progress__summary > .material-icon {
+  font-size: 19px;
+  color: var(--md-primary);
+}
+.youtube-global-progress__copy {
+  min-width: 0;
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+}
+.youtube-global-progress__copy strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--type-label-large);
+}
+.youtube-global-progress__copy small {
+  flex: none;
+  color: var(--md-on-surface-variant);
+  font: var(--type-label-small);
+}
+.youtube-global-progress__count {
+  min-width: 22px;
+  padding: 2px 7px;
+  border-radius: var(--shape-full);
+  color: var(--md-on-primary-container);
+  background: var(--md-primary-container);
+  font: var(--type-label-small);
+  text-align: center;
+}
+
+.youtube-global-progress__track {
+  position: absolute;
+  inset: auto 0 0;
+  height: 3px;
+  overflow: hidden;
+  background: var(--md-surface-container-highest);
+}
+.youtube-global-progress__track > span {
+  display: block;
+  height: 100%;
+  border-radius: var(--shape-full);
+  background: var(--md-primary);
+  transition: width 180ms linear;
+}
+.youtube-global-progress__track.is-indeterminate > span {
+  width: 30%;
+  animation: youtube-progress-indeterminate 1.15s cubic-bezier(0.4, 0, 0.2, 1)
+    infinite;
+}
+.youtube-global-progress[data-state="completed"]
+  .youtube-global-progress__track
+  > span {
+  background: var(--md-success);
+}
+.youtube-global-progress[data-state="failed"]
+  .youtube-global-progress__track
+  > span {
+  background: var(--md-error);
+}
+
+@keyframes youtube-progress-indeterminate {
+  from {
+    transform: translateX(-120%);
+  }
+  to {
+    transform: translateX(430%);
+  }
+}
+
+.youtube-global-progress__list {
+  position: absolute;
+  left: var(--space-3);
+  right: var(--space-3);
+  top: calc(100% + var(--space-2));
+  max-height: min(420px, 60vh);
+  overflow: auto;
+  padding: var(--space-2);
+  border-radius: var(--shape-extra-large);
+  background: var(--md-surface-container-high);
+  box-shadow: var(--elevation-3);
+}
+.youtube-global-progress__list article {
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) auto;
+  gap: var(--space-3);
+  align-items: center;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--shape-large);
+}
+.youtube-global-progress__list article:hover {
+  background: var(--md-hover);
+}
+.youtube-global-progress__list article > span:nth-child(2) {
+  min-width: 0;
+  display: grid;
+}
+.youtube-global-progress__list strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--type-body-medium);
+}
+.youtube-global-progress__list small {
+  color: var(--md-on-surface-variant);
+  font: var(--type-label-medium);
+}
+.youtube-global-progress__list button {
+  min-height: 32px;
+  padding: 0 var(--space-3);
+  border-radius: var(--shape-full);
+  color: var(--md-primary);
+  background: var(--md-secondary-container);
+  font: var(--type-label-large);
+}
+
+@media (max-width: 720px) {
+  .youtube-global-progress__copy small {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .youtube-global-progress__track.is-indeterminate > span {
+    animation-duration: 2.4s;
+  }
+}

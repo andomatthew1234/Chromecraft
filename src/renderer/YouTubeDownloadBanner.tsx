@@ -15,6 +15,7 @@ function bannerCopy(
 ): string {
   if (!available) return "YouTube downloads are unavailable in this build";
   if (!download) return "Download this video for later?";
+  if (download.stage === "pending") return "Preparing download…";
   if (download.stage === "downloading") {
     return download.percent === null
       ? "Downloading video…"
@@ -37,7 +38,9 @@ export function YouTubeDownloadBanner({
   onDismiss,
 }: YouTubeDownloadBannerProps) {
   const busy =
-    download?.stage === "downloading" || download?.stage === "finishing";
+    download?.stage === "pending" ||
+    download?.stage === "downloading" ||
+    download?.stage === "finishing";
   const completed = download?.stage === "completed";
   const failed =
     download?.stage === "failed" || download?.stage === "cancelled";

@@ -19,6 +19,7 @@ import type {
   DownloadSnapshot,
   ExtensionInstallPreviewSnapshot,
   ExtensionsSnapshot,
+  GallerySnapshot,
   HyperdriveDestinationSnapshot,
   HyperdriveMode,
   HyperdriveOmniboxSignal,
@@ -42,6 +43,8 @@ import {
 } from "./ExtensionInstallBanner";
 import { ExpressiveLoadingIndicator } from "./ExpressiveLoadingIndicator";
 import { YouTubeDownloadBanner } from "./YouTubeDownloadBanner";
+import { YouTubeDownloadProgress } from "./YouTubeDownloadProgress";
+import { GalleryPage } from "./GalleryPage";
 import {
   deriveDownloadIndicator,
   didAnyDownloadComplete,
@@ -75,6 +78,7 @@ const emptyYouTubeDownloads: YouTubeDownloadsSnapshot = {
   ytDlpVersion: "",
   items: [],
 };
+const emptyGallery: GallerySnapshot = { items: [] };
 const emptyExtensions: ExtensionsSnapshot = {
   initialized: false,
   operation: "idle",
@@ -115,7 +119,8 @@ type IconName =
   | "stop"
   | "tune"
   | "warning"
-  | "volumeOff";
+  | "volumeOff"
+  | "videoLibrary";
 
 const iconSymbols: Record<IconName, string> = {
   add: "add",
@@ -147,6 +152,7 @@ const iconSymbols: Record<IconName, string> = {
   tune: "tune",
   warning: "warning",
   volumeOff: "volume_off",
+  videoLibrary: "video_library",
 };
 
 function Icon({ name }: { name: IconName }) {
@@ -1451,6 +1457,7 @@ export type FullSettingsCategoryId =
   | "general"
   | "privacy"
   | "appearance"
+  | "downloads"
   | "hyperdrive"
   | "extensions"
   | "advanced";
@@ -1488,6 +1495,12 @@ export const fullSettingsCategories: FullSettingsCategory[] = [
     label: "Appearance",
     description: "Choose how new tabs feel",
     icon: "tune",
+  },
+  {
+    id: "downloads",
+    label: "Downloads & gallery",
+    description: "Video progress, notifications and My Gallery",
+    icon: "download",
   },
   {
     id: "hyperdrive",
@@ -1551,6 +1564,27 @@ export const fullSettingsSearchItems: FullSettingsSearchItem[] = [
     title: "New tab theme",
     description: "Choose the colour mood for new tabs.",
     keywords: "theme color colour style appearance new tab",
+  },
+  {
+    id: "download-progress",
+    category: "downloads",
+    title: "Show download progress in toolbar",
+    description: "Display real-time yt-dlp progress beneath the toolbar.",
+    keywords: "youtube download progress toolbar speed eta",
+  },
+  {
+    id: "download-notifications",
+    category: "downloads",
+    title: "Download completion notification",
+    description: "Notify when a video has been fully saved.",
+    keywords: "youtube download notification complete saved",
+  },
+  {
+    id: "gallery-auto-add",
+    category: "downloads",
+    title: "Automatically add videos to My Gallery",
+    description: "Index completed yt-dlp videos in the local gallery.",
+    keywords: "gallery youtube video automatic local library",
   },
   {
     id: "hyperdrive-enabled",
@@ -2480,6 +2514,123 @@ export function FullSettingsPage({
         </label>
       </section>
     );
+  } else if (selectedCategory === "downloads") {
+    categoryContent = (
+      <section
+        className="settings-card"
+        aria-labelledby="download-gallery-title"
+      >
+        <header className="settings-card-header">
+          <span className="settings-card-icon">
+            <Icon name="download" />
+          </span>
+          <span>
+            <h3 id="download-gallery-title">Downloads &amp; My Gallery</h3>
+            <p>
+              Videos stay in your system Downloads folder and remain local to
+              this device.
+            </p>
+          </span>
+        </header>
+        <div className="settings-action-row">
+          <span className="setting-copy">
+            <span className="setting-title">Default download location</span>
+            <small className="setting-description">
+              Your operating system Downloads folder. Existing file paths are
+              preserved.
+            </small>
+          </span>
+          <button
+            type="button"
+            className="tonal-button settings-action-button"
+            onClick={() => void window.chromecraft.openGallery()}
+          >
+            <Icon name="videoLibrary" />
+            Open My Gallery
+          </button>
+        </div>
+        <label
+          id="setting-download-progress"
+          data-setting-id="download-progress"
+          className={settingTargetClass(
+            "download-progress",
+            highlightedSettingId,
+          )}
+        >
+          <span className="setting-copy">
+            <span className="setting-title">Show progress in toolbar</span>
+            <small className="setting-description">
+              See real percentage, transfer speed, ETA and final processing.
+            </small>
+          </span>
+          <input
+            type="checkbox"
+            role="switch"
+            className="switch-input"
+            checked={snapshot.preferences.showDownloadProgressInToolbar}
+            onChange={(event) =>
+              void window.chromecraft.setShowDownloadProgressInToolbar(
+                event.target.checked,
+              )
+            }
+          />
+        </label>
+        <label
+          id="setting-download-notifications"
+          data-setting-id="download-notifications"
+          className={settingTargetClass(
+            "download-notifications",
+            highlightedSettingId,
+          )}
+        >
+          <span className="setting-copy">
+            <span className="setting-title">Show completion notification</span>
+            <small className="setting-description">
+              Notify only after the final file has been saved successfully.
+            </small>
+          </span>
+          <input
+            type="checkbox"
+            role="switch"
+            className="switch-input"
+            checked={snapshot.preferences.showDownloadCompletionNotification}
+            onChange={(event) =>
+              void window.chromecraft.setShowDownloadCompletionNotification(
+                event.target.checked,
+              )
+            }
+          />
+        </label>
+        <label
+          id="setting-gallery-auto-add"
+          data-setting-id="gallery-auto-add"
+          className={settingTargetClass(
+            "gallery-auto-add",
+            highlightedSettingId,
+          )}
+        >
+          <span className="setting-copy">
+            <span className="setting-title">
+              Automatically add videos to My Gallery
+            </span>
+            <small className="setting-description">
+              Index the completed file in place without making a second copy.
+            </small>
+          </span>
+          <input
+            type="checkbox"
+            role="switch"
+            className="switch-input"
+            checked={snapshot.preferences.addVideosToGallery}
+            onChange={(event) =>
+              void window.chromecraft.setAddVideosToGallery(
+                event.target.checked,
+              )
+            }
+          />
+        </label>
+      </section>
+    );
   } else if (selectedCategory === "hyperdrive") {
     categoryContent = (
       <HyperdriveSettings
@@ -3246,7 +3397,9 @@ function Sidebar({
   snapshot,
   data,
   downloads,
+  youtubeDownloads,
   extensions,
+  gallery,
   tool,
   setTool,
   openExtensionsPage,
@@ -3256,7 +3409,9 @@ function Sidebar({
   snapshot: BrowserSnapshot;
   data: BrowserDataSnapshot;
   downloads: DownloadSnapshot;
+  youtubeDownloads: YouTubeDownloadsSnapshot;
   extensions: ExtensionsSnapshot;
+  gallery: GallerySnapshot;
   tool: SidebarTool | null;
   setTool: (tool: SidebarTool | null) => void;
   openExtensionsPage: () => void;
@@ -3286,6 +3441,7 @@ function Sidebar({
     ["bookmarks", "bookmark", "Bookmarks"],
     ["history", "history", "History"],
     ["downloads", "download", "Downloads"],
+    ["gallery", "videoLibrary", "YouTube & My Gallery"],
     ["extensions", "extension", "Extensions"],
     ["settings", "settings", "Settings"],
   ] as const;
@@ -3293,6 +3449,20 @@ function Sidebar({
     () => deriveDownloadIndicator(downloads.items),
     [downloads.items],
   );
+  const activeYouTubeDownloads = youtubeDownloads.items.filter((item) =>
+    ["pending", "downloading", "finishing"].includes(item.stage),
+  );
+  const youtubePercents = activeYouTubeDownloads
+    .map((item) => item.percent)
+    .filter((value): value is number => value !== null);
+  const combinedDownloadPercent =
+    downloadIndicator.unfinishedCount > 0
+      ? downloadIndicator.percent
+      : youtubePercents.length === activeYouTubeDownloads.length &&
+          youtubePercents.length > 0
+        ? youtubePercents.reduce((sum, value) => sum + value, 0) /
+          youtubePercents.length
+        : null;
   useEffect(() => {
     const nextStates = new Map(
       downloads.items.map((item) => [item.id, item.state]),
@@ -3329,7 +3499,8 @@ function Sidebar({
       <nav className="sidebar-rail">
         {tools.map(([id, icon, label]) => {
           const isDownloads = id === "downloads";
-          const activeDownloadCount = downloadIndicator.unfinishedCount;
+          const activeDownloadCount =
+            downloadIndicator.unfinishedCount + activeYouTubeDownloads.length;
           const dynamicLabel =
             isDownloads && activeDownloadCount > 0
               ? `${label}, ${activeDownloadCount} active`
@@ -3356,9 +3527,7 @@ function Sidebar({
                   isDownloads && activeDownloadCount > 0 ? "true" : undefined
                 }
                 data-progressing={
-                  isDownloads && downloadIndicator.progressingCount > 0
-                    ? "true"
-                    : undefined
+                  isDownloads && activeDownloadCount > 0 ? "true" : undefined
                 }
                 data-indeterminate={
                   isDownloads &&
@@ -3391,9 +3560,9 @@ function Sidebar({
                       pathLength="100"
                       strokeDasharray="100"
                       strokeDashoffset={
-                        downloadIndicator.percent === null
+                        combinedDownloadPercent === null
                           ? 72
-                          : 100 - downloadIndicator.percent
+                          : 100 - combinedDownloadPercent
                       }
                     />
                   </svg>
@@ -3548,6 +3717,66 @@ function Sidebar({
                 </button>
               </div>
               <div className="panel-list" role="list">
+                {youtubeDownloads.items
+                  .filter((item) => item.stage !== "completed")
+                  .map((item) => (
+                    <article
+                      className="download list-item"
+                      key={item.id}
+                      role="listitem"
+                    >
+                      <div className="entry-main">
+                        <strong>
+                          {item.filename || `YouTube video ${item.videoId}`}
+                        </strong>
+                        <small className="entry-supporting-text">
+                          {item.stage === "finishing"
+                            ? "Finalising video"
+                            : item.stage}{" "}
+                          ·{" "}
+                          {item.percent === null
+                            ? "Calculating…"
+                            : `${Math.round(item.percent)}%`}
+                        </small>
+                        <progress
+                          max={100}
+                          value={item.percent ?? undefined}
+                          aria-label={`YouTube download progress for ${item.filename || item.videoId}`}
+                        />
+                      </div>
+                      <div className="download-actions">
+                        {["pending", "downloading", "finishing"].includes(
+                          item.stage,
+                        ) && (
+                          <button
+                            onClick={() =>
+                              void window.chromecraft.cancelYouTubeDownload(
+                                item.id,
+                              )
+                            }
+                            aria-label={`Cancel ${item.filename || item.videoId}`}
+                          >
+                            <Icon name="close" />
+                          </button>
+                        )}
+                        {(
+                          ["failed", "cancelled", "interrupted"] as const
+                        ).includes(
+                          item.stage as "failed" | "cancelled" | "interrupted",
+                        ) && (
+                          <button
+                            onClick={() =>
+                              void window.chromecraft.retryYouTubeDownload(
+                                item.id,
+                              )
+                            }
+                          >
+                            Retry
+                          </button>
+                        )}
+                      </div>
+                    </article>
+                  ))}
                 {downloads.items.map((item) => (
                   <article
                     className="download list-item"
@@ -3650,15 +3879,75 @@ function Sidebar({
                     </div>
                   </article>
                 ))}
-                {downloads.items.length === 0 && (
+                {downloads.items.length === 0 &&
+                  youtubeDownloads.items.length === 0 && (
+                    <EmptyState
+                      icon="download"
+                      title="No downloads"
+                      description="Files you download will appear here."
+                    />
+                  )}
+              </div>
+            </>
+          )}
+          {tool === "gallery" && (
+            <div className="gallery-sidebar-panel">
+              <button
+                type="button"
+                className="gallery-sidebar-open"
+                onClick={() => void window.chromecraft.openGallery()}
+              >
+                <span
+                  className="material-icon material-symbols-rounded"
+                  aria-hidden="true"
+                >
+                  video_library
+                </span>
+                <span>
+                  <strong>Open My Gallery</strong>
+                  <small>Watch and manage downloaded videos</small>
+                </span>
+                <Icon name="chevronRight" />
+              </button>
+              <header className="gallery-sidebar-heading">
+                <strong>Recent videos</strong>
+                <small>{gallery.items.length} saved locally</small>
+              </header>
+              <div className="gallery-sidebar-recents">
+                {gallery.items.slice(0, 5).map((item) => (
+                  <button
+                    type="button"
+                    key={item.id}
+                    disabled={!item.available}
+                    onClick={() => void window.chromecraft.openGallery(item.id)}
+                  >
+                    <span className="gallery-sidebar-thumb">
+                      <video
+                        src={item.mediaUrl}
+                        muted
+                        preload="metadata"
+                        aria-hidden="true"
+                      />
+                      {!item.available && <Icon name="warning" />}
+                    </span>
+                    <span>
+                      <strong>{item.title}</strong>
+                      <small>
+                        {new Date(item.downloadedAt).toLocaleDateString()} ·{" "}
+                        {item.sourceName ?? "Local video"}
+                      </small>
+                    </span>
+                  </button>
+                ))}
+                {gallery.items.length === 0 && (
                   <EmptyState
-                    icon="download"
-                    title="No downloads"
-                    description="Files you download will appear here."
+                    icon="videoLibrary"
+                    title="No videos yet"
+                    description="Your YouTube downloads will appear here."
                   />
                 )}
               </div>
-            </>
+            </div>
           )}
           {tool === "extensions" && (
             <ExtensionsSidebarPanel
@@ -4637,6 +4926,7 @@ export function App() {
   const [youtubeDownloads, setYouTubeDownloads] = useState(
     emptyYouTubeDownloads,
   );
+  const [gallery, setGallery] = useState(emptyGallery);
   const [extensions, setExtensions] = useState(emptyExtensions);
   const [updates, setUpdates] = useState<UpdateSnapshot | null>(null);
   const [tool, setTool] = useState<SidebarTool | null>(null);
@@ -4651,6 +4941,7 @@ export function App() {
   const [findOpen, setFindOpen] = useState(false);
   const [omniboxExpanded, setOmniboxExpanded] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [youtubeProgressExpanded, setYouTubeProgressExpanded] = useState(false);
   const [dialog, setDialog] = useState<BrowserDialogState | null>(null);
   const receivedDownloadEvent = useRef(false);
   const [tabMenu, setTabMenu] = useState<{
@@ -4668,6 +4959,7 @@ export function App() {
       window.chromecraft.getExtensions(),
       window.chromecraft.getUpdateSnapshot(),
       window.chromecraft.getYouTubeDownloads(),
+      window.chromecraft.getGallery(),
     ]).then(
       ([
         nextSnapshot,
@@ -4677,6 +4969,7 @@ export function App() {
         nextExtensions,
         nextUpdates,
         nextYouTubeDownloads,
+        nextGallery,
       ]) => {
         if (mounted) {
           setSnapshot(nextSnapshot);
@@ -4687,6 +4980,7 @@ export function App() {
           setExtensions(nextExtensions);
           setUpdates(nextUpdates);
           setYouTubeDownloads(nextYouTubeDownloads);
+          setGallery(nextGallery);
         }
       },
     );
@@ -4701,6 +4995,7 @@ export function App() {
       window.chromecraft.onExtensions(setExtensions),
       window.chromecraft.onUpdateSnapshot(setUpdates),
       window.chromecraft.onYouTubeDownloads(setYouTubeDownloads),
+      window.chromecraft.onGallery(setGallery),
       window.chromecraft.onShowFind(() => setFindOpen(true)),
       window.chromecraft.onOpenCommandPalette(() => setPaletteOpen(true)),
     ];
@@ -4728,6 +5023,7 @@ export function App() {
       omniboxExpanded ||
       findOpen ||
       paletteOpen ||
+      youtubeProgressExpanded ||
       brandMenuOpen ||
       updatesOpen ||
       extensionsPageOpen ||
@@ -4748,6 +5044,7 @@ export function App() {
     findOpen,
     omniboxExpanded,
     paletteOpen,
+    youtubeProgressExpanded,
     tabHoverCardOpen,
     tabMenu,
     tool,
@@ -4951,6 +5248,19 @@ export function App() {
           }}
           onOmniboxExpandedChange={setOmniboxExpanded}
         />
+        {snapshot.preferences.showDownloadProgressInToolbar && (
+          <YouTubeDownloadProgress
+            snapshot={youtubeDownloads}
+            onCancel={(id) => void window.chromecraft.cancelYouTubeDownload(id)}
+            onRetry={(id) => void window.chromecraft.retryYouTubeDownload(id)}
+            onOpenGallery={() => void window.chromecraft.openGallery()}
+            onOpenFile={(id) => void window.chromecraft.openYouTubeDownload(id)}
+            onDismiss={(id) =>
+              void window.chromecraft.dismissYouTubeDownload(id)
+            }
+            onExpandedChange={setYouTubeProgressExpanded}
+          />
+        )}
         {snapshot.preferences.bookmarkBarVisible && <BookmarkBar data={data} />}
         {listing && (
           <ExtensionInstallBanner
@@ -5068,7 +5378,9 @@ export function App() {
         snapshot={snapshot}
         data={data}
         downloads={downloads}
+        youtubeDownloads={youtubeDownloads}
         extensions={extensions}
+        gallery={gallery}
         tool={tool}
         setTool={setTool}
         openExtensionsPage={() => {
@@ -5084,7 +5396,12 @@ export function App() {
           }
         }}
       />
-      {activeTab.id === fullSettingsTabId ? (
+      {activeTab.url.startsWith("chromecraft://gallery/") ? (
+        <GalleryPage
+          snapshot={gallery}
+          selectedId={new URL(activeTab.url).searchParams.get("video")}
+        />
+      ) : activeTab.id === fullSettingsTabId ? (
         <FullSettingsPage
           snapshot={snapshot}
           hyperdrive={hyperdrive}

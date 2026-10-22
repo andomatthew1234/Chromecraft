@@ -40,6 +40,9 @@ const snapshot: BrowserSnapshot = {
     hyperdriveMonitorOpen: false,
     hyperdriveDeveloperMode: false,
     extensionDeveloperMode: false,
+    showDownloadProgressInToolbar: true,
+    showDownloadCompletionNotification: true,
+    addVideosToGallery: true,
   } as BrowserSnapshot["preferences"],
 };
 
@@ -78,6 +81,7 @@ describe("full settings model", () => {
       "general",
       "privacy",
       "appearance",
+      "downloads",
       "hyperdrive",
       "extensions",
       "advanced",
@@ -124,7 +128,7 @@ describe("full settings model", () => {
 
     expect(markup).toContain('aria-label="Search settings"');
     expect(markup).toContain('aria-label="Settings categories"');
-    expect(markup.match(/data-settings-category=/g)).toHaveLength(6);
+    expect(markup.match(/data-settings-category=/g)).toHaveLength(7);
     expect(markup).toContain('data-settings-detail="general"');
     expect(markup).toContain("Restore tabs on launch");
     expect(markup).toContain("Show bookmarks bar");

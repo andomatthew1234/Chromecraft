@@ -2,6 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 
 import type { DownloadManager } from "./download-manager";
+import type { GalleryStore } from "./gallery-store";
 import type { TabManager } from "./tab-manager";
 import type { YouTubeDownloadService } from "./youtube-download-service";
 
@@ -15,6 +16,7 @@ export async function runYouTubeUtilitySmoke(
   manager: TabManager,
   downloads: DownloadManager,
   service: YouTubeDownloadService,
+  gallery: GalleryStore,
   options: YouTubeUtilitySmokeOptions,
 ): Promise<boolean> {
   const startedAt = Date.now();
@@ -22,6 +24,9 @@ export async function runYouTubeUtilitySmoke(
   let bannerVisible = false;
   let stage: string | null = null;
   let filename: string | null = null;
+  let galleryIndexed = false;
+  let galleryPageVisible = false;
+  let galleryMediaReady = false;
   try {
     const tabId = manager.createTab(options.url);
     await waitFor(
@@ -67,6 +72,61 @@ export async function runYouTubeUtilitySmoke(
     ) {
       errors.push("The completed video was not added to Downloads.");
     }
+    await waitFor(
+      () =>
+        gallery.snapshot.items.some((entry) => entry.sourceUrl === target.url),
+      10_000,
+      "completed video in My Gallery",
+    );
+    const galleryEntry = gallery.snapshot.items.find(
+      (entry) => entry.sourceUrl === target.url,
+    );
+    galleryIndexed = Boolean(galleryEntry?.available);
+    if (galleryEntry) {
+      manager.openGallery(galleryEntry.id);
+      await waitFor(
+        () =>
+          manager.snapshot.tabs.some(
+            (tab) =>
+              tab.id === manager.snapshot.activeTabId &&
+              tab.url.includes(galleryEntry.id),
+          ),
+        5_000,
+        "My Gallery player tab",
+      );
+      await waitFor(
+        async () => {
+          galleryPageVisible = await manager.evaluateShell<boolean>(
+            `Boolean(document.querySelector('.gallery-player-page video'))`,
+          );
+          return galleryPageVisible;
+        },
+        5_000,
+        "built-in Gallery player UI",
+      );
+      await waitFor(
+        async () => {
+          galleryMediaReady = await manager.evaluateShell<boolean>(
+            `Boolean(document.querySelector('.gallery-player-page video')?.readyState >= 1)`,
+          );
+          return galleryMediaReady;
+        },
+        10_000,
+        "local Gallery video metadata",
+      );
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const galleryScreenshotPath = options.screenshotPath.replace(
+        /\.png$/iu,
+        "-gallery.png",
+      );
+      await fs.writeFile(galleryScreenshotPath, await manager.captureShell());
+    }
+    if (!galleryIndexed)
+      errors.push("The completed video was not indexed in My Gallery.");
+    if (!galleryPageVisible)
+      errors.push("The built-in Gallery player did not open.");
+    if (!galleryMediaReady)
+      errors.push("The local Gallery video did not become playable.");
   } catch (error) {
     errors.push(
       error instanceof Error ? error.stack || error.message : String(error),
@@ -78,6 +138,9 @@ export async function runYouTubeUtilitySmoke(
     bannerVisible,
     stage,
     filename,
+    galleryIndexed,
+    galleryPageVisible,
+    galleryMediaReady,
     elapsedMs: Date.now() - startedAt,
     errors,
   };
@@ -91,12 +154,12 @@ export async function runYouTubeUtilitySmoke(
 }
 
 async function waitFor(
-  predicate: () => boolean,
+  predicate: () => boolean | Promise<boolean>,
   timeoutMs: number,
   description: string,
 ): Promise<void> {
   const startedAt = Date.now();
-  while (!predicate()) {
+  while (!(await predicate())) {
     if (Date.now() - startedAt > timeoutMs) {
       throw new Error(`Timed out waiting for ${description}.`);
     }

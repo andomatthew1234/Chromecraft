@@ -212,7 +212,10 @@ function validateSessionTab(value: unknown): SessionTab | null {
   const title = cleanTitle(value.title);
   const isNewTab = value.isNewTab === true;
   const rawUrl = cleanString(value.url, MAX_URL_LENGTH, true);
-  const url = isNewTab && rawUrl === "" ? "" : cleanWebUrl(rawUrl);
+  const url =
+    isNewTab && rawUrl === ""
+      ? ""
+      : (cleanWebUrl(rawUrl) ?? cleanGalleryUrl(rawUrl));
 
   return id && title && url !== null && typeof value.isNewTab === "boolean"
     ? {
@@ -223,6 +226,20 @@ function validateSessionTab(value: unknown): SessionTab | null {
         pinned: value.pinned === true,
       }
     : null;
+}
+
+function cleanGalleryUrl(value: string | null): string | null {
+  if (value === null) return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "chromecraft:" || url.hostname !== "gallery")
+      return null;
+    const video = url.searchParams.get("video");
+    if (video !== null && !/^[a-zA-Z0-9_-]{1,128}$/u.test(video)) return null;
+    return `chromecraft://gallery/${video ? `?video=${encodeURIComponent(video)}` : ""}`;
+  } catch {
+    return null;
+  }
 }
 
 function validateSession(value: unknown): BrowserSessionSnapshot | null {
@@ -483,7 +500,7 @@ export class BrowserDataStore {
       const url =
         tab.isNewTab && tab.url.trim() === ""
           ? ""
-          : this.requireWebUrl(tab.url);
+          : (cleanGalleryUrl(tab.url) ?? this.requireWebUrl(tab.url));
       return {
         id,
         title: this.requireTitle(tab.title),

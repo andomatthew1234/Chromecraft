@@ -24,6 +24,9 @@ export interface BrowserPreferences {
   hyperdriveMonitorOpen: boolean;
   hyperdriveDeveloperMode: boolean;
   extensionDeveloperMode: boolean;
+  showDownloadProgressInToolbar: boolean;
+  showDownloadCompletionNotification: boolean;
+  addVideosToGallery: boolean;
 }
 
 const defaults: BrowserPreferences = {
@@ -43,6 +46,9 @@ const defaults: BrowserPreferences = {
   hyperdriveMonitorOpen: false,
   hyperdriveDeveloperMode: false,
   extensionDeveloperMode: false,
+  showDownloadProgressInToolbar: true,
+  showDownloadCompletionNotification: true,
+  addVideosToGallery: true,
 };
 
 const themes = new Set<NewTabTheme>(["overworld", "nether", "end", "minimal"]);
@@ -157,6 +163,18 @@ export class PreferencesStore {
           typeof parsed.extensionDeveloperMode === "boolean"
             ? parsed.extensionDeveloperMode
             : defaults.extensionDeveloperMode,
+        showDownloadProgressInToolbar:
+          typeof parsed.showDownloadProgressInToolbar === "boolean"
+            ? parsed.showDownloadProgressInToolbar
+            : defaults.showDownloadProgressInToolbar,
+        showDownloadCompletionNotification:
+          typeof parsed.showDownloadCompletionNotification === "boolean"
+            ? parsed.showDownloadCompletionNotification
+            : defaults.showDownloadCompletionNotification,
+        addVideosToGallery:
+          typeof parsed.addVideosToGallery === "boolean"
+            ? parsed.addVideosToGallery
+            : defaults.addVideosToGallery,
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
@@ -239,6 +257,18 @@ export class PreferencesStore {
 
   async setExtensionDeveloperMode(enabled: boolean): Promise<void> {
     await this.update({ extensionDeveloperMode: enabled });
+  }
+
+  async setShowDownloadProgressInToolbar(enabled: boolean): Promise<void> {
+    await this.update({ showDownloadProgressInToolbar: enabled });
+  }
+
+  async setShowDownloadCompletionNotification(enabled: boolean): Promise<void> {
+    await this.update({ showDownloadCompletionNotification: enabled });
+  }
+
+  async setAddVideosToGallery(enabled: boolean): Promise<void> {
+    await this.update({ addVideosToGallery: enabled });
   }
 
   private async update(patch: Partial<BrowserPreferences>): Promise<void> {

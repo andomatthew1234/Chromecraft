@@ -6,11 +6,14 @@ import {
   app,
   BaseWindow,
   dialog,
+  clipboard,
   ipcMain,
   Menu,
   nativeTheme,
+  Notification,
   protocol,
   session,
+  shell,
   type IpcMainInvokeEvent,
   WebContentsView,
 } from "electron";
@@ -30,6 +33,7 @@ import type {
   NewTabTheme,
   QuickLinkInput,
   YouTubeDownloadsSnapshot,
+  GallerySnapshot,
 } from "../shared/browser";
 import { isAllowedWebUrl } from "../shared/navigation";
 import { BrowserDataStore } from "./browser-data";
@@ -47,6 +51,8 @@ import {
 } from "./download-manager";
 import { ElectronUpdateAdapter } from "./electron-update-adapter";
 import { registerInternalProtocol } from "./internal-protocol";
+import { GalleryStore } from "./gallery-store";
+import { registerGalleryMediaProtocol } from "./gallery-media-protocol";
 import { HyperdriveController } from "./hyperdrive/controller";
 import { PreferencesStore } from "./preferences";
 import { SearchSuggestionService } from "./search-suggestions";
@@ -74,6 +80,16 @@ protocol.registerSchemesAsPrivileged([
       secure: true,
       supportFetchAPI: false,
       corsEnabled: false,
+    },
+  },
+  {
+    scheme: "chromecraft-media",
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
+      stream: true,
     },
   },
 ]);
@@ -126,6 +142,8 @@ let ipcRegistered = false;
 let updateManager: UpdateManager | null = null;
 let websitePermissionController: WebsitePermissionController | null = null;
 let youtubeDownloadService: YouTubeDownloadService | null = null;
+let galleryStore: GalleryStore | null = null;
+let youtubeIndicatorHideTimer: NodeJS.Timeout | null = null;
 
 async function promptForWebsitePermission(
   request: WebsitePermissionPrompt,
@@ -446,6 +464,17 @@ function requireYouTubeDownloads(
     throw new Error("YouTube downloads are not ready.");
   }
   return youtubeDownloadService;
+}
+
+function requireGallery(event: IpcMainInvokeEvent): GalleryStore {
+  requireTrusted(event);
+  if (!galleryStore) throw new Error("My Gallery is not ready.");
+  return galleryStore;
+}
+
+function sendGallerySnapshot(snapshot: GallerySnapshot): void {
+  if (!shellView || shellView.webContents.isDestroyed()) return;
+  shellView.webContents.send(channels.galleryChanged, snapshot);
 }
 
 function requireString(value: unknown, name: string, maximum = 8_192): string {
@@ -1101,6 +1130,23 @@ function registerIpc(): void {
       return requireYouTubeDownloads(event).start(target);
     },
   );
+  ipcMain.handle(channels.cancelYouTubeDownload, async (event, id: unknown) => {
+    await requireYouTubeDownloads(event).cancel(requireString(id, "id", 128));
+  });
+  ipcMain.handle(channels.retryYouTubeDownload, (event, id: unknown) =>
+    requireYouTubeDownloads(event).retry(requireString(id, "id", 128)),
+  );
+  ipcMain.handle(channels.openYouTubeDownload, async (event, id: unknown) => {
+    const file = await requireYouTubeDownloads(event).resolveCompletedPath(
+      requireString(id, "id", 128),
+    );
+    if (!file) throw new Error("The completed video is unavailable.");
+    const error = await shell.openPath(file);
+    if (error) throw new Error(error);
+  });
+  ipcMain.handle(channels.dismissYouTubeDownload, (event, id: unknown) => {
+    requireYouTubeDownloads(event).dismiss(requireString(id, "id", 128));
+  });
   ipcMain.handle(
     channels.dismissYouTubeDownloadBanner,
     (event, tabId: unknown, videoId: unknown) => {
@@ -1147,6 +1193,135 @@ function registerIpc(): void {
   ipcMain.handle(channels.clearFinishedDownloads, (event) => {
     requireDownloads(event).clearFinished();
   });
+  ipcMain.handle(
+    channels.getGallery,
+    (event) => requireGallery(event).snapshot,
+  );
+  ipcMain.handle(channels.openGallery, (event, entryId: unknown) => {
+    requireTrusted(event);
+    const cleanId =
+      entryId === undefined || entryId === null
+        ? undefined
+        : requireString(entryId, "entryId", 128);
+    return requireManager(event).openGallery(cleanId);
+  });
+  ipcMain.handle(channels.openGalleryFile, async (event, id: unknown) => {
+    const file = await requireGallery(event).resolveFile(
+      requireString(id, "id", 128),
+    );
+    if (!file) throw new Error("The gallery file is unavailable.");
+    const error = await shell.openPath(file);
+    if (error) throw new Error(error);
+  });
+  ipcMain.handle(channels.showGalleryFile, async (event, id: unknown) => {
+    const file = await requireGallery(event).resolveFile(
+      requireString(id, "id", 128),
+    );
+    if (!file) throw new Error("The gallery file is unavailable.");
+    shell.showItemInFolder(file);
+  });
+  ipcMain.handle(channels.copyGalleryPath, async (event, id: unknown) => {
+    const file = await requireGallery(event).resolveFile(
+      requireString(id, "id", 128),
+    );
+    if (!file) throw new Error("The gallery file is unavailable.");
+    clipboard.writeText(file);
+  });
+  ipcMain.handle(channels.copyGallerySourceUrl, (event, id: unknown) => {
+    const cleanId = requireString(id, "id", 128);
+    const item = requireGallery(event).snapshot.items.find(
+      (candidate) => candidate.id === cleanId,
+    );
+    if (!item?.sourceUrl) throw new Error("This item has no source URL.");
+    clipboard.writeText(item.sourceUrl);
+  });
+  ipcMain.handle(
+    channels.renameGalleryItem,
+    async (event, id: unknown, title: unknown) => {
+      await requireGallery(event).rename(
+        requireString(id, "id", 128),
+        requireString(title, "title", 240),
+      );
+    },
+  );
+  ipcMain.handle(channels.removeGalleryItem, async (event, id: unknown) => {
+    await requireGallery(event).remove(requireString(id, "id", 128));
+  });
+  ipcMain.handle(channels.deleteGalleryItem, async (event, id: unknown) => {
+    const gallery = requireGallery(event);
+    const cleanId = requireString(id, "id", 128);
+    const item = gallery.snapshot.items.find((entry) => entry.id === cleanId);
+    if (!item) throw new Error("Unknown gallery item.");
+    const answer = await dialog.showMessageBox({
+      type: "warning",
+      title: "Delete video from disk?",
+      message: `Delete “${item.title}”?`,
+      detail:
+        "The video will be moved to the Recycle Bin or Trash and removed from My Gallery.",
+      buttons: ["Cancel", "Delete"],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    });
+    if (answer.response !== 1) return;
+    const file = await gallery.resolveFile(cleanId);
+    if (!file) throw new Error("The gallery file is unavailable.");
+    await shell.trashItem(file);
+    await gallery.remove(cleanId);
+  });
+  ipcMain.handle(channels.importGalleryDownloads, (event) =>
+    requireGallery(event).importDownloads(),
+  );
+  ipcMain.handle(
+    channels.updateGalleryMediaMetadata,
+    async (
+      event,
+      id: unknown,
+      durationSeconds: unknown,
+      width: unknown,
+      height: unknown,
+    ) => {
+      if (
+        typeof durationSeconds !== "number" ||
+        typeof width !== "number" ||
+        typeof height !== "number"
+      ) {
+        throw new TypeError("Gallery media metadata is invalid.");
+      }
+      await requireGallery(event).updateMediaMetadata(
+        requireString(id, "id", 128),
+        durationSeconds,
+        width,
+        height,
+      );
+    },
+  );
+  ipcMain.handle(
+    channels.setShowDownloadProgressInToolbar,
+    async (event, enabled: unknown) => {
+      if (typeof enabled !== "boolean")
+        throw new TypeError("enabled must be boolean.");
+      await requireManager(event).setShowDownloadProgressInToolbar(enabled);
+    },
+  );
+  ipcMain.handle(
+    channels.setShowDownloadCompletionNotification,
+    async (event, enabled: unknown) => {
+      if (typeof enabled !== "boolean")
+        throw new TypeError("enabled must be boolean.");
+      await requireManager(event).setShowDownloadCompletionNotification(
+        enabled,
+      );
+    },
+  );
+  ipcMain.handle(
+    channels.setAddVideosToGallery,
+    async (event, enabled: unknown) => {
+      if (typeof enabled !== "boolean")
+        throw new TypeError("enabled must be boolean.");
+      await requireManager(event).setAddVideosToGallery(enabled);
+    },
+  );
 }
 
 async function createMainWindow(): Promise<void> {
@@ -1350,10 +1525,11 @@ async function createMainWindow(): Promise<void> {
   shellView = view;
   window.contentView.addChildView(view);
 
+  const downloadsDirectory = smokeUserData
+    ? path.join(app.getPath("userData"), "downloads")
+    : app.getPath("downloads");
   const downloads = new DownloadManager(browserSession, {
-    downloadsDirectory: smokeUserData
-      ? path.join(app.getPath("userData"), "downloads")
-      : undefined,
+    downloadsDirectory,
     historyFilePath: path.join(app.getPath("userData"), "downloads.json"),
     onChange: (items) => {
       if (!view.webContents.isDestroyed())
@@ -1363,19 +1539,42 @@ async function createMainWindow(): Promise<void> {
   await downloads.initialize();
   downloadManager = downloads;
 
+  const gallery = new GalleryStore({
+    filePath: path.join(app.getPath("userData"), "gallery.json"),
+    downloadsDirectory,
+    onChange: sendGallerySnapshot,
+  });
+  await gallery.initialize();
+  galleryStore = gallery;
+  registerGalleryMediaProtocol(view.webContents.session, (id) =>
+    gallery.resolveFile(id),
+  );
+
   const youtubeDownloads = new YouTubeDownloadService({
-    downloadsDirectory: smokeUserData
-      ? path.join(app.getPath("userData"), "downloads")
-      : app.getPath("downloads"),
+    downloadsDirectory,
     toolsDirectory: app.isPackaged
       ? path.join(process.resourcesPath, "media-tools")
       : path.join(app.getAppPath(), "resources", "media-tools"),
     onChange: (snapshot: YouTubeDownloadsSnapshot) => {
+      const active = snapshot.items.some((item) =>
+        ["pending", "downloading", "finishing"].includes(item.stage),
+      );
+      if (youtubeIndicatorHideTimer) {
+        clearTimeout(youtubeIndicatorHideTimer);
+        youtubeIndicatorHideTimer = null;
+      }
+      tabManager?.setYouTubeDownloadIndicatorVisible(true);
+      if (!active) {
+        youtubeIndicatorHideTimer = setTimeout(() => {
+          youtubeIndicatorHideTimer = null;
+          tabManager?.setYouTubeDownloadIndicatorVisible(false);
+        }, 5_200);
+      }
       if (!view.webContents.isDestroyed()) {
         view.webContents.send(channels.youtubeDownloadsChanged, snapshot);
       }
     },
-    onCompleted: (item, savePath) => {
+    onCompleted: async (item, savePath) => {
       try {
         downloads.recordCompletedExternalDownload({
           url: item.sourceUrl,
@@ -1393,6 +1592,36 @@ async function createMainWindow(): Promise<void> {
           error,
         );
       }
+      let savedToGallery = false;
+      if (preferences.snapshot.addVideosToGallery) {
+        try {
+          await gallery.addCompleted({
+            filePath: savePath,
+            title: item.filename
+              ?.replace(/\s+\[[a-zA-Z0-9_-]{6,}\](?=\.[^.]+$)/u, "")
+              .replace(/\.[^.]+$/u, ""),
+            downloadedAt: item.finishedAt ?? Date.now(),
+            sourceName: "YouTube",
+            sourceUrl: item.sourceUrl,
+          });
+          savedToGallery = true;
+        } catch (error) {
+          console.warn("Could not add video to My Gallery.", error);
+        }
+      }
+      if (
+        preferences.snapshot.showDownloadCompletionNotification &&
+        Notification.isSupported()
+      ) {
+        new Notification({
+          title: "Video downloaded",
+          body: item.filename
+            ? `${item.filename} was saved${savedToGallery ? " to My Gallery" : " to Downloads"}.`
+            : `Your video was saved${savedToGallery ? " to My Gallery" : " to Downloads"}.`,
+          silent: true,
+        }).show();
+      }
+      return savedToGallery;
     },
   });
   youtubeDownloadService = youtubeDownloads;
@@ -1505,6 +1734,9 @@ async function createMainWindow(): Promise<void> {
       websitePermissionController?.clear();
       websitePermissionController = null;
       youtubeDownloadService = null;
+      galleryStore = null;
+      if (youtubeIndicatorHideTimer) clearTimeout(youtubeIndicatorHideTimer);
+      youtubeIndicatorHideTimer = null;
     }
   });
 
@@ -1559,6 +1791,7 @@ async function createMainWindow(): Promise<void> {
       manager,
       downloads,
       youtubeDownloads,
+      gallery,
       {
         url: youtubeSmokeUrl,
         reportPath: path.resolve(youtubeSmokeReport),

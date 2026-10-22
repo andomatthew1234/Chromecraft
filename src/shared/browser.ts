@@ -29,9 +29,11 @@ export interface YouTubeWatchSnapshot {
 }
 
 export type YouTubeDownloadStage =
+  | "pending"
   | "downloading"
   | "finishing"
   | "completed"
+  | "interrupted"
   | "cancelled"
   | "failed";
 
@@ -44,9 +46,33 @@ export interface YouTubeDownloadItemSnapshot {
   percent: number | null;
   receivedBytes: number;
   totalBytes: number;
+  bytesPerSecond: number | null;
+  etaSeconds: number | null;
   error: string | null;
+  /** True only after the completed file has been committed to My Gallery. */
+  savedToGallery?: boolean;
   startedAt: number;
   finishedAt: number | null;
+}
+
+export interface GalleryEntrySnapshot {
+  id: string;
+  title: string;
+  filename: string;
+  filePath: string;
+  mediaUrl: string;
+  durationSeconds: number | null;
+  width: number | null;
+  height: number | null;
+  fileSize: number;
+  downloadedAt: number;
+  sourceName: string | null;
+  sourceUrl: string | null;
+  available: boolean;
+}
+
+export interface GallerySnapshot {
+  items: GalleryEntrySnapshot[];
 }
 
 export interface YouTubeDownloadsSnapshot {
@@ -102,6 +128,9 @@ export interface BrowserPreferencesSnapshot {
   hyperdriveMonitorOpen: boolean;
   hyperdriveDeveloperMode: boolean;
   extensionDeveloperMode: boolean;
+  showDownloadProgressInToolbar: boolean;
+  showDownloadCompletionNotification: boolean;
+  addVideosToGallery: boolean;
 }
 
 export interface HyperdriveDestinationSnapshot {
@@ -433,6 +462,10 @@ export interface ChromecraftApi {
   getDownloads(): Promise<DownloadSnapshot>;
   getYouTubeDownloads(): Promise<YouTubeDownloadsSnapshot>;
   downloadActiveYouTubeVideo(tabId: TabId): Promise<string>;
+  cancelYouTubeDownload(id: string): Promise<void>;
+  retryYouTubeDownload(id: string): Promise<string>;
+  openYouTubeDownload(id: string): Promise<void>;
+  dismissYouTubeDownload(id: string): Promise<void>;
   dismissYouTubeDownloadBanner(tabId: TabId, videoId: string): Promise<void>;
   pauseDownload(id: string): Promise<void>;
   resumeDownload(id: string): Promise<void>;
@@ -442,6 +475,25 @@ export interface ChromecraftApi {
   showDownloadInFolder(id: string): Promise<void>;
   removeDownload(id: string): Promise<void>;
   clearFinishedDownloads(): Promise<void>;
+  getGallery(): Promise<GallerySnapshot>;
+  openGallery(entryId?: string): Promise<TabId>;
+  openGalleryFile(id: string): Promise<void>;
+  showGalleryFile(id: string): Promise<void>;
+  copyGalleryPath(id: string): Promise<void>;
+  copyGallerySourceUrl(id: string): Promise<void>;
+  renameGalleryItem(id: string, title: string): Promise<void>;
+  removeGalleryItem(id: string): Promise<void>;
+  deleteGalleryItem(id: string): Promise<void>;
+  importGalleryDownloads(): Promise<number>;
+  updateGalleryMediaMetadata(
+    id: string,
+    durationSeconds: number,
+    width: number,
+    height: number,
+  ): Promise<void>;
+  setShowDownloadProgressInToolbar(enabled: boolean): Promise<void>;
+  setShowDownloadCompletionNotification(enabled: boolean): Promise<void>;
+  setAddVideosToGallery(enabled: boolean): Promise<void>;
   getUpdateSnapshot(): Promise<UpdateSnapshot>;
   checkForUpdates(): Promise<UpdateSnapshot>;
   restartToUpdate(): Promise<void>;
@@ -451,6 +503,7 @@ export interface ChromecraftApi {
   onYouTubeDownloads(
     listener: (snapshot: YouTubeDownloadsSnapshot) => void,
   ): () => void;
+  onGallery(listener: (snapshot: GallerySnapshot) => void): () => void;
   onFindResult(listener: (snapshot: FindResultSnapshot) => void): () => void;
   onShowFind(listener: () => void): () => void;
   onOpenCommandPalette(listener: () => void): () => void;

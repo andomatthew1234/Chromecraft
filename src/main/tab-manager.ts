@@ -52,6 +52,7 @@ export const SHELL_HEIGHT = 104;
 export const BOOKMARK_BAR_HEIGHT = 32;
 export const EXTENSION_INSTALL_BANNER_HEIGHT = 88;
 export const YOUTUBE_DOWNLOAD_BANNER_HEIGHT = 48;
+export const YOUTUBE_GLOBAL_PROGRESS_HEIGHT = 34;
 export const HYPERDRIVE_MONITOR_WIDTH = 372;
 const SESSION_WRITE_DELAY_MS = 300;
 const EXTENSION_WINDOW_NAME_PREFIX = "__chromecraft_extension_window_";
@@ -261,6 +262,7 @@ function cloneExtensionTab(tab: ExtensionTabSnapshot): ExtensionTabSnapshot {
 }
 
 export class TabManager {
+  private youtubeDownloadIndicatorVisible = false;
   private readonly tabs = new Map<TabId, TabRecord>();
   private readonly order: TabId[] = [];
   private readonly extensionTabs = new ExtensionTabLifecycle();
@@ -354,7 +356,7 @@ export class TabManager {
     this.extensionTabs.activate(this.activeTabId);
     this.hyperdrive.setActiveTab(this.activeTabId);
     const active = this.requireTab(this.activeTabId);
-    if (!active.isNewTab && active.url) {
+    if (!active.isNewTab && active.url && !isGalleryUrl(active.url)) {
       void this.navigateToUrl(active, active.url, false, true);
     } else {
       this.layoutActiveView();
@@ -390,6 +392,11 @@ export class TabManager {
           this.preferences.snapshot.hyperdriveDeveloperMode,
         extensionDeveloperMode:
           this.preferences.snapshot.extensionDeveloperMode,
+        showDownloadProgressInToolbar:
+          this.preferences.snapshot.showDownloadProgressInToolbar,
+        showDownloadCompletionNotification:
+          this.preferences.snapshot.showDownloadCompletionNotification,
+        addVideosToGallery: this.preferences.snapshot.addVideosToGallery,
       },
       baseChromeHeight: this.baseChromeHeight,
       chromeHeight: this.chromeHeight,
@@ -462,6 +469,13 @@ export class TabManager {
     // The transparent shell is raised while browser-owned popups are open,
     // then returned beneath page contents when the popup closes.
     this.window.contentView.addChildView(this.shellView, open ? undefined : 0);
+  }
+
+  setYouTubeDownloadIndicatorVisible(visible: boolean): void {
+    if (this.youtubeDownloadIndicatorVisible === visible) return;
+    this.youtubeDownloadIndicatorVisible = visible;
+    this.layoutActiveView();
+    this.emitSnapshot();
   }
 
   dismissWebStoreInstallBanner(tabId: TabId, extensionId: string): void {
@@ -610,6 +624,31 @@ export class TabManager {
     return id;
   }
 
+  openGallery(entryId?: string): TabId {
+    const suffix = entryId ? `?video=${encodeURIComponent(entryId)}` : "";
+    const url = `chromecraft://gallery/${suffix}`;
+    const existing = [...this.tabs.values()].find((tab) =>
+      tab.url.startsWith("chromecraft://gallery/"),
+    );
+    if (existing) {
+      existing.url = url;
+      existing.requestedUrl = url;
+      existing.title = "My Gallery";
+      existing.isNewTab = false;
+      this.activateTab(existing.id);
+      this.emitSnapshot();
+      this.scheduleSessionSave();
+      return existing.id;
+    }
+    const id = randomUUID();
+    const tab = this.makeTab(id, "My Gallery", url, false);
+    this.tabs.set(id, tab);
+    this.order.push(id);
+    this.activateTab(id);
+    this.scheduleSessionSave();
+    return id;
+  }
+
   activateTab(tabId: TabId): void {
     const next = this.requireTab(tabId);
     const previous = this.tabs.get(this.activeTabId);
@@ -630,7 +669,7 @@ export class TabManager {
     this.activeTabId = tabId;
     this.extensionTabs.activate(tabId);
     this.hyperdrive.setActiveTab(tabId);
-    if (!next.isNewTab && next.url && !next.view) {
+    if (!next.isNewTab && next.url && !next.view && !isGalleryUrl(next.url)) {
       void this.navigateToUrl(
         next,
         next.url,
@@ -684,6 +723,11 @@ export class TabManager {
 
   async duplicateTab(tabId: TabId): Promise<TabId> {
     const source = this.requireTab(tabId);
+    if (isGalleryUrl(source.url)) {
+      const videoId =
+        new URL(source.url).searchParams.get("video") ?? undefined;
+      return this.openGallery(videoId);
+    }
     const duplicateId = this.createTab(undefined, false);
     const currentIndex = this.order.indexOf(duplicateId);
     this.order.splice(currentIndex, 1);
@@ -716,6 +760,22 @@ export class TabManager {
 
   async navigate(tabId: TabId, input: string, typed = false): Promise<void> {
     if (tabId === this.activeTabId) this.extensionPopup?.close();
+    if (isGalleryUrl(input.trim())) {
+      const tab = this.requireTab(tabId);
+      this.destroyView(tab);
+      const requested = new URL(input.trim());
+      const entryId = requested.searchParams.get("video");
+      tab.url = `chromecraft://gallery/${entryId ? `?video=${encodeURIComponent(entryId)}` : ""}`;
+      tab.requestedUrl = tab.url;
+      tab.title = "My Gallery";
+      tab.isNewTab = false;
+      tab.isLoading = false;
+      tab.error = null;
+      this.activateTab(tab.id);
+      this.emitSnapshot();
+      this.scheduleSessionSave();
+      return;
+    }
     const target = resolveNavigationInput(input);
     if (target)
       await this.navigateToUrl(
@@ -894,6 +954,22 @@ export class TabManager {
     this.emitSnapshot();
   }
 
+  async setShowDownloadProgressInToolbar(enabled: boolean): Promise<void> {
+    await this.preferences.setShowDownloadProgressInToolbar(enabled);
+    this.layoutActiveView();
+    this.emitSnapshot();
+  }
+
+  async setShowDownloadCompletionNotification(enabled: boolean): Promise<void> {
+    await this.preferences.setShowDownloadCompletionNotification(enabled);
+    this.emitSnapshot();
+  }
+
+  async setAddVideosToGallery(enabled: boolean): Promise<void> {
+    await this.preferences.setAddVideosToGallery(enabled);
+    this.emitSnapshot();
+  }
+
   get hyperdriveSnapshot(): HyperdriveSnapshot {
     return this.hyperdrive.snapshot;
   }
@@ -1034,7 +1110,12 @@ export class TabManager {
     const tabs = this.order
       .map((id) => {
         const tab = this.requireTab(id);
-        if (!tab.isNewTab && !isAllowedWebUrl(tab.url)) return null;
+        if (
+          !tab.isNewTab &&
+          !isAllowedWebUrl(tab.url) &&
+          !isGalleryUrl(tab.url)
+        )
+          return null;
         return {
           id: tab.id,
           title: tab.title || "New Tab",
@@ -1844,6 +1925,10 @@ export class TabManager {
   private get chromeHeight(): number {
     return (
       this.baseChromeHeight +
+      (this.youtubeDownloadIndicatorVisible &&
+      this.preferences.snapshot.showDownloadProgressInToolbar
+        ? YOUTUBE_GLOBAL_PROGRESS_HEIGHT
+        : 0) +
       (this.activeWebStoreListing ? EXTENSION_INSTALL_BANNER_HEIGHT : 0) +
       (this.activeYouTubeWatch ? YOUTUBE_DOWNLOAD_BANNER_HEIGHT : 0)
     );
@@ -2008,6 +2093,7 @@ export class TabManager {
   private isAllowedInternalUrl(url: string): boolean {
     const origin = this.ublock.extensionOrigin;
     return Boolean(
+      isGalleryUrl(url) ||
       (origin && url.startsWith(`${origin}/`)) ||
       this.extensions?.isAllowedExtensionUrl(url),
     );
@@ -2048,6 +2134,15 @@ export class TabManager {
         console.warn("Could not save the browser session.", error),
       );
     }, SESSION_WRITE_DELAY_MS);
+  }
+}
+
+function isGalleryUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "chromecraft:" && url.hostname === "gallery";
+  } catch {
+    return false;
   }
 }
 

@@ -31,6 +31,8 @@ describe("YouTubeDownloadBanner", () => {
           percent: 42,
           receivedBytes: 42,
           totalBytes: 100,
+          bytesPerSecond: 10,
+          etaSeconds: 6,
           error: null,
           startedAt: 1,
           finishedAt: null,

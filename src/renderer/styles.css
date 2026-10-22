@@ -2012,6 +2012,104 @@ input::placeholder {
   font-size: 18px;
 }
 
+.gallery-sidebar-panel {
+  display: grid;
+  gap: var(--space-4);
+  padding: 0 var(--space-3) var(--space-4);
+}
+
+.gallery-sidebar-open {
+  width: 100%;
+  min-height: 76px;
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) 24px;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border-radius: var(--shape-extra-large);
+  color: var(--md-on-primary-container);
+  text-align: left;
+  background: var(--md-primary-container);
+}
+
+.gallery-sidebar-open > .material-icon:first-child {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--shape-large);
+  background: color-mix(in srgb, var(--md-primary), transparent 82%);
+}
+
+.gallery-sidebar-open > span:nth-child(2),
+.gallery-sidebar-heading,
+.gallery-sidebar-recents button > span:last-child {
+  min-width: 0;
+  display: grid;
+}
+
+.gallery-sidebar-open strong {
+  font: var(--type-title-small);
+}
+.gallery-sidebar-open small,
+.gallery-sidebar-heading small,
+.gallery-sidebar-recents small {
+  color: var(--md-on-surface-variant);
+  font: var(--type-label-small);
+}
+.gallery-sidebar-heading {
+  grid-template-columns: 1fr;
+  padding: 0 var(--space-2);
+}
+.gallery-sidebar-heading strong {
+  font: var(--type-title-medium);
+}
+.gallery-sidebar-recents {
+  display: grid;
+  gap: var(--space-2);
+}
+.gallery-sidebar-recents > button {
+  width: 100%;
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: var(--space-3);
+  align-items: center;
+  padding: var(--space-2);
+  border-radius: var(--shape-large);
+  color: inherit;
+  text-align: left;
+  background: transparent;
+}
+.gallery-sidebar-recents > button:hover {
+  background: var(--md-hover);
+}
+.gallery-sidebar-recents strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--type-body-medium);
+}
+.gallery-sidebar-thumb {
+  position: relative;
+  width: 76px;
+  aspect-ratio: 16/9;
+  overflow: hidden;
+  border-radius: var(--shape-medium);
+  background: var(--md-surface-container-highest);
+}
+.gallery-sidebar-thumb video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.gallery-sidebar-thumb > .material-icon {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+
 .extensions-page {
   position: fixed;
   z-index: 3;
