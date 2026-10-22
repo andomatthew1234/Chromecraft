@@ -624,12 +624,17 @@ export class TabManager {
     return id;
   }
 
-  openGallery(entryId?: string): TabId {
+  openGallery(entryId?: string, forceNew = false): TabId {
     const suffix = entryId ? `?video=${encodeURIComponent(entryId)}` : "";
     const url = `chromecraft://gallery/${suffix}`;
-    const existing = [...this.tabs.values()].find((tab) =>
-      tab.url.startsWith("chromecraft://gallery/"),
-    );
+    const active = this.tabs.get(this.activeTabId);
+    const existing = forceNew
+      ? undefined
+      : active?.url.startsWith("chromecraft://gallery/")
+        ? active
+        : [...this.tabs.values()].find((tab) =>
+            tab.url.startsWith("chromecraft://gallery/"),
+          );
     if (existing) {
       existing.url = url;
       existing.requestedUrl = url;

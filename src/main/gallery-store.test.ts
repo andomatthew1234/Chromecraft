@@ -227,4 +227,25 @@ describe("GalleryStore", () => {
     await restored.initialize();
     expect(restored.snapshot.items).toEqual([]);
   });
+
+  it("removes a batch with one persisted index update", async () => {
+    const paths = await fixture();
+    const firstFile = await video(paths.downloadsDirectory, "first.mp4");
+    const secondFile = await video(paths.downloadsDirectory, "second.mp4");
+    let nextId = 0;
+    const store = new GalleryStore({
+      ...paths,
+      generateId: () => `batch-${++nextId}`,
+    });
+    await store.initialize();
+    const first = await store.addCompleted({ filePath: firstFile });
+    const second = await store.addCompleted({ filePath: secondFile });
+
+    await expect(store.removeMany([first.id, "missing"])).resolves.toBe(1);
+    expect(store.snapshot.items.map((item) => item.id)).toEqual([second.id]);
+
+    const restored = new GalleryStore(paths);
+    await restored.initialize();
+    expect(restored.snapshot.items.map((item) => item.id)).toEqual([second.id]);
+  });
 });

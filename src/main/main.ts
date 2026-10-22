@@ -143,6 +143,7 @@ let updateManager: UpdateManager | null = null;
 let websitePermissionController: WebsitePermissionController | null = null;
 let youtubeDownloadService: YouTubeDownloadService | null = null;
 let galleryStore: GalleryStore | null = null;
+let deleteAllGalleryItemsInFlight = false;
 let youtubeIndicatorHideTimer: NodeJS.Timeout | null = null;
 
 async function promptForWebsitePermission(
@@ -1197,14 +1198,20 @@ function registerIpc(): void {
     channels.getGallery,
     (event) => requireGallery(event).snapshot,
   );
-  ipcMain.handle(channels.openGallery, (event, entryId: unknown) => {
-    requireTrusted(event);
-    const cleanId =
-      entryId === undefined || entryId === null
-        ? undefined
-        : requireString(entryId, "entryId", 128);
-    return requireManager(event).openGallery(cleanId);
-  });
+  ipcMain.handle(
+    channels.openGallery,
+    (event, entryId: unknown, forceNew: unknown) => {
+      requireTrusted(event);
+      const cleanId =
+        entryId === undefined || entryId === null
+          ? undefined
+          : requireString(entryId, "entryId", 128);
+      if (forceNew !== undefined && typeof forceNew !== "boolean") {
+        throw new TypeError("forceNew must be a boolean.");
+      }
+      return requireManager(event).openGallery(cleanId, forceNew === true);
+    },
+  );
   ipcMain.handle(channels.openGalleryFile, async (event, id: unknown) => {
     const file = await requireGallery(event).resolveFile(
       requireString(id, "id", 128),
@@ -1268,6 +1275,48 @@ function registerIpc(): void {
     if (!file) throw new Error("The gallery file is unavailable.");
     await shell.trashItem(file);
     await gallery.remove(cleanId);
+  });
+  ipcMain.handle(channels.deleteAllGalleryItems, async (event) => {
+    const gallery = requireGallery(event);
+    if (deleteAllGalleryItemsInFlight) {
+      throw new Error("Gallery deletion is already in progress.");
+    }
+    deleteAllGalleryItemsInFlight = true;
+    try {
+      const items = gallery.snapshot.items;
+      if (items.length === 0) return;
+      const answer = await dialog.showMessageBox({
+        type: "warning",
+        title: "Delete every video?",
+        message: `Delete all ${items.length} videos from My Gallery?`,
+        detail:
+          "The files will be moved to the Recycle Bin or Trash. Videos that cannot be deleted will remain in My Gallery.",
+        buttons: ["Cancel", "Delete all"],
+        defaultId: 0,
+        cancelId: 0,
+        noLink: true,
+      });
+      if (answer.response !== 1) return;
+      const failures: string[] = [];
+      const deletedIds: string[] = [];
+      for (const item of items) {
+        try {
+          const file = await gallery.resolveFile(item.id);
+          if (file) await shell.trashItem(file);
+          deletedIds.push(item.id);
+        } catch {
+          failures.push(item.title);
+        }
+      }
+      await gallery.removeMany(deletedIds);
+      if (failures.length > 0) {
+        throw new Error(
+          `${failures.length} video${failures.length === 1 ? "" : "s"} could not be deleted and remain in My Gallery.`,
+        );
+      }
+    } finally {
+      deleteAllGalleryItemsInFlight = false;
+    }
   });
   ipcMain.handle(channels.importGalleryDownloads, (event) =>
     requireGallery(event).importDownloads(),

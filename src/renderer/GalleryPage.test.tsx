@@ -35,6 +35,8 @@ describe("GalleryPage", () => {
     expect(markup).toContain("Copy file path");
     expect(markup).toContain("Delete from disk");
     expect(markup).toContain("chromecraft-media://video/video-1");
+    expect(markup).toContain("Delete all");
+    expect(markup).not.toContain("Import downloads");
   });
 
   it("opens a selected item in the built-in player", () => {

@@ -476,7 +476,7 @@ export interface ChromecraftApi {
   removeDownload(id: string): Promise<void>;
   clearFinishedDownloads(): Promise<void>;
   getGallery(): Promise<GallerySnapshot>;
-  openGallery(entryId?: string): Promise<TabId>;
+  openGallery(entryId?: string, forceNew?: boolean): Promise<TabId>;
   openGalleryFile(id: string): Promise<void>;
   showGalleryFile(id: string): Promise<void>;
   copyGalleryPath(id: string): Promise<void>;
@@ -484,6 +484,7 @@ export interface ChromecraftApi {
   renameGalleryItem(id: string, title: string): Promise<void>;
   removeGalleryItem(id: string): Promise<void>;
   deleteGalleryItem(id: string): Promise<void>;
+  deleteAllGalleryItems(): Promise<void>;
   importGalleryDownloads(): Promise<number>;
   updateGalleryMediaMetadata(
     id: string,

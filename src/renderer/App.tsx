@@ -3430,6 +3430,14 @@ function Sidebar({
   const open = snapshot.preferences.sidebarOpen;
   const panelOpen = open && Boolean(tool);
   const navigate = (url: string) => void window.chromecraft.createTab(url);
+  const openGalleryFromSidebar = async (entryId?: string) => {
+    setTool(null);
+    try {
+      await window.chromecraft.setSidebarOpen(false);
+    } finally {
+      await window.chromecraft.openGallery(entryId, true);
+    }
+  };
   const needle = query.toLowerCase();
   const bookmarks = data.bookmarks.filter((item) =>
     `${item.title} ${item.url} ${item.folder}`.toLowerCase().includes(needle),
@@ -3895,7 +3903,7 @@ function Sidebar({
               <button
                 type="button"
                 className="gallery-sidebar-open"
-                onClick={() => void window.chromecraft.openGallery()}
+                onClick={() => void openGalleryFromSidebar()}
               >
                 <span
                   className="material-icon material-symbols-rounded"
@@ -3919,15 +3927,26 @@ function Sidebar({
                     type="button"
                     key={item.id}
                     disabled={!item.available}
-                    onClick={() => void window.chromecraft.openGallery(item.id)}
+                    onClick={() => void openGalleryFromSidebar(item.id)}
                   >
                     <span className="gallery-sidebar-thumb">
                       <video
                         src={item.mediaUrl}
                         muted
                         preload="metadata"
+                        playsInline
+                        onLoadedMetadata={(event) => {
+                          const preview = event.currentTarget;
+                          if (preview.duration > 2) {
+                            preview.currentTime = Math.min(
+                              3,
+                              preview.duration * 0.08,
+                            );
+                          }
+                        }}
                         aria-hidden="true"
                       />
+                      {item.available && <Icon name="play" />}
                       {!item.available && <Icon name="warning" />}
                     </span>
                     <span>

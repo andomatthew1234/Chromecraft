@@ -100,6 +100,43 @@ describe("website fullscreen permissions", () => {
   });
 });
 
+describe("Gallery tabs", () => {
+  it("creates a new sidebar tab and keeps player navigation in the active Gallery tab", () => {
+    const first = {
+      id: "gallery-a",
+      title: "My Gallery",
+      url: "chromecraft://gallery/",
+      requestedUrl: "chromecraft://gallery/",
+      isNewTab: false,
+    };
+    const tabs = new Map([[first.id, first]]);
+    const manager = Object.create(TabManager.prototype) as TabManager;
+    Object.assign(manager as unknown as Record<string, unknown>, {
+      tabs,
+      order: [first.id],
+      activeTabId: first.id,
+      activateTab(tabId: string) {
+        Object.assign(manager as unknown as Record<string, unknown>, {
+          activeTabId: tabId,
+        });
+      },
+      emitSnapshot() {},
+      scheduleSessionSave() {},
+    });
+
+    const secondId = manager.openGallery("video-1", true);
+    expect(secondId).not.toBe(first.id);
+    expect(tabs).toHaveLength(2);
+
+    expect(manager.openGallery("video-2")).toBe(secondId);
+    expect(tabs).toHaveLength(2);
+    expect(tabs.get(secondId)?.url).toBe(
+      "chromecraft://gallery/?video=video-2",
+    );
+    expect(tabs.get(first.id)?.url).toBe("chromecraft://gallery/");
+  });
+});
+
 describe("ExtensionTabLifecycle", () => {
   it("uses stable Electron WebContents identifiers", () => {
     const lifecycle = new ExtensionTabLifecycle();

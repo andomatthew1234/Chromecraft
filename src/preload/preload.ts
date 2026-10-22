@@ -237,8 +237,12 @@ const api: ChromecraftApi = {
     ipcRenderer.invoke(channels.clearFinishedDownloads) as Promise<void>,
   getGallery: () =>
     ipcRenderer.invoke(channels.getGallery) as Promise<GallerySnapshot>,
-  openGallery: (entryId) =>
-    ipcRenderer.invoke(channels.openGallery, entryId) as Promise<TabId>,
+  openGallery: (entryId, forceNew) =>
+    ipcRenderer.invoke(
+      channels.openGallery,
+      entryId,
+      forceNew,
+    ) as Promise<TabId>,
   openGalleryFile: (id) =>
     ipcRenderer.invoke(channels.openGalleryFile, id) as Promise<void>,
   showGalleryFile: (id) =>
@@ -253,6 +257,8 @@ const api: ChromecraftApi = {
     ipcRenderer.invoke(channels.removeGalleryItem, id) as Promise<void>,
   deleteGalleryItem: (id) =>
     ipcRenderer.invoke(channels.deleteGalleryItem, id) as Promise<void>,
+  deleteAllGalleryItems: () =>
+    ipcRenderer.invoke(channels.deleteAllGalleryItems) as Promise<void>,
   importGalleryDownloads: () =>
     ipcRenderer.invoke(channels.importGalleryDownloads) as Promise<number>,
   updateGalleryMediaMetadata: (id, durationSeconds, width, height) =>

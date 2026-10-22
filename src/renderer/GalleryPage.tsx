@@ -121,7 +121,9 @@ function GalleryMenu({
   item: GalleryEntrySnapshot;
   onError: (error: unknown) => void;
 }) {
+  const menu = useRef<HTMLDetailsElement>(null);
   const run = (operation: () => Promise<unknown>) => {
+    if (menu.current) menu.current.open = false;
     void operation().catch(onError);
   };
   const rename = () => {
@@ -138,13 +140,11 @@ function GalleryMenu({
       run(() => window.chromecraft.removeGalleryItem(item.id));
   };
   const destroy = () => {
-    if (
-      window.confirm(`Delete “${item.title}” from disk? This cannot be undone.`)
-    )
-      run(() => window.chromecraft.deleteGalleryItem(item.id));
+    run(() => window.chromecraft.deleteGalleryItem(item.id));
   };
   return (
     <details
+      ref={menu}
       className="gallery-menu"
       onClick={(event) => event.stopPropagation()}
     >
@@ -348,15 +348,21 @@ export function GalleryPage({
   const [view, setView] = useState<GalleryView>("grid");
   const [visibleCount, setVisibleCount] = useState(GALLERY_PAGE_SIZE);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [deletingAll, setDeletingAll] = useState(false);
   const reportError = (error: unknown) =>
     setActionError(
       error instanceof Error
         ? error.message
         : "The action could not be completed.",
     );
-  const importDownloads = () => {
+  const deleteAll = () => {
+    if (deletingAll) return;
     setActionError(null);
-    void window.chromecraft.importGalleryDownloads().catch(reportError);
+    setDeletingAll(true);
+    void window.chromecraft
+      .deleteAllGalleryItems()
+      .catch(reportError)
+      .finally(() => setDeletingAll(false));
   };
   const items = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -403,11 +409,16 @@ export function GalleryPage({
           <h1>My Gallery</h1>
           <p>Your downloaded videos, ready to watch offline.</p>
         </div>
-        <button className="tonal-button" onClick={importDownloads}>
+        <button
+          type="button"
+          className="gallery-delete-all"
+          onClick={deleteAll}
+          disabled={snapshot.items.length === 0 || deletingAll}
+        >
           <span className="material-icon material-symbols-rounded">
-            drive_folder_upload
+            delete_sweep
           </span>
-          Import downloads
+          {deletingAll ? "Deleting…" : "Delete all"}
         </button>
       </header>
       {actionError && (
@@ -428,9 +439,6 @@ export function GalleryPage({
           <p>
             Videos downloaded with Chromecraft will appear here automatically.
           </p>
-          <button className="filled-button" onClick={importDownloads}>
-            Scan Downloads
-          </button>
         </section>
       ) : (
         <>
@@ -446,17 +454,25 @@ export function GalleryPage({
                 onChange={(event) => setQuery(event.target.value)}
               />
             </label>
-            <select
-              value={sort}
-              onChange={(event) => setSort(event.target.value as GallerySort)}
-              aria-label="Sort gallery"
-            >
-              <option value="newest">Newest first</option>
-              <option value="oldest">Oldest first</option>
-              <option value="name">Name</option>
-              <option value="duration">Duration</option>
-              <option value="size">File size</option>
-            </select>
+            <label className="gallery-sort-field">
+              <select
+                value={sort}
+                onChange={(event) => setSort(event.target.value as GallerySort)}
+                aria-label="Sort gallery"
+              >
+                <option value="newest">Newest first</option>
+                <option value="oldest">Oldest first</option>
+                <option value="name">Name</option>
+                <option value="duration">Duration</option>
+                <option value="size">File size</option>
+              </select>
+              <span
+                className="material-icon material-symbols-rounded"
+                aria-hidden="true"
+              >
+                expand_more
+              </span>
+            </label>
             <div className="gallery-view-toggle">
               <button
                 className={view === "grid" ? "active" : ""}
@@ -478,22 +494,15 @@ export function GalleryPage({
               </button>
             </div>
           </section>
-          {!query && (
-            <section className="gallery-recent">
-              <h2>Recently downloaded</h2>
-              <div>
-                {snapshot.items.slice(0, 4).map((item) => (
-                  <button
-                    key={item.id}
-                    onClick={() => void window.chromecraft.openGallery(item.id)}
-                  >
-                    <GalleryPreview item={item} />
-                    <strong>{item.title}</strong>
-                  </button>
-                ))}
-              </div>
-            </section>
-          )}
+          <div className="gallery-library-heading">
+            <div>
+              <h2>{query ? "Search results" : "Your videos"}</h2>
+              <p>
+                {items.length} {items.length === 1 ? "video" : "videos"} stored
+                locally
+              </p>
+            </div>
+          </div>
           <section
             className={`gallery-collection gallery-collection--${view}`}
             aria-label="Downloaded videos"

@@ -94,6 +94,7 @@ export const channels = {
   youtubeDownloadsChanged: "youtube-downloads:snapshot-changed",
   getGallery: "gallery:get-snapshot",
   openGallery: "gallery:open",
+  deleteAllGalleryItems: "gallery:delete-all",
   openGalleryFile: "gallery:open-file",
   showGalleryFile: "gallery:show-file",
   copyGalleryPath: "gallery:copy-path",

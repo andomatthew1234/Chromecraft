@@ -361,6 +361,17 @@ export class GalleryStore {
     });
   }
 
+  async removeMany(ids: readonly string[]): Promise<number> {
+    const cleanIds = new Set(ids.map(requireId));
+    if (cleanIds.size === 0) return 0;
+    return this.mutate((draft) => {
+      const previousLength = draft.items.length;
+      draft.items = draft.items.filter((entry) => !cleanIds.has(entry.id));
+      const removed = previousLength - draft.items.length;
+      return { result: removed, changed: removed > 0 };
+    });
+  }
+
   async updateMediaMetadata(
     id: string,
     durationSeconds: number | null,
