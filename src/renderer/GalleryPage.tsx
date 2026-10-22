@@ -1,4 +1,11 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 
 import type { GalleryEntrySnapshot, GallerySnapshot } from "../shared/browser";
 
@@ -202,7 +209,16 @@ function GalleryPlayer({
   const video = useRef<HTMLVideoElement>(null);
   const [speed, setSpeed] = useState(1);
   const [unsupported, setUnsupported] = useState(false);
-  useEffect(() => setUnsupported(false), [item.id]);
+  const [playing, setPlaying] = useState(false);
+  const [muted, setMuted] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(item.durationSeconds ?? 0);
+  useEffect(() => {
+    setUnsupported(false);
+    setPlaying(false);
+    setCurrentTime(0);
+    setDuration(item.durationSeconds ?? 0);
+  }, [item.id]);
   const index = items.findIndex((candidate) => candidate.id === item.id);
   const select = (offset: number) => {
     const next = items[index + offset];
@@ -221,11 +237,26 @@ function GalleryPlayer({
       else if (event.key === "ArrowLeft") element.currentTime -= 5;
       else if (event.key.toLowerCase() === "f")
         void element.requestFullscreen();
-      else if (event.key.toLowerCase() === "m") element.muted = !element.muted;
+      else if (event.key.toLowerCase() === "m") {
+        element.muted = !element.muted;
+        setMuted(element.muted);
+      }
     };
     addEventListener("keydown", key);
     return () => removeEventListener("keydown", key);
   }, [item.id]);
+  const togglePlayback = () => {
+    const element = video.current;
+    if (!element) return;
+    if (element.paused) void element.play();
+    else element.pause();
+  };
+  const toggleMuted = () => {
+    const element = video.current;
+    if (!element) return;
+    element.muted = !element.muted;
+    setMuted(element.muted);
+  };
   return (
     <main className="gallery-page gallery-player-page">
       <header className="gallery-player-header">
@@ -256,10 +287,30 @@ function GalleryPlayer({
           <video
             ref={video}
             src={item.mediaUrl}
-            controls
             autoPlay
             playsInline
             onError={() => setUnsupported(true)}
+            onLoadedMetadata={(event) => {
+              setDuration(
+                Number.isFinite(event.currentTarget.duration)
+                  ? event.currentTarget.duration
+                  : 0,
+              );
+            }}
+            onDurationChange={(event) =>
+              setDuration(
+                Number.isFinite(event.currentTarget.duration)
+                  ? event.currentTarget.duration
+                  : 0,
+              )
+            }
+            onTimeUpdate={(event) =>
+              setCurrentTime(event.currentTarget.currentTime)
+            }
+            onPlay={() => setPlaying(true)}
+            onPause={() => setPlaying(false)}
+            onEnded={() => setPlaying(false)}
+            onVolumeChange={(event) => setMuted(event.currentTarget.muted)}
           />
         ) : (
           <div className="gallery-player-error">
@@ -282,6 +333,81 @@ function GalleryPlayer({
               }
             >
               Open externally
+            </button>
+          </div>
+        )}
+        {item.available && !unsupported && (
+          <div
+            className="gallery-media-controls"
+            role="group"
+            aria-label="Video controls"
+          >
+            <button
+              type="button"
+              className="gallery-media-icon-button"
+              onClick={togglePlayback}
+              aria-label={playing ? "Pause video" : "Play video"}
+            >
+              <span
+                className="material-icon material-symbols-rounded"
+                aria-hidden="true"
+              >
+                {playing ? "pause" : "play_arrow"}
+              </span>
+            </button>
+            <span className="gallery-media-time" aria-hidden="true">
+              {formatDuration(currentTime)}
+            </span>
+            <input
+              className="gallery-media-scrubber"
+              type="range"
+              min="0"
+              max={Math.max(duration, 0.01)}
+              step="0.1"
+              value={Math.min(currentTime, Math.max(duration, 0.01))}
+              onInput={(event) => {
+                const next = Number(event.currentTarget.value);
+                if (video.current) video.current.currentTime = next;
+                setCurrentTime(next);
+              }}
+              aria-label="Video progress"
+              aria-valuetext={`${formatDuration(currentTime)} of ${formatDuration(duration)}`}
+              style={
+                {
+                  "--gallery-progress": `${duration > 0 ? (currentTime / duration) * 100 : 0}%`,
+                } as CSSProperties
+              }
+            />
+            <span className="gallery-media-time" aria-hidden="true">
+              {formatDuration(duration)}
+            </span>
+            <button
+              type="button"
+              className="gallery-media-icon-button"
+              onClick={toggleMuted}
+              aria-label={muted ? "Unmute video" : "Mute video"}
+            >
+              <span
+                className="material-icon material-symbols-rounded"
+                aria-hidden="true"
+              >
+                {muted ? "volume_off" : "volume_up"}
+              </span>
+            </button>
+            <button
+              type="button"
+              className="gallery-media-icon-button"
+              onClick={() => {
+                if (video.current) void video.current.requestFullscreen();
+              }}
+              aria-label="Enter fullscreen"
+            >
+              <span
+                className="material-icon material-symbols-rounded"
+                aria-hidden="true"
+              >
+                fullscreen
+              </span>
             </button>
           </div>
         )}

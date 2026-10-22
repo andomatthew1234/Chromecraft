@@ -46,5 +46,8 @@ describe("GalleryPage", () => {
     expect(markup).toContain("Now playing");
     expect(markup).toContain("Picture in picture");
     expect(markup).toContain("Speed");
+    expect(markup).toContain('aria-label="Play video"');
+    expect(markup).toContain('aria-label="Video progress"');
+    expect(markup).toContain('type="range"');
   });
 });

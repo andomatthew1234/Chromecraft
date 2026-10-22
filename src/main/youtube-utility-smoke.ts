@@ -27,6 +27,15 @@ export async function runYouTubeUtilitySmoke(
   let galleryIndexed = false;
   let galleryPageVisible = false;
   let galleryMediaReady = false;
+  let galleryControlsVisible = false;
+  let galleryPlaybackControlsWorked = false;
+  let galleryPlaybackControlDetails = {
+    playToggled: false,
+    scrubbed: false,
+    currentTime: 0,
+    targetTime: 0,
+  };
+  let gallerySidebarReady = false;
   try {
     const tabId = manager.createTab(options.url);
     await waitFor(
@@ -114,12 +123,69 @@ export async function runYouTubeUtilitySmoke(
         10_000,
         "local Gallery video metadata",
       );
+      galleryControlsVisible = await manager.evaluateShell<boolean>(`(() => {
+        const controls = document.querySelector('.gallery-media-controls');
+        const play = document.querySelector('[aria-label="Play video"], [aria-label="Pause video"]');
+        const scrubber = document.querySelector('input[aria-label="Video progress"]');
+        if (!(controls instanceof HTMLElement) || !play || !scrubber) return false;
+        const style = getComputedStyle(controls);
+        return style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) > 0;
+      })()`);
       await new Promise((resolve) => setTimeout(resolve, 500));
       const galleryScreenshotPath = options.screenshotPath.replace(
         /\.png$/iu,
         "-gallery.png",
       );
       await fs.writeFile(galleryScreenshotPath, await manager.captureShell());
+      galleryPlaybackControlDetails = await manager.evaluateShell<
+        typeof galleryPlaybackControlDetails
+      >(`(async () => {
+        const video = document.querySelector('.gallery-player-stage video');
+        const play = document.querySelector('[aria-label="Play video"], [aria-label="Pause video"]');
+        const scrubber = document.querySelector('input[aria-label="Video progress"]');
+        if (!(video instanceof HTMLVideoElement) || !(play instanceof HTMLButtonElement) || !(scrubber instanceof HTMLInputElement)) return { playToggled: false, scrubbed: false, currentTime: 0, targetTime: 0 };
+        const wasPaused = video.paused;
+        play.click();
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        const toggled = video.paused !== wasPaused;
+        const target = Math.min(5, Math.max(1, video.duration / 2));
+        scrubber.value = String(target);
+        scrubber.dispatchEvent(new Event('input', { bubbles: true }));
+        scrubber.dispatchEvent(new Event('change', { bubbles: true }));
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        return {
+          playToggled: toggled,
+          scrubbed: Math.abs(video.currentTime - target) < 0.75,
+          currentTime: video.currentTime,
+          targetTime: target,
+        };
+      })()`);
+      galleryPlaybackControlsWorked =
+        galleryPlaybackControlDetails.playToggled &&
+        galleryPlaybackControlDetails.scrubbed;
+      await manager.evaluateShell(
+        `document.querySelector('button[aria-label="YouTube & My Gallery"]')?.click()`,
+      );
+      await waitFor(
+        async () => {
+          gallerySidebarReady = await manager.evaluateShell<boolean>(`(() => {
+            const panel = document.querySelector('.gallery-sidebar-panel');
+            const rows = document.querySelectorAll('.gallery-sidebar-recents > button');
+            return Boolean(panel && rows.length === 1 && panel.scrollWidth <= panel.clientWidth + 1);
+          })()`);
+          return gallerySidebarReady;
+        },
+        5_000,
+        "populated Gallery sidebar",
+      );
+      const gallerySidebarScreenshotPath = options.screenshotPath.replace(
+        /\.png$/iu,
+        "-gallery-sidebar.png",
+      );
+      await fs.writeFile(
+        gallerySidebarScreenshotPath,
+        await manager.captureShell(),
+      );
     }
     if (!galleryIndexed)
       errors.push("The completed video was not indexed in My Gallery.");
@@ -127,6 +193,12 @@ export async function runYouTubeUtilitySmoke(
       errors.push("The built-in Gallery player did not open.");
     if (!galleryMediaReady)
       errors.push("The local Gallery video did not become playable.");
+    if (!galleryControlsVisible)
+      errors.push("The persistent Gallery playback controls were not visible.");
+    if (!galleryPlaybackControlsWorked)
+      errors.push("The Gallery play/pause or scrub controls did not work.");
+    if (!gallerySidebarReady)
+      errors.push("The populated Gallery sidebar was not usable.");
   } catch (error) {
     errors.push(
       error instanceof Error ? error.stack || error.message : String(error),
@@ -141,6 +213,10 @@ export async function runYouTubeUtilitySmoke(
     galleryIndexed,
     galleryPageVisible,
     galleryMediaReady,
+    galleryControlsVisible,
+    galleryPlaybackControlsWorked,
+    galleryPlaybackControlDetails,
+    gallerySidebarReady,
     elapsedMs: Date.now() - startedAt,
     errors,
   };

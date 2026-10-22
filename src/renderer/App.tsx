@@ -3912,14 +3912,19 @@ function Sidebar({
                   video_library
                 </span>
                 <span>
-                  <strong>Open My Gallery</strong>
-                  <small>Watch and manage downloaded videos</small>
+                  <strong>Open gallery</strong>
                 </span>
                 <Icon name="chevronRight" />
               </button>
               <header className="gallery-sidebar-heading">
-                <strong>Recent videos</strong>
-                <small>{gallery.items.length} saved locally</small>
+                <span>
+                  <strong>Recent videos</strong>
+                  <small>
+                    {gallery.items.length}{" "}
+                    {gallery.items.length === 1 ? "video" : "videos"} on this
+                    device
+                  </small>
+                </span>
               </header>
               <div className="gallery-sidebar-recents">
                 {gallery.items.slice(0, 5).map((item) => (
@@ -3952,8 +3957,14 @@ function Sidebar({
                     <span>
                       <strong>{item.title}</strong>
                       <small>
-                        {new Date(item.downloadedAt).toLocaleDateString()} ·{" "}
-                        {item.sourceName ?? "Local video"}
+                        {new Date(item.downloadedAt).toLocaleDateString(
+                          undefined,
+                          {
+                            day: "numeric",
+                            month: "short",
+                          },
+                        )}{" "}
+                        · {item.sourceName ?? "Local video"}
                       </small>
                     </span>
                   </button>

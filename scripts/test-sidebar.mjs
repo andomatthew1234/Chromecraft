@@ -24,6 +24,11 @@ const quickSettingsScreenshotPath = path.join(
   ".artifacts",
   "quick-settings-sidebar.png",
 );
+const galleryScreenshotPath = path.join(
+  root,
+  ".artifacts",
+  "gallery-sidebar.png",
+);
 
 async function freePort() {
   const server = net.createServer();
@@ -279,6 +284,39 @@ try {
   );
 
   await cdp.evaluate(
+    "document.querySelector('button[aria-label=\"YouTube & My Gallery\"]')?.click()",
+  );
+  const gallerySidebarState = await poll(
+    () =>
+      cdp.evaluate(`(() => {
+        const panel = document.querySelector('.gallery-sidebar-panel');
+        const action = document.querySelector('.gallery-sidebar-open');
+        const title = action?.querySelector('strong');
+        const heading = document.querySelector('.gallery-sidebar-heading');
+        return {
+          present: Boolean(panel && action && heading),
+          horizontalOverflow: Boolean(panel && panel.scrollWidth > panel.clientWidth + 1),
+          actionHeight: action?.getBoundingClientRect().height ?? 0,
+          actionTitleFits: Boolean(title && title.scrollWidth <= title.clientWidth + 1),
+        };
+      })()`),
+    (state) =>
+      state.present &&
+      !state.horizontalOverflow &&
+      state.actionHeight >= 47 &&
+      state.actionHeight <= 52 &&
+      state.actionTitleFits,
+    "the compact Gallery sidebar layout",
+  );
+  const galleryScreenshot = await cdp.send("Page.captureScreenshot", {
+    format: "png",
+  });
+  await fs.writeFile(
+    galleryScreenshotPath,
+    Buffer.from(galleryScreenshot.data, "base64"),
+  );
+
+  await cdp.evaluate(
     "document.querySelector('button[aria-label=\"Extensions\"]')?.click()",
   );
   const extensionsSidebarWidth = await poll(
@@ -386,11 +424,13 @@ try {
         portableUpdateStatus,
         extensionsSidebarWidth,
         quickSettingsState,
+        gallerySidebarState,
         toggledClosed,
         railCollapse,
         screenshotPath,
         updatesScreenshotPath,
         quickSettingsScreenshotPath,
+        galleryScreenshotPath,
       },
       null,
       2,
