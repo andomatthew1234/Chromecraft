@@ -24,6 +24,7 @@ function makePreferences(
     hyperdriveSearchPreloadingEnabled: false,
     hyperdriveExcludedHosts: [],
     hyperdriveMonitorOpen: false,
+    hyperdriveDeveloperMode: false,
     extensionDeveloperMode: false,
     ...patch,
   };

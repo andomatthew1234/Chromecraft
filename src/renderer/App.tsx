@@ -3769,10 +3769,12 @@ const HyperdriveDestination = memo(function HyperdriveDestination({
   );
 });
 
-const HyperdriveMonitor = memo(function HyperdriveMonitor({
+export const HyperdriveMonitor = memo(function HyperdriveMonitor({
   snapshot,
+  developerMode,
 }: {
   snapshot: HyperdriveSnapshot;
+  developerMode: boolean;
 }) {
   const [filter, setFilter] = useState<"all" | HyperdrivePreparationState>(
     "all",
@@ -3799,6 +3801,11 @@ const HyperdriveMonitor = memo(function HyperdriveMonitor({
     100,
     (estimatedUsageMb / Math.max(1, snapshot.ramBudgetMb)) * 100,
   );
+  const sliderMaximum = hyperdriveRamMaximum(
+    snapshot.totalMemoryMb,
+    snapshot.ramBudgetMb,
+  );
+  const enabled = snapshot.mode !== "off";
   const metrics = [
     ["Predictions", snapshot.metrics.activePredictions],
     ["Active preloads", snapshot.metrics.activePreloads],
@@ -3821,9 +3828,11 @@ const HyperdriveMonitor = memo(function HyperdriveMonitor({
           <Icon name="bolt" />
         </span>
         <span>
-          <h2>Hyperdrive Monitor</h2>
+          <h2>Hyperdrive</h2>
           <small id="hyperdrive-monitor-privacy">
-            Live diagnostics · not persisted
+            {developerMode
+              ? "Developer diagnostics · not persisted"
+              : "A simple view of your browsing boost"}
           </small>
         </span>
         <button
@@ -3841,6 +3850,50 @@ const HyperdriveMonitor = memo(function HyperdriveMonitor({
 
       <div className="hyperdrive-monitor-scroll">
         <section className="hyperdrive-status-card">
+          <label className="hyperdrive-primary-control">
+            <span>
+              <strong>Hyperdrive</strong>
+              <small>{enabled ? "On" : "Off"}</small>
+            </span>
+            <input
+              type="checkbox"
+              role="switch"
+              className="switch-input"
+              aria-label="Hyperdrive enabled"
+              checked={enabled}
+              onChange={(event) =>
+                void window.chromecraft.setHyperdriveMode(
+                  event.target.checked ? "balanced" : "off",
+                )
+              }
+            />
+          </label>
+          <label className="hyperdrive-sidebar-ram-control">
+            <span>
+              <strong>RAM limit</strong>
+              <output>{formatHyperdriveMemory(snapshot.ramBudgetMb)}</output>
+            </span>
+            <input
+              className="hyperdrive-ram-slider"
+              type="range"
+              min={64}
+              max={sliderMaximum}
+              step={64}
+              value={snapshot.ramBudgetMb}
+              disabled={!enabled}
+              aria-label="Hyperdrive RAM limit"
+              aria-valuetext={formatHyperdriveMemory(snapshot.ramBudgetMb)}
+              onChange={(event) =>
+                void window.chromecraft.setHyperdriveRamBudgetMb(
+                  Number(event.target.value),
+                )
+              }
+            />
+            <span className="hyperdrive-ram-scale" aria-hidden="true">
+              <span>64 MB</span>
+              <span>{formatHyperdriveMemory(sliderMaximum)}</span>
+            </span>
+          </label>
           <div className="hyperdrive-status-line">
             <span
               className="hyperdrive-live-indicator"
@@ -3853,35 +3906,43 @@ const HyperdriveMonitor = memo(function HyperdriveMonitor({
               </strong>
               <small>{humaniseHyperdriveValue(snapshot.mode)} mode</small>
             </span>
-            <span className="hyperdrive-status-actions">
-              <button
-                type="button"
-                className="monitor-icon-button"
-                onClick={() =>
-                  void window.chromecraft.setHyperdriveMonitorPaused(
-                    !snapshot.paused,
-                  )
-                }
-                aria-label={
-                  snapshot.paused ? "Resume live logging" : "Pause live logging"
-                }
-                aria-pressed={snapshot.paused}
-                title={
-                  snapshot.paused ? "Resume live logging" : "Pause live logging"
-                }
-              >
-                <Icon name={snapshot.paused ? "play" : "pause"} />
-              </button>
-              <button
-                type="button"
-                className="monitor-icon-button"
-                onClick={() => void window.chromecraft.clearHyperdriveEvents()}
-                aria-label="Clear Hyperdrive event history"
-                title="Clear event history"
-              >
-                <Icon name="delete" />
-              </button>
-            </span>
+            {developerMode && (
+              <span className="hyperdrive-status-actions">
+                <button
+                  type="button"
+                  className="monitor-icon-button"
+                  onClick={() =>
+                    void window.chromecraft.setHyperdriveMonitorPaused(
+                      !snapshot.paused,
+                    )
+                  }
+                  aria-label={
+                    snapshot.paused
+                      ? "Resume live logging"
+                      : "Pause live logging"
+                  }
+                  aria-pressed={snapshot.paused}
+                  title={
+                    snapshot.paused
+                      ? "Resume live logging"
+                      : "Pause live logging"
+                  }
+                >
+                  <Icon name={snapshot.paused ? "play" : "pause"} />
+                </button>
+                <button
+                  type="button"
+                  className="monitor-icon-button"
+                  onClick={() =>
+                    void window.chromecraft.clearHyperdriveEvents()
+                  }
+                  aria-label="Clear Hyperdrive event history"
+                  title="Clear event history"
+                >
+                  <Icon name="delete" />
+                </button>
+              </span>
+            )}
           </div>
           <div className="hyperdrive-memory-heading">
             <span>
@@ -3906,156 +3967,251 @@ const HyperdriveMonitor = memo(function HyperdriveMonitor({
           </div>
         )}
 
-        <section className="hyperdrive-monitor-section">
-          <div className="hyperdrive-section-heading">
-            <h3>Live metrics</h3>
-            <span>
-              rank {snapshot.metrics.rankingTimeMs.toFixed(3)} ms ·{" "}
-              {snapshot.metrics.predictionsEvaluated} candidates
-            </span>
-          </div>
-          <div className="hyperdrive-metrics-grid">
-            {metrics.map(([label, value]) => (
-              <div className="hyperdrive-metric" key={label}>
-                <strong>{value}</strong>
-                <span>{label}</span>
+        {!developerMode && (
+          <>
+            <section className="hyperdrive-monitor-section">
+              <div className="hyperdrive-section-heading">
+                <h3>This session</h3>
+                <span>Easy-to-read results</span>
               </div>
-            ))}
-          </div>
-          <dl className="hyperdrive-measurements">
-            <div>
-              <dt>Observed speculative transfer</dt>
-              <dd>
-                {snapshot.metrics.observedSpeculativeBytes !== null &&
-                snapshot.metrics.observedSpeculativeBytes > 0
-                  ? formatBytes(snapshot.metrics.observedSpeculativeBytes)
-                  : "Not attributable"}
-              </dd>
-            </div>
-            <div>
-              <dt>Main process private memory</dt>
-              <dd>{formatBytes(snapshot.metrics.processPrivateMemoryBytes)}</dd>
-            </div>
-            <div>
-              <dt>Navigation time saved</dt>
-              <dd>
-                {snapshot.metrics.navigationTimeSavedMs === null
-                  ? "Not proven"
-                  : formatDuration(snapshot.metrics.navigationTimeSavedMs)}
-              </dd>
-            </div>
-          </dl>
-        </section>
-
-        <section className="hyperdrive-monitor-section">
-          <div className="hyperdrive-section-heading">
-            <h3>Omnibox predictions</h3>
-            <span>{omniboxPredictions.length} active</span>
-          </div>
-          {omniboxPredictions.length > 0 ? (
-            <div className="hyperdrive-omnibox-list">
-              {omniboxPredictions.slice(0, 3).map((destination) => (
-                <div key={destination.id}>
-                  <span className="hyperdrive-site-mark" aria-hidden="true">
-                    {(destination.host[0] ?? "?").toUpperCase()}
-                  </span>
-                  <span>
-                    <strong>{destination.title}</strong>
-                    <small>
-                      {humaniseHyperdriveValue(destination.trigger)} ·{" "}
-                      {Math.round(destination.confidence * 100)}%
-                    </small>
-                  </span>
-                  <span className="hyperdrive-omnibox-state">
-                    {hyperdriveStateLabel(destination.state)}
-                  </span>
+              <div className="hyperdrive-insights-grid">
+                <div className="hyperdrive-insight">
+                  <strong>{snapshot.metrics.successfulPredictions}</strong>
+                  <span>Correct predictions</span>
+                  <small>Guesses that matched your next page</small>
                 </div>
-              ))}
-            </div>
-          ) : (
-            <p className="hyperdrive-empty-copy">
-              Start typing an address to see local predictions.
-            </p>
-          )}
-        </section>
+                <div className="hyperdrive-insight">
+                  <strong>{snapshot.metrics.cacheReuseSuccesses}</strong>
+                  <span>Cache wins</span>
+                  <small>Navigations that reused prepared data</small>
+                </div>
+                <div className="hyperdrive-insight">
+                  <strong>{snapshot.metrics.preparedDestinations}</strong>
+                  <span>Ready right now</span>
+                  <small>Likely destinations already prepared</small>
+                </div>
+                <div className="hyperdrive-insight">
+                  <strong>
+                    {snapshot.metrics.navigationTimeSavedMs === null
+                      ? "Learning"
+                      : formatDuration(snapshot.metrics.navigationTimeSavedMs)}
+                  </strong>
+                  <span>Proven time saved</span>
+                  <small>Only counted when Chromecraft can measure it</small>
+                </div>
+              </div>
+            </section>
 
-        <section className="hyperdrive-monitor-section">
-          <div className="hyperdrive-section-heading hyperdrive-destination-toolbar">
-            <h3>Destinations</h3>
-            <label className="hyperdrive-filter">
-              <Icon name="tune" />
-              <span className="visually-hidden">Filter preparation state</span>
-              <select
-                value={filter}
-                onChange={(event) =>
-                  setFilter(
-                    event.target.value as "all" | HyperdrivePreparationState,
-                  )
-                }
-                aria-label="Filter destinations by preparation state"
-              >
-                <option value="all">All states</option>
-                {hyperdriveStates.map((state) => (
-                  <option key={state} value={state}>
-                    {hyperdriveStateLabel(state)}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <div className="hyperdrive-destination-list">
-            {filteredDestinations.map((destination) => (
-              <HyperdriveDestination
-                destination={destination}
-                key={destination.id}
-              />
-            ))}
-            {filteredDestinations.length === 0 && (
-              <p className="hyperdrive-empty-copy">
-                No destinations match this filter.
+            <section className="hyperdrive-monitor-section hyperdrive-simple-summary">
+              <div className="hyperdrive-section-heading">
+                <h3>What Hyperdrive is doing</h3>
+              </div>
+              <ul>
+                <li>
+                  <Icon name="bolt" />
+                  <span>
+                    <strong>
+                      {snapshot.status === "off"
+                        ? "Waiting for you to turn it on"
+                        : snapshot.status === "memory-pressure"
+                          ? "Pausing to protect system memory"
+                          : snapshot.metrics.activePreloads > 0
+                            ? `Preparing ${snapshot.metrics.activePreloads} likely ${snapshot.metrics.activePreloads === 1 ? "page" : "pages"}`
+                            : "Ready for your next click"}
+                    </strong>
+                    <small>It works quietly while you browse.</small>
+                  </span>
+                </li>
+                <li>
+                  <Icon name="shield" />
+                  <span>
+                    <strong>Learning stays on this device</strong>
+                    <small>Your prediction history is not sent away.</small>
+                  </span>
+                </li>
+                <li>
+                  <Icon name="memory" />
+                  <span>
+                    <strong>
+                      Using about {estimatedUsageMb.toFixed(1)} MB of your{" "}
+                      {formatHyperdriveMemory(snapshot.ramBudgetMb)} limit
+                    </strong>
+                    <small>Low-value work is cleared before the limit.</small>
+                  </span>
+                </li>
+              </ul>
+              <p>
+                Want the technical feed? Turn on Hyperdrive Dev mode in
+                Settings.
               </p>
-            )}
-          </div>
-        </section>
+            </section>
+          </>
+        )}
 
-        <section className="hyperdrive-monitor-section hyperdrive-events-section">
-          <div className="hyperdrive-section-heading">
-            <h3>Event history</h3>
-            <span>
-              {snapshot.paused ? "Paused" : `${snapshot.events.length} events`}
-            </span>
-          </div>
-          <ol className="hyperdrive-event-list">
-            {snapshot.events.map((event) => (
-              <li className={event.warning ? "warning" : ""} key={event.id}>
-                <span
-                  className="hyperdrive-event-marker"
-                  data-state={event.state}
-                />
+        {developerMode && (
+          <>
+            <section className="hyperdrive-monitor-section">
+              <div className="hyperdrive-section-heading">
+                <h3>Live metrics</h3>
                 <span>
-                  <strong>{event.message}</strong>
-                  <small>
-                    {new Date(event.timestamp).toLocaleTimeString()} ·{" "}
-                    {hyperdriveStateLabel(event.state)}
-                    {event.host ? ` · ${event.host}` : ""}
-                  </small>
+                  rank {snapshot.metrics.rankingTimeMs.toFixed(3)} ms ·{" "}
+                  {snapshot.metrics.predictionsEvaluated} candidates
                 </span>
-              </li>
-            ))}
-            {snapshot.events.length === 0 && (
-              <li className="hyperdrive-empty-copy">No events recorded.</li>
-            )}
-          </ol>
-        </section>
+              </div>
+              <div className="hyperdrive-metrics-grid">
+                {metrics.map(([label, value]) => (
+                  <div className="hyperdrive-metric" key={label}>
+                    <strong>{value}</strong>
+                    <span>{label}</span>
+                  </div>
+                ))}
+              </div>
+              <dl className="hyperdrive-measurements">
+                <div>
+                  <dt>Observed speculative transfer</dt>
+                  <dd>
+                    {snapshot.metrics.observedSpeculativeBytes !== null &&
+                    snapshot.metrics.observedSpeculativeBytes > 0
+                      ? formatBytes(snapshot.metrics.observedSpeculativeBytes)
+                      : "Not attributable"}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Main process private memory</dt>
+                  <dd>
+                    {formatBytes(snapshot.metrics.processPrivateMemoryBytes)}
+                  </dd>
+                </div>
+                <div>
+                  <dt>Navigation time saved</dt>
+                  <dd>
+                    {snapshot.metrics.navigationTimeSavedMs === null
+                      ? "Not proven"
+                      : formatDuration(snapshot.metrics.navigationTimeSavedMs)}
+                  </dd>
+                </div>
+              </dl>
+            </section>
 
-        <button
-          type="button"
-          className="tonal-button hyperdrive-clear-work"
-          onClick={() => void window.chromecraft.clearHyperdriveSpeculation()}
-          disabled={snapshot.mode === "off"}
-        >
-          Clear speculative work
-        </button>
+            <section className="hyperdrive-monitor-section">
+              <div className="hyperdrive-section-heading">
+                <h3>Omnibox predictions</h3>
+                <span>{omniboxPredictions.length} active</span>
+              </div>
+              {omniboxPredictions.length > 0 ? (
+                <div className="hyperdrive-omnibox-list">
+                  {omniboxPredictions.slice(0, 3).map((destination) => (
+                    <div key={destination.id}>
+                      <span className="hyperdrive-site-mark" aria-hidden="true">
+                        {(destination.host[0] ?? "?").toUpperCase()}
+                      </span>
+                      <span>
+                        <strong>{destination.title}</strong>
+                        <small>
+                          {humaniseHyperdriveValue(destination.trigger)} ·{" "}
+                          {Math.round(destination.confidence * 100)}%
+                        </small>
+                      </span>
+                      <span className="hyperdrive-omnibox-state">
+                        {hyperdriveStateLabel(destination.state)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="hyperdrive-empty-copy">
+                  Start typing an address to see local predictions.
+                </p>
+              )}
+            </section>
+
+            <section className="hyperdrive-monitor-section">
+              <div className="hyperdrive-section-heading hyperdrive-destination-toolbar">
+                <h3>Destinations</h3>
+                <label className="hyperdrive-filter">
+                  <Icon name="tune" />
+                  <span className="visually-hidden">
+                    Filter preparation state
+                  </span>
+                  <select
+                    value={filter}
+                    onChange={(event) =>
+                      setFilter(
+                        event.target.value as
+                          | "all"
+                          | HyperdrivePreparationState,
+                      )
+                    }
+                    aria-label="Filter destinations by preparation state"
+                  >
+                    <option value="all">All states</option>
+                    {hyperdriveStates.map((state) => (
+                      <option key={state} value={state}>
+                        {hyperdriveStateLabel(state)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+              <div className="hyperdrive-destination-list">
+                {filteredDestinations.map((destination) => (
+                  <HyperdriveDestination
+                    destination={destination}
+                    key={destination.id}
+                  />
+                ))}
+                {filteredDestinations.length === 0 && (
+                  <p className="hyperdrive-empty-copy">
+                    No destinations match this filter.
+                  </p>
+                )}
+              </div>
+            </section>
+
+            <section className="hyperdrive-monitor-section hyperdrive-events-section">
+              <div className="hyperdrive-section-heading">
+                <h3>Event history</h3>
+                <span>
+                  {snapshot.paused
+                    ? "Paused"
+                    : `${snapshot.events.length} events`}
+                </span>
+              </div>
+              <ol className="hyperdrive-event-list">
+                {snapshot.events.map((event) => (
+                  <li className={event.warning ? "warning" : ""} key={event.id}>
+                    <span
+                      className="hyperdrive-event-marker"
+                      data-state={event.state}
+                    />
+                    <span>
+                      <strong>{event.message}</strong>
+                      <small>
+                        {new Date(event.timestamp).toLocaleTimeString()} ·{" "}
+                        {hyperdriveStateLabel(event.state)}
+                        {event.host ? ` · ${event.host}` : ""}
+                      </small>
+                    </span>
+                  </li>
+                ))}
+                {snapshot.events.length === 0 && (
+                  <li className="hyperdrive-empty-copy">No events recorded.</li>
+                )}
+              </ol>
+            </section>
+
+            <button
+              type="button"
+              className="tonal-button hyperdrive-clear-work"
+              onClick={() =>
+                void window.chromecraft.clearHyperdriveSpeculation()
+              }
+              disabled={snapshot.mode === "off"}
+            >
+              Clear speculative work
+            </button>
+          </>
+        )}
       </div>
     </aside>
   );
@@ -4920,7 +5076,10 @@ export function App() {
         />
       )}
       {snapshot.preferences.hyperdriveMonitorOpen && (
-        <HyperdriveMonitor snapshot={hyperdrive} />
+        <HyperdriveMonitor
+          snapshot={hyperdrive}
+          developerMode={snapshot.preferences.hyperdriveDeveloperMode}
+        />
       )}
       {paletteOpen && (
         <CommandPalette

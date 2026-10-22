@@ -764,6 +764,14 @@ function registerIpc(): void {
     },
   );
   ipcMain.handle(
+    channels.setHyperdriveDeveloperMode,
+    async (event, enabled: unknown) => {
+      if (typeof enabled !== "boolean")
+        throw new TypeError("enabled must be boolean.");
+      await requireManager(event).setHyperdriveDeveloperMode(enabled);
+    },
+  );
+  ipcMain.handle(
     channels.setHyperdriveMonitorPaused,
     (event, paused: unknown) => {
       if (typeof paused !== "boolean")

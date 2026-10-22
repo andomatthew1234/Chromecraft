@@ -26,6 +26,7 @@ describe("PreferencesStore search suggestions", () => {
       hyperdriveSearchPreloadingEnabled: false,
       hyperdriveExcludedHosts: [],
       hyperdriveMonitorOpen: false,
+      hyperdriveDeveloperMode: false,
     });
   });
 
@@ -62,6 +63,7 @@ describe("PreferencesStore search suggestions", () => {
       "news.example.org",
     ]);
     await preferences.setHyperdriveMonitorOpen(true);
+    await preferences.setHyperdriveDeveloperMode(true);
 
     const reloaded = new PreferencesStore(filePath);
     await reloaded.load();
@@ -72,6 +74,7 @@ describe("PreferencesStore search suggestions", () => {
       hyperdriveSearchPreloadingEnabled: true,
       hyperdriveExcludedHosts: ["example.com", "news.example.org"],
       hyperdriveMonitorOpen: true,
+      hyperdriveDeveloperMode: true,
     });
   });
 
@@ -90,6 +93,7 @@ describe("PreferencesStore search suggestions", () => {
           42,
         ],
         hyperdriveMonitorOpen: "true",
+        hyperdriveDeveloperMode: "true",
       }),
       "utf8",
     );
@@ -103,6 +107,7 @@ describe("PreferencesStore search suggestions", () => {
       hyperdriveSearchPreloadingEnabled: false,
       hyperdriveExcludedHosts: ["valid.example"],
       hyperdriveMonitorOpen: false,
+      hyperdriveDeveloperMode: false,
     });
   });
 

@@ -294,6 +294,7 @@ try {
         hyperdriveMode: snapshot.preferences.hyperdriveMode,
         hyperdriveRamBudgetMb: snapshot.preferences.hyperdriveRamBudgetMb,
         hyperdriveMonitorOpen: snapshot.preferences.hyperdriveMonitorOpen,
+        hyperdriveDeveloperMode: snapshot.preferences.hyperdriveDeveloperMode,
       },
     };
   })()`);

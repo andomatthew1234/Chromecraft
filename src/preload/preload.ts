@@ -104,6 +104,11 @@ const api: ChromecraftApi = {
       channels.setHyperdriveMonitorOpen,
       open,
     ) as Promise<void>,
+  setHyperdriveDeveloperMode: (enabled) =>
+    ipcRenderer.invoke(
+      channels.setHyperdriveDeveloperMode,
+      enabled,
+    ) as Promise<void>,
   setHyperdriveMonitorPaused: (paused) =>
     ipcRenderer.invoke(
       channels.setHyperdriveMonitorPaused,

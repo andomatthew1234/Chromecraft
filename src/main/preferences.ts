@@ -22,6 +22,7 @@ export interface BrowserPreferences {
   hyperdriveSearchPreloadingEnabled: boolean;
   hyperdriveExcludedHosts: string[];
   hyperdriveMonitorOpen: boolean;
+  hyperdriveDeveloperMode: boolean;
   extensionDeveloperMode: boolean;
 }
 
@@ -40,6 +41,7 @@ const defaults: BrowserPreferences = {
   hyperdriveSearchPreloadingEnabled: false,
   hyperdriveExcludedHosts: [],
   hyperdriveMonitorOpen: false,
+  hyperdriveDeveloperMode: false,
   extensionDeveloperMode: false,
 };
 
@@ -147,6 +149,10 @@ export class PreferencesStore {
           typeof parsed.hyperdriveMonitorOpen === "boolean"
             ? parsed.hyperdriveMonitorOpen
             : defaults.hyperdriveMonitorOpen,
+        hyperdriveDeveloperMode:
+          typeof parsed.hyperdriveDeveloperMode === "boolean"
+            ? parsed.hyperdriveDeveloperMode
+            : defaults.hyperdriveDeveloperMode,
         extensionDeveloperMode:
           typeof parsed.extensionDeveloperMode === "boolean"
             ? parsed.extensionDeveloperMode
@@ -225,6 +231,10 @@ export class PreferencesStore {
 
   async setHyperdriveMonitorOpen(open: boolean): Promise<void> {
     await this.update({ hyperdriveMonitorOpen: open });
+  }
+
+  async setHyperdriveDeveloperMode(enabled: boolean): Promise<void> {
+    await this.update({ hyperdriveDeveloperMode: enabled });
   }
 
   async setExtensionDeveloperMode(enabled: boolean): Promise<void> {

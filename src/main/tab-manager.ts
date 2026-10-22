@@ -382,6 +382,8 @@ export class TabManager {
           ...this.preferences.snapshot.hyperdriveExcludedHosts,
         ],
         hyperdriveMonitorOpen: this.preferences.snapshot.hyperdriveMonitorOpen,
+        hyperdriveDeveloperMode:
+          this.preferences.snapshot.hyperdriveDeveloperMode,
         extensionDeveloperMode:
           this.preferences.snapshot.extensionDeveloperMode,
       },
@@ -900,6 +902,12 @@ export class TabManager {
   async setHyperdriveMonitorOpen(open: boolean): Promise<void> {
     await this.hyperdrive.setMonitorOpen(open);
     this.layoutActiveView();
+    this.emitSnapshot();
+  }
+
+  async setHyperdriveDeveloperMode(enabled: boolean): Promise<void> {
+    await this.preferences.setHyperdriveDeveloperMode(enabled);
+    if (!enabled) this.hyperdrive.setMonitorPaused(false);
     this.emitSnapshot();
   }
 

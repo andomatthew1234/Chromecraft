@@ -68,6 +68,7 @@ export interface BrowserPreferencesSnapshot {
   hyperdriveSearchPreloadingEnabled: boolean;
   hyperdriveExcludedHosts: string[];
   hyperdriveMonitorOpen: boolean;
+  hyperdriveDeveloperMode: boolean;
   extensionDeveloperMode: boolean;
 }
 
@@ -362,6 +363,7 @@ export interface ChromecraftApi {
   setHyperdriveSearchPreloadingEnabled(enabled: boolean): Promise<void>;
   setHyperdriveExcludedHosts(hosts: string[]): Promise<void>;
   setHyperdriveMonitorOpen(open: boolean): Promise<void>;
+  setHyperdriveDeveloperMode(enabled: boolean): Promise<void>;
   setHyperdriveMonitorPaused(paused: boolean): Promise<void>;
   clearHyperdriveSpeculation(): Promise<void>;
   clearHyperdriveEvents(): Promise<void>;

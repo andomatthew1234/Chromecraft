@@ -35,6 +35,7 @@ export const channels = {
     "hyperdrive:set-search-preloading-enabled",
   setHyperdriveExcludedHosts: "hyperdrive:set-excluded-hosts",
   setHyperdriveMonitorOpen: "hyperdrive:set-monitor-open",
+  setHyperdriveDeveloperMode: "hyperdrive:set-developer-mode",
   setHyperdriveMonitorPaused: "hyperdrive:set-monitor-paused",
   clearHyperdriveSpeculation: "hyperdrive:clear-speculation",
   clearHyperdriveEvents: "hyperdrive:clear-events",
