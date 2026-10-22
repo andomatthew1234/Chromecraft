@@ -4,4 +4,5 @@ node_modules/
 out/
 *.log
 .ubo-*
+resources/media-tools/bin/
 unused-in-controller-tests.json.*.tmp

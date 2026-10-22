@@ -5,12 +5,24 @@ import { MakerZIP } from "@electron-forge/maker-zip";
 import { FusesPlugin } from "@electron-forge/plugin-fuses";
 import { VitePlugin } from "@electron-forge/plugin-vite";
 import { FuseV1Options, FuseVersion } from "@electron/fuses";
+import { execFile } from "node:child_process";
+import path from "node:path";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
-    extraResource: ["resources/extensions"],
+    extraResource: ["resources/extensions", "resources/media-tools"],
     executableName: "chromecraft",
+  },
+  hooks: {
+    generateAssets: async () => {
+      await execFileAsync(process.execPath, [
+        path.resolve("scripts/prepare-media-tools.mjs"),
+      ]);
+    },
   },
   makers: [
     new MakerSquirrel(

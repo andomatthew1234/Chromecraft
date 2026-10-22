@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "ytDlpVersion": "2026.10.21",
+  "denoVersion": "2.9.8",
+  "platforms": {
+    "win32-x64": {
+      "ytDlp": {
+        "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.10.21/yt-dlp.exe",
+        "sha256": "33121d192d706e62f684a06f80918e3f3a8ba52ac3a65213b6951c39c7d9f555",
+        "filename": "yt-dlp.exe"
+      },
+      "deno": {
+        "url": "https://github.com/denoland/deno/releases/download/v2.9.8/deno-x86_64-pc-windows-msvc.zip",
+        "sha256": "cba84b26e0df5ae7f74fc66b86a95b866872a86292ebd84fa1e959927edd93bf",
+        "filename": "deno.exe",
+        "archive": true
+      }
+    },
+    "linux-x64": {
+      "ytDlp": {
+        "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.10.21/yt-dlp_linux",
+        "sha256": "d8bd33fca9d5b23bd5b9952b3fca36db5c46331933fda9f598a3da14ce2c243f",
+        "filename": "yt-dlp"
+      },
+      "deno": {
+        "url": "https://github.com/denoland/deno/releases/download/v2.9.8/deno-x86_64-unknown-linux-gnu.zip",
+        "sha256": "e890975bc2549807bbcc0b584ffafda72cc7c93349dd99c80483dd784f6c4609",
+        "filename": "deno",
+        "archive": true
+      }
+    }
+  }
+}

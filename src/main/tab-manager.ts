@@ -24,6 +24,7 @@ import type {
   NewTabTheme,
   TabId,
   WebStoreListingSnapshot,
+  YouTubeWatchSnapshot,
 } from "../shared/browser";
 import { channels } from "../shared/channels";
 import {
@@ -32,6 +33,7 @@ import {
   resolveNavigationInput,
 } from "../shared/navigation";
 import { parseChromeWebStoreListingUrl } from "../shared/web-store-listing";
+import { parseYouTubeWatchUrl } from "../shared/youtube-watch";
 import { sidebarWidth } from "../shared/sidebar";
 import { BrowserDataStore } from "./browser-data";
 import { ChromeWebStoreExtensionService } from "./chrome-web-store-extension-service";
@@ -49,6 +51,7 @@ import type { ActiveWebsitePermissionContext } from "./website-permission-contro
 export const SHELL_HEIGHT = 104;
 export const BOOKMARK_BAR_HEIGHT = 32;
 export const EXTENSION_INSTALL_BANNER_HEIGHT = 88;
+export const YOUTUBE_DOWNLOAD_BANNER_HEIGHT = 48;
 export const HYPERDRIVE_MONITOR_WIDTH = 372;
 const SESSION_WRITE_DELAY_MS = 300;
 const EXTENSION_WINDOW_NAME_PREFIX = "__chromecraft_extension_window_";
@@ -84,6 +87,7 @@ interface TabRecord {
   nextHistoryEntryTyped: boolean;
   documentEpoch: number;
   dismissedWebStoreExtensionId: string | null;
+  dismissedYouTubeVideoId: string | null;
   webStoreListingTitle: string | null;
   webStoreListingDescription: string | null;
 }
@@ -390,6 +394,7 @@ export class TabManager {
       baseChromeHeight: this.baseChromeHeight,
       chromeHeight: this.chromeHeight,
       webStoreListing: this.activeWebStoreListing,
+      youtubeWatch: this.activeYouTubeWatch,
     };
   }
 
@@ -466,6 +471,27 @@ export class TabManager {
       throw new Error("The requested Web Store banner is no longer active.");
     }
     tab.dismissedWebStoreExtensionId = extensionId;
+    if (tab.id === this.activeTabId) this.layoutActiveView();
+    this.emitSnapshot();
+  }
+
+  getActiveYouTubeDownloadTarget(tabId: TabId): YouTubeWatchSnapshot {
+    if (tabId !== this.activeTabId) {
+      throw new Error("The selected tab is no longer active.");
+    }
+    const tab = this.requireTab(tabId);
+    const target = parseYouTubeWatchUrl(tab.url);
+    if (!target) throw new Error("The active page is not a YouTube video.");
+    return target;
+  }
+
+  dismissYouTubeDownloadBanner(tabId: TabId, videoId: string): void {
+    const tab = this.requireTab(tabId);
+    const target = parseYouTubeWatchUrl(tab.url);
+    if (!target || target.videoId !== videoId) {
+      throw new Error("The requested YouTube banner is no longer active.");
+    }
+    tab.dismissedYouTubeVideoId = videoId;
     if (tab.id === this.activeTabId) this.layoutActiveView();
     this.emitSnapshot();
   }
@@ -1081,6 +1107,7 @@ export class TabManager {
       nextHistoryEntryTyped: false,
       documentEpoch: 0,
       dismissedWebStoreExtensionId: null,
+      dismissedYouTubeVideoId: null,
       webStoreListingTitle: null,
       webStoreListingDescription: null,
     };
@@ -1105,6 +1132,7 @@ export class TabManager {
     // creation through the first navigation.
     const view = this.ensureView(tab);
     this.resetWebStoreVisitIfChanged(tab, target);
+    this.resetYouTubeVisitIfChanged(tab, target);
     tab.title = "Loading…";
     tab.url = target;
     tab.requestedUrl = target;
@@ -1604,6 +1632,7 @@ export class TabManager {
     if (!this.tabs.has(tab.id) || url.startsWith("chromecraft://error")) return;
     if (isAllowedWebUrl(url) || this.isAllowedInternalUrl(url)) {
       this.resetWebStoreVisitIfChanged(tab, url);
+      this.resetYouTubeVisitIfChanged(tab, url);
       tab.url = url;
       tab.requestedUrl = url;
       tab.error = null;
@@ -1621,6 +1650,13 @@ export class TabManager {
     tab.dismissedWebStoreExtensionId = null;
     tab.webStoreListingTitle = null;
     tab.webStoreListingDescription = null;
+  }
+
+  private resetYouTubeVisitIfChanged(tab: TabRecord, nextUrl: string): void {
+    const previousId = parseYouTubeWatchUrl(tab.url)?.videoId;
+    const nextId = parseYouTubeWatchUrl(nextUrl)?.videoId;
+    if (previousId === nextId) return;
+    tab.dismissedYouTubeVideoId = null;
   }
 
   private async refreshWebStoreListingMetadata(
@@ -1808,7 +1844,8 @@ export class TabManager {
   private get chromeHeight(): number {
     return (
       this.baseChromeHeight +
-      (this.activeWebStoreListing ? EXTENSION_INSTALL_BANNER_HEIGHT : 0)
+      (this.activeWebStoreListing ? EXTENSION_INSTALL_BANNER_HEIGHT : 0) +
+      (this.activeYouTubeWatch ? YOUTUBE_DOWNLOAD_BANNER_HEIGHT : 0)
     );
   }
 
@@ -1837,6 +1874,15 @@ export class TabManager {
       title: tab.webStoreListingTitle || fallbackTitle,
       description: tab.webStoreListingDescription,
     };
+  }
+
+  private get activeYouTubeWatch(): YouTubeWatchSnapshot | null {
+    if (this.window.isFullScreen()) return null;
+    const tab = this.tabs.get(this.activeTabId);
+    if (!tab) return null;
+    const target = parseYouTubeWatchUrl(tab.url);
+    if (!target || tab.dismissedYouTubeVideoId === target.videoId) return null;
+    return target;
   }
 
   private layoutActiveView(): void {

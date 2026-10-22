@@ -8,6 +8,7 @@
   "private": true,
   "scripts": {
     "start": "electron-forge start",
+    "prepare:media-tools": "node scripts/prepare-media-tools.mjs",
     "package": "electron-forge package",
     "package:win": "electron-forge package --platform=win32 --arch=x64",
     "package:linux": "electron-forge package --platform=linux --arch=x64",
@@ -26,6 +27,7 @@
     "test:toolbar": "node scripts/test-toolbar.mjs",
     "test:fullscreen:win": "node scripts/test-packaged-fullscreen.mjs --platform=win32",
     "test:fullscreen:linux": "node scripts/test-packaged-fullscreen.mjs --platform=linux",
+    "test:youtube-utility:win": "node scripts/test-youtube-utility.mjs",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "lint": "pnpm typecheck && prettier --check .",

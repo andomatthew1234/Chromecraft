@@ -10,7 +10,7 @@ export type UpdateStatus =
   | "error";
 
 export interface InstalledVersionSnapshot {
-  id: "chromecraft" | "electron" | "chromium" | "node";
+  id: "chromecraft" | "electron" | "chromium" | "node" | "yt-dlp";
   label: string;
   version: string;
 }

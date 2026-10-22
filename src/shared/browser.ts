@@ -23,6 +23,38 @@ export interface WebStoreListingSnapshot {
   description: string | null;
 }
 
+export interface YouTubeWatchSnapshot {
+  videoId: string;
+  url: string;
+}
+
+export type YouTubeDownloadStage =
+  | "downloading"
+  | "finishing"
+  | "completed"
+  | "cancelled"
+  | "failed";
+
+export interface YouTubeDownloadItemSnapshot {
+  id: string;
+  videoId: string;
+  sourceUrl: string;
+  filename: string | null;
+  stage: YouTubeDownloadStage;
+  percent: number | null;
+  receivedBytes: number;
+  totalBytes: number;
+  error: string | null;
+  startedAt: number;
+  finishedAt: number | null;
+}
+
+export interface YouTubeDownloadsSnapshot {
+  available: boolean;
+  ytDlpVersion: string;
+  items: YouTubeDownloadItemSnapshot[];
+}
+
 export type NewTabTheme = "overworld" | "nether" | "end" | "minimal";
 export type SearchEngine = "duckduckgo";
 export type HyperdriveMode = "off" | "balanced" | "aggressive" | "maximum";
@@ -244,6 +276,7 @@ export interface BrowserSnapshot {
   baseChromeHeight: number;
   chromeHeight: number;
   webStoreListing: WebStoreListingSnapshot | null;
+  youtubeWatch: YouTubeWatchSnapshot | null;
 }
 
 export interface BookmarkEntry {
@@ -398,6 +431,9 @@ export interface ChromecraftApi {
   addQuickLink(input: QuickLinkInput): Promise<void>;
   removeQuickLink(id: string): Promise<void>;
   getDownloads(): Promise<DownloadSnapshot>;
+  getYouTubeDownloads(): Promise<YouTubeDownloadsSnapshot>;
+  downloadActiveYouTubeVideo(tabId: TabId): Promise<string>;
+  dismissYouTubeDownloadBanner(tabId: TabId, videoId: string): Promise<void>;
   pauseDownload(id: string): Promise<void>;
   resumeDownload(id: string): Promise<void>;
   retryDownload(id: string): Promise<void>;
@@ -412,6 +448,9 @@ export interface ChromecraftApi {
   onSnapshot(listener: (snapshot: BrowserSnapshot) => void): () => void;
   onBrowserData(listener: (snapshot: BrowserDataSnapshot) => void): () => void;
   onDownloads(listener: (snapshot: DownloadSnapshot) => void): () => void;
+  onYouTubeDownloads(
+    listener: (snapshot: YouTubeDownloadsSnapshot) => void,
+  ): () => void;
   onFindResult(listener: (snapshot: FindResultSnapshot) => void): () => void;
   onShowFind(listener: () => void): () => void;
   onOpenCommandPalette(listener: () => void): () => void;

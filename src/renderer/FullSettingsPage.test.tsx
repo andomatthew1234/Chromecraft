@@ -15,6 +15,7 @@ const snapshot: BrowserSnapshot = {
   baseChromeHeight: 104,
   chromeHeight: 104,
   webStoreListing: null,
+  youtubeWatch: null,
   ublock: {
     enabled: true,
     initializing: false,

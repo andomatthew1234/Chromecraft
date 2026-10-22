@@ -26,6 +26,7 @@ import type {
   HyperdriveSnapshot,
   NewTabTheme,
   UblockSnapshot,
+  YouTubeDownloadsSnapshot,
 } from "../shared/browser";
 import { resolveNavigationInput } from "../shared/navigation";
 import {
@@ -40,6 +41,7 @@ import {
   type ExtensionInstallBannerState,
 } from "./ExtensionInstallBanner";
 import { ExpressiveLoadingIndicator } from "./ExpressiveLoadingIndicator";
+import { YouTubeDownloadBanner } from "./YouTubeDownloadBanner";
 import {
   deriveDownloadIndicator,
   didAnyDownloadComplete,
@@ -68,6 +70,11 @@ const emptyData: BrowserDataSnapshot = {
   quickLinks: [],
 };
 const emptyDownloads: DownloadSnapshot = { items: [] };
+const emptyYouTubeDownloads: YouTubeDownloadsSnapshot = {
+  available: false,
+  ytDlpVersion: "",
+  items: [],
+};
 const emptyExtensions: ExtensionsSnapshot = {
   initialized: false,
   operation: "idle",
@@ -4627,6 +4634,9 @@ export function App() {
   const [hyperdrive, setHyperdrive] = useState<HyperdriveSnapshot | null>(null);
   const [data, setData] = useState(emptyData);
   const [downloads, setDownloads] = useState(emptyDownloads);
+  const [youtubeDownloads, setYouTubeDownloads] = useState(
+    emptyYouTubeDownloads,
+  );
   const [extensions, setExtensions] = useState(emptyExtensions);
   const [updates, setUpdates] = useState<UpdateSnapshot | null>(null);
   const [tool, setTool] = useState<SidebarTool | null>(null);
@@ -4657,6 +4667,7 @@ export function App() {
       window.chromecraft.getHyperdriveSnapshot(),
       window.chromecraft.getExtensions(),
       window.chromecraft.getUpdateSnapshot(),
+      window.chromecraft.getYouTubeDownloads(),
     ]).then(
       ([
         nextSnapshot,
@@ -4665,6 +4676,7 @@ export function App() {
         nextHyperdrive,
         nextExtensions,
         nextUpdates,
+        nextYouTubeDownloads,
       ]) => {
         if (mounted) {
           setSnapshot(nextSnapshot);
@@ -4674,6 +4686,7 @@ export function App() {
           setHyperdrive(nextHyperdrive);
           setExtensions(nextExtensions);
           setUpdates(nextUpdates);
+          setYouTubeDownloads(nextYouTubeDownloads);
         }
       },
     );
@@ -4687,6 +4700,7 @@ export function App() {
       window.chromecraft.onHyperdriveSnapshot(setHyperdrive),
       window.chromecraft.onExtensions(setExtensions),
       window.chromecraft.onUpdateSnapshot(setUpdates),
+      window.chromecraft.onYouTubeDownloads(setYouTubeDownloads),
       window.chromecraft.onShowFind(() => setFindOpen(true)),
       window.chromecraft.onOpenCommandPalette(() => setPaletteOpen(true)),
     ];
@@ -4803,6 +4817,12 @@ export function App() {
     }
   };
   const listing = snapshot.webStoreListing;
+  const youtubeWatch = snapshot.youtubeWatch;
+  const youtubeDownload = youtubeWatch
+    ? (youtubeDownloads.items.find(
+        (item) => item.videoId === youtubeWatch.videoId,
+      ) ?? null)
+    : null;
   const installedListingExtension = listing
     ? extensions.items.find((extension) => extension.id === listing.extensionId)
     : undefined;
@@ -5023,6 +5043,21 @@ export function App() {
               void window.chromecraft.dismissWebStoreInstallBanner(
                 activeTab.id,
                 listing.extensionId,
+              );
+            }}
+          />
+        )}
+        {youtubeWatch && (
+          <YouTubeDownloadBanner
+            available={youtubeDownloads.available}
+            download={youtubeDownload}
+            onDownload={() => {
+              void window.chromecraft.downloadActiveYouTubeVideo(activeTab.id);
+            }}
+            onDismiss={() => {
+              void window.chromecraft.dismissYouTubeDownloadBanner(
+                activeTab.id,
+                youtubeWatch.videoId,
               );
             }}
           />

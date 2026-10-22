@@ -241,6 +241,7 @@ export class UpdateManager {
 const applicationIncludes = [
   "Electron engine",
   "Chromium engine",
+  "yt-dlp and its Deno runtime",
   "Node.js runtime",
   "Application dependencies",
 ];

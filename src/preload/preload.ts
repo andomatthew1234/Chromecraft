@@ -10,6 +10,7 @@ import type {
   FindResultSnapshot,
   HyperdriveSnapshot,
   TabId,
+  YouTubeDownloadsSnapshot,
 } from "../shared/browser";
 import { channels } from "../shared/channels";
 import type { UpdateSnapshot } from "../shared/updates";
@@ -197,6 +198,18 @@ const api: ChromecraftApi = {
     ipcRenderer.invoke(channels.removeQuickLink, id) as Promise<void>,
   getDownloads: () =>
     ipcRenderer.invoke(channels.getDownloads) as Promise<DownloadSnapshot>,
+  getYouTubeDownloads: () =>
+    ipcRenderer.invoke(
+      channels.getYouTubeDownloads,
+    ) as Promise<YouTubeDownloadsSnapshot>,
+  downloadActiveYouTubeVideo: (tabId) =>
+    ipcRenderer.invoke(channels.startYouTubeDownload, tabId) as Promise<string>,
+  dismissYouTubeDownloadBanner: (tabId, videoId) =>
+    ipcRenderer.invoke(
+      channels.dismissYouTubeDownloadBanner,
+      tabId,
+      videoId,
+    ) as Promise<void>,
   pauseDownload: (id) =>
     ipcRenderer.invoke(channels.pauseDownload, id) as Promise<void>,
   resumeDownload: (id) =>
@@ -243,6 +256,15 @@ const api: ChromecraftApi = {
     ) => listener(snapshot);
     ipcRenderer.on(channels.downloadsChanged, handler);
     return () => ipcRenderer.removeListener(channels.downloadsChanged, handler);
+  },
+  onYouTubeDownloads: (listener) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      snapshot: YouTubeDownloadsSnapshot,
+    ) => listener(snapshot);
+    ipcRenderer.on(channels.youtubeDownloadsChanged, handler);
+    return () =>
+      ipcRenderer.removeListener(channels.youtubeDownloadsChanged, handler);
   },
   onFindResult: (listener) => {
     const handler = (

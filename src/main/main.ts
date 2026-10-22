@@ -29,6 +29,7 @@ import type {
   HyperdriveOmniboxSignal,
   NewTabTheme,
   QuickLinkInput,
+  YouTubeDownloadsSnapshot,
 } from "../shared/browser";
 import { isAllowedWebUrl } from "../shared/navigation";
 import { BrowserDataStore } from "./browser-data";
@@ -52,6 +53,10 @@ import { SearchSuggestionService } from "./search-suggestions";
 import { TabManager } from "./tab-manager";
 import { UblockService } from "./ublock-service";
 import { UpdateManager } from "./update-manager";
+import {
+  YouTubeDownloadService,
+  YT_DLP_VERSION,
+} from "./youtube-download-service";
 import { parseChromeWebStoreListingUrl } from "../shared/web-store-listing";
 import {
   WebsitePermissionController,
@@ -120,6 +125,7 @@ let updateShutdownPromise: Promise<void> | null = null;
 let ipcRegistered = false;
 let updateManager: UpdateManager | null = null;
 let websitePermissionController: WebsitePermissionController | null = null;
+let youtubeDownloadService: YouTubeDownloadService | null = null;
 
 async function promptForWebsitePermission(
   request: WebsitePermissionPrompt,
@@ -176,6 +182,7 @@ function prepareForUpdateRestart(): Promise<void> {
   updateShutdownPromise = Promise.all([
     tabManager?.flushSession() ?? Promise.resolve(),
     downloadManager?.dispose() ?? Promise.resolve(),
+    youtubeDownloadService?.dispose() ?? Promise.resolve(),
   ]).then(() => {
     updateRestartPrepared = true;
   });
@@ -429,6 +436,16 @@ function requireDownloads(event: IpcMainInvokeEvent): DownloadManager {
   requireTrusted(event);
   if (!downloadManager) throw new Error("Downloads are not ready.");
   return downloadManager;
+}
+
+function requireYouTubeDownloads(
+  event: IpcMainInvokeEvent,
+): YouTubeDownloadService {
+  requireTrusted(event);
+  if (!youtubeDownloadService) {
+    throw new Error("YouTube downloads are not ready.");
+  }
+  return youtubeDownloadService;
 }
 
 function requireString(value: unknown, name: string, maximum = 8_192): string {
@@ -1070,6 +1087,29 @@ function registerIpc(): void {
   ipcMain.handle(channels.getDownloads, (event) =>
     mapDownloads(requireDownloads(event).snapshot),
   );
+  ipcMain.handle(
+    channels.getYouTubeDownloads,
+    (event) => requireYouTubeDownloads(event).snapshot,
+  );
+  ipcMain.handle(
+    channels.startYouTubeDownload,
+    async (event, tabId: unknown) => {
+      const manager = requireManager(event);
+      const target = manager.getActiveYouTubeDownloadTarget(
+        requireString(tabId, "tabId", 128),
+      );
+      return requireYouTubeDownloads(event).start(target);
+    },
+  );
+  ipcMain.handle(
+    channels.dismissYouTubeDownloadBanner,
+    (event, tabId: unknown, videoId: unknown) => {
+      requireManager(event).dismissYouTubeDownloadBanner(
+        requireString(tabId, "tabId", 128),
+        requireString(videoId, "videoId", 64),
+      );
+    },
+  );
   ipcMain.handle(channels.pauseDownload, (event, id: unknown) => {
     requireDownloads(event).pause(requireString(id, "id", 128));
   });
@@ -1239,6 +1279,7 @@ async function createMainWindow(): Promise<void> {
       },
       { id: "chromium", label: "Chromium", version: process.versions.chrome },
       { id: "node", label: "Node.js", version: process.versions.node },
+      { id: "yt-dlp", label: "yt-dlp", version: YT_DLP_VERSION },
     ],
     emit: sendUpdateSnapshot,
     prepareForRestart: prepareForUpdateRestart,
@@ -1322,6 +1363,45 @@ async function createMainWindow(): Promise<void> {
   await downloads.initialize();
   downloadManager = downloads;
 
+  const youtubeDownloads = new YouTubeDownloadService({
+    downloadsDirectory: smokeUserData
+      ? path.join(app.getPath("userData"), "downloads")
+      : app.getPath("downloads"),
+    toolsDirectory: app.isPackaged
+      ? path.join(process.resourcesPath, "media-tools")
+      : path.join(app.getAppPath(), "resources", "media-tools"),
+    onChange: (snapshot: YouTubeDownloadsSnapshot) => {
+      if (!view.webContents.isDestroyed()) {
+        view.webContents.send(channels.youtubeDownloadsChanged, snapshot);
+      }
+    },
+    onCompleted: (item, savePath) => {
+      try {
+        downloads.recordCompletedExternalDownload({
+          url: item.sourceUrl,
+          savePath,
+          mimeType:
+            path.extname(savePath).toLowerCase() === ".webm"
+              ? "video/webm"
+              : "video/mp4",
+          startedAt: item.startedAt,
+          endedAt: item.finishedAt ?? undefined,
+        });
+      } catch (error) {
+        console.warn(
+          "Could not add the YouTube video to download history.",
+          error,
+        );
+      }
+    },
+  });
+  youtubeDownloadService = youtubeDownloads;
+  try {
+    await youtubeDownloads.initialize();
+  } catch (error) {
+    console.error("Bundled YouTube downloader is unavailable.", error);
+  }
+
   const hyperdrive = new HyperdriveController(browserSession, preferences, {
     learningFilePath: path.join(
       app.getPath("userData"),
@@ -1397,12 +1477,14 @@ async function createMainWindow(): Promise<void> {
       return;
     }
     event.preventDefault();
-    void Promise.all([manager.flushSession(), downloads.dispose()]).finally(
-      () => {
-        closingApproved = true;
-        window.close();
-      },
-    );
+    void Promise.all([
+      manager.flushSession(),
+      youtubeDownloads.dispose(),
+      downloads.dispose(),
+    ]).finally(() => {
+      closingApproved = true;
+      window.close();
+    });
   });
   window.on("closed", () => {
     actionHost.dispose();
@@ -1422,6 +1504,7 @@ async function createMainWindow(): Promise<void> {
       updateManager = null;
       websitePermissionController?.clear();
       websitePermissionController = null;
+      youtubeDownloadService = null;
     }
   });
 
@@ -1462,6 +1545,29 @@ async function createMainWindow(): Promise<void> {
     console.info(JSON.stringify(report));
     app.exit(report.success ? 0 : 1);
     return;
+  }
+
+  const youtubeSmokeUrl = argumentValue("chromecraft-youtube-smoke-url");
+  const youtubeSmokeReport = argumentValue("chromecraft-youtube-smoke-report");
+  const youtubeSmokeScreenshot = argumentValue(
+    "chromecraft-youtube-smoke-screenshot",
+  );
+  if (youtubeSmokeUrl && youtubeSmokeReport && youtubeSmokeScreenshot) {
+    await ublockInitialization;
+    const { runYouTubeUtilitySmoke } = await import("./youtube-utility-smoke");
+    const success = await runYouTubeUtilitySmoke(
+      manager,
+      downloads,
+      youtubeDownloads,
+      {
+        url: youtubeSmokeUrl,
+        reportPath: path.resolve(youtubeSmokeReport),
+        screenshotPath: path.resolve(youtubeSmokeScreenshot),
+      },
+    );
+    await youtubeDownloads.dispose();
+    await downloads.dispose();
+    app.exit(success ? 0 : 1);
   }
 }
 

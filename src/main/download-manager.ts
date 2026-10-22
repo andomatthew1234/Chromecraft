@@ -1,4 +1,4 @@
-import { existsSync, promises as fs } from "node:fs";
+import { existsSync, promises as fs, statSync } from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -263,6 +263,44 @@ export class DownloadManager {
       this.schedulePersist(0);
     }
     return removed;
+  }
+
+  /** Adds a completed file produced by a browser-owned external downloader. */
+  recordCompletedExternalDownload(input: {
+    url: string;
+    savePath: string;
+    mimeType: string;
+    startedAt: number;
+    endedAt?: number;
+  }): string {
+    const savePath = path.resolve(input.savePath);
+    if (!this.isInsideDownloadsDirectory(savePath) || !existsSync(savePath)) {
+      throw new Error("External download output is outside Downloads.");
+    }
+    const id = randomUUID();
+    const size = statSync(savePath).size;
+    const record: DownloadSnapshot = {
+      id,
+      filename: path.basename(savePath),
+      savePath,
+      url: input.url,
+      initiatorOrigin: new URL(input.url).origin,
+      mimeType: input.mimeType,
+      receivedBytes: size,
+      totalBytes: size,
+      bytesPerSecond: 0,
+      percentComplete: 100,
+      state: "completed",
+      canResume: false,
+      potentiallyDangerous: false,
+      startedAt: input.startedAt,
+      endedAt: input.endedAt ?? Date.now(),
+    };
+    this.records.unshift(record);
+    this.pruneHistory();
+    this.emitChange(true);
+    this.schedulePersist(0);
+    return id;
   }
 
   /** Flushes pending history updates and detaches without cancelling downloads. */
