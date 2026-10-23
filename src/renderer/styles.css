@@ -9,7 +9,7 @@
   --chrome-height: 104px;
   --base-chrome-height: 104px;
   --rail-width: 54px;
-  --sidebar-width: 286px;
+  --sidebar-width: 360px;
 
   --md-primary: #0b57d0;
   --md-on-primary: #fff;
@@ -2374,6 +2374,27 @@ input::placeholder {
 
 .sidebar-rail button.active .rail-selection-indicator {
   background: var(--md-secondary-container);
+}
+
+.ai-rail-avatar {
+  width: 24px;
+  height: 24px;
+  opacity: 0.78;
+  filter: saturate(0.72) drop-shadow(0 2px 3px rgb(35 40 57 / 14%));
+  transition:
+    opacity var(--motion-standard),
+    filter var(--motion-standard),
+    transform var(--motion-standard);
+}
+
+.sidebar-rail button:hover .ai-rail-avatar,
+.sidebar-rail button.active .ai-rail-avatar {
+  opacity: 1;
+  filter: saturate(1) drop-shadow(0 2px 4px rgb(35 40 57 / 20%));
+}
+
+.sidebar-rail button:active .ai-rail-avatar {
+  transform: scale(0.92);
 }
 
 .download-rail-indicator {

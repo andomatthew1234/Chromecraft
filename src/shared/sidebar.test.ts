@@ -25,6 +25,6 @@ describe("sidebar interaction model", () => {
   it("allocates no page space when detached and only rail space without a panel", () => {
     expect(sidebarWidth(false, true)).toBe(0);
     expect(sidebarWidth(true, false)).toBe(54);
-    expect(sidebarWidth(true, true)).toBe(286);
+    expect(sidebarWidth(true, true)).toBe(360);
   });
 });

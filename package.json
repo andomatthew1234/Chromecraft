@@ -23,6 +23,7 @@
     "test:web-store-banner:win": "node scripts/validate-web-store-banner.mjs",
     "test:settings-scroll": "node scripts/test-settings-scroll.mjs",
     "test:full-settings": "node scripts/test-full-settings.mjs",
+    "test:ai-assistant-ui": "node scripts/test-ai-assistant-ui.mjs",
     "test:sidebar": "node scripts/test-sidebar.mjs",
     "test:gallery-ui:win": "node scripts/test-gallery-ui.mjs",
     "test:toolbar": "node scripts/test-toolbar.mjs",

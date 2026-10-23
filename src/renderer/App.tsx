@@ -56,6 +56,7 @@ import { GalleryPage } from "./GalleryPage";
 import { OfflinePagesPage } from "./OfflinePagesPage";
 import { PageActionsPanel } from "./PageActionsPanel";
 import { AiAssistantPanel } from "./AiAssistantPanel";
+import { StaticAssistantAvatar } from "./AssistantAvatar";
 import { OrganiseTabsPanel } from "./OrganiseTabsPanel";
 import { SmartDownloadsPage } from "./SmartDownloadsPage";
 import { WebsitePermissionsDashboard } from "./SiteControlsPanel";
@@ -4997,7 +4998,11 @@ function Sidebar({
                     />
                   </svg>
                 )}
-                <Icon name={icon} />
+                {id === "assistant" ? (
+                  <StaticAssistantAvatar className="ai-rail-avatar" size={24} />
+                ) : (
+                  <Icon name={icon} />
+                )}
                 {isDownloads && activeDownloadCount > 1 && (
                   <span className="download-count-badge" aria-hidden="true">
                     {activeDownloadCount > 99 ? "99+" : activeDownloadCount}

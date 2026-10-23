@@ -2,6 +2,7 @@ import {
   type FormEvent,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -16,6 +17,11 @@ import type {
   AssistantPageContext,
 } from "../shared/ai-assistant";
 import type { BrowserTabSnapshot } from "../shared/browser";
+import {
+  AnimatedAssistantAvatar,
+  StaticAssistantAvatar,
+} from "./AssistantAvatar";
+import { AssistantPopover } from "./AssistantPopover";
 import "./ai-assistant.css";
 
 const HISTORY_STORAGE_KEY = "chromecraft-ai-assistant-history-v1";
@@ -36,6 +42,7 @@ type Conversation = {
   messages: ConversationMessage[];
   draft: string;
 };
+type OpenPopover = "attachments" | "context" | "history" | "more" | null;
 
 const defaultChoices: ContextChoices = {
   page: true,
@@ -181,88 +188,13 @@ function attachmentIcon(kind: AssistantAttachmentKind) {
 }
 
 function statusFor(snapshot: AiToolsSnapshot) {
-  if (snapshot.run.stage === "thinking")
+  if (["checking", "thinking", "applying"].includes(snapshot.run.stage)) {
     return ["Thinking", "thinking"] as const;
-  if (snapshot.run.stage === "checking")
-    return ["Model loading", "loading"] as const;
-  if (snapshot.connection === "connected" && snapshot.selectedModel)
-    return ["Ready for tab tools", "ready"] as const;
-  return ["AI unavailable", "unavailable"] as const;
-}
-
-function AssistantCharacter({
-  state,
-}: {
-  state: "idle" | "typing" | "thinking" | "success";
-}) {
-  const root = useRef<HTMLDivElement>(null);
-  const target = useRef({ x: 0, y: 0 });
-  const current = useRef({ x: 0, y: 0 });
-  const frame = useRef<number | null>(null);
-
-  useEffect(() => {
-    const element = root.current;
-    if (!element || matchMedia("(prefers-reduced-motion: reduce)").matches)
-      return;
-    const render = () => {
-      frame.current = null;
-      current.current.x += (target.current.x - current.current.x) * 0.16;
-      current.current.y += (target.current.y - current.current.y) * 0.16;
-      element.style.setProperty(
-        "--ai-eye-x",
-        `${current.current.x.toFixed(2)}px`,
-      );
-      element.style.setProperty(
-        "--ai-eye-y",
-        `${current.current.y.toFixed(2)}px`,
-      );
-      if (
-        Math.abs(target.current.x - current.current.x) > 0.05 ||
-        Math.abs(target.current.y - current.current.y) > 0.05
-      )
-        frame.current = requestAnimationFrame(render);
-    };
-    const move = (event: globalThis.PointerEvent) => {
-      const bounds = element.getBoundingClientRect();
-      target.current = {
-        x: Math.max(
-          -3,
-          Math.min(3, (event.clientX - bounds.left - bounds.width / 2) / 16),
-        ),
-        y: Math.max(
-          -2,
-          Math.min(2, (event.clientY - bounds.top - bounds.height / 2) / 20),
-        ),
-      };
-      if (frame.current === null) frame.current = requestAnimationFrame(render);
-    };
-    const reset = () => {
-      target.current = { x: 0, y: 0 };
-      if (frame.current === null) frame.current = requestAnimationFrame(render);
-    };
-    addEventListener("pointermove", move, { passive: true });
-    addEventListener("blur", reset);
-    return () => {
-      removeEventListener("pointermove", move);
-      removeEventListener("blur", reset);
-      if (frame.current !== null) cancelAnimationFrame(frame.current);
-    };
-  }, []);
-
-  return (
-    <div
-      className={`ai-character ai-character-${state}`}
-      ref={root}
-      aria-hidden="true"
-    >
-      <span className="ai-character-eye">
-        <i />
-      </span>
-      <span className="ai-character-eye">
-        <i />
-      </span>
-    </div>
-  );
+  }
+  if (snapshot.connection === "connected" && snapshot.selectedModel) {
+    return ["Ready", "ready"] as const;
+  }
+  return ["Local AI unavailable", "unavailable"] as const;
 }
 
 export function AiAssistantPanel({
@@ -285,14 +217,22 @@ export function AiAssistantPanel({
   const [page, setPage] = useState<AssistantPageContext | null>(null);
   const [attachments, setAttachments] = useState<AssistantAttachment[]>([]);
   const [choices, setChoices] = useState<ContextChoices>(readDefaults);
-  const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
-  const [contextOpen, setContextOpen] = useState(false);
-  const [historyOpen, setHistoryOpen] = useState(false);
+  const [openPopover, setOpenPopover] = useState<OpenPopover>(null);
   const [statusNote, setStatusNote] = useState<string | null>(null);
   const [capturing, setCapturing] = useState<"screenshot" | "element" | null>(
     null,
   );
-  const textarea = useRef<HTMLTextAreaElement>(null);
+  const [showScrollBottom, setShowScrollBottom] = useState(false);
+
+  const panelRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const nearBottomRef = useRef(true);
+  const historyButtonRef = useRef<HTMLButtonElement>(null);
+  const moreButtonRef = useRef<HTMLButtonElement>(null);
+  const plusButtonRef = useRef<HTMLButtonElement>(null);
+  const contextButtonRef = useRef<HTMLButtonElement>(null);
+
   const [statusLabel, statusKind] = statusFor(aiTools);
   const currentConversation =
     conversations.find((item) => item.id === conversationId) ?? null;
@@ -300,6 +240,15 @@ export function AiAssistantPanel({
     () => contextAttachments(page, choices, attachments),
     [attachments, choices, page],
   );
+  const visibleContextChips = useMemo(
+    () =>
+      included.filter((item) =>
+        ["selected-text", "screenshot", "element"].includes(item.kind),
+      ),
+    [included],
+  );
+  const pageDisplay =
+    page?.displayUrl ?? safeUrl(activeTab.url)?.display ?? "New tab";
 
   const refreshPage = useCallback(async () => {
     try {
@@ -316,22 +265,24 @@ export function AiAssistantPanel({
     void refreshPage();
   }, [refreshPage, activeTab.url]);
 
-  useEffect(() => {
-    return window.chromecraft.onAssistantContextCaptured(
-      (captured: AssistantContextCaptured) => {
-        setCapturing(null);
-        setAttachments((current) => [
-          ...current.filter((item) => item.kind !== captured.attachment.kind),
-          captured.attachment,
-        ]);
-        setChoices((current) => ({
-          ...current,
-          [captured.attachment.kind]: true,
-        }));
-        setStatusNote(`${captured.attachment.label} added to this prompt.`);
-      },
-    );
-  }, []);
+  useEffect(
+    () =>
+      window.chromecraft.onAssistantContextCaptured(
+        (captured: AssistantContextCaptured) => {
+          setCapturing(null);
+          setAttachments((current) => [
+            ...current.filter((item) => item.kind !== captured.attachment.kind),
+            captured.attachment,
+          ]);
+          setChoices((current) => ({
+            ...current,
+            [captured.attachment.kind]: true,
+          }));
+          setStatusNote(`${captured.attachment.label} added to this prompt.`);
+        },
+      ),
+    [],
+  );
 
   useEffect(() => {
     localStorage.setItem(
@@ -343,10 +294,7 @@ export function AiAssistantPanel({
             ...message,
             // Screenshots and extracted page data remain in memory only.
             attachments: message.attachments.map(
-              ({ data: _data, ...attachment }) => ({
-                ...attachment,
-                data: {},
-              }),
+              ({ data: _data, ...attachment }) => ({ ...attachment, data: {} }),
             ),
           })),
         })),
@@ -356,22 +304,50 @@ export function AiAssistantPanel({
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      if (capturing) {
-        void window.chromecraft.cancelAssistantSelection();
-        setCapturing(null);
-        return;
-      }
-      setAttachmentMenuOpen(false);
-      setContextOpen(false);
-      setHistoryOpen(false);
+      if (event.key !== "Escape" || !capturing) return;
+      void window.chromecraft.cancelAssistantSelection();
+      setCapturing(null);
     };
     addEventListener("keydown", onKey);
     return () => removeEventListener("keydown", onKey);
   }, [capturing]);
 
+  useLayoutEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    const resize = () => {
+      textarea.style.height = "auto";
+      const computed = getComputedStyle(textarea);
+      const lineHeight = Number.parseFloat(computed.lineHeight) || 20;
+      const padding =
+        Number.parseFloat(computed.paddingTop) +
+        Number.parseFloat(computed.paddingBottom);
+      const maxHeight = lineHeight * 5 + padding;
+      const nextHeight = Math.min(textarea.scrollHeight, maxHeight);
+      textarea.style.height = `${Math.max(lineHeight + padding, nextHeight)}px`;
+      textarea.style.overflowY =
+        textarea.scrollHeight > maxHeight ? "auto" : "hidden";
+    };
+    resize();
+    const observer = new ResizeObserver(resize);
+    observer.observe(textarea);
+    return () => observer.disconnect();
+  }, [draft]);
+
+  useLayoutEffect(() => {
+    const scroller = scrollRef.current;
+    if (!scroller || !currentConversation?.messages.length) return;
+    if (nearBottomRef.current) {
+      scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" });
+    }
+  }, [currentConversation?.messages.length, conversationId]);
+
+  const setOnlyPopover = (popover: Exclude<OpenPopover, null>) => {
+    setOpenPopover((current) => (current === popover ? null : popover));
+  };
+
   const startCapture = async (kind: "screenshot" | "element") => {
-    setAttachmentMenuOpen(false);
+    setOpenPopover(null);
     setStatusNote(null);
     try {
       await window.chromecraft.startAssistantSelection(kind);
@@ -392,6 +368,8 @@ export function AiAssistantPanel({
   const saveDefaults = () => {
     localStorage.setItem(DEFAULTS_STORAGE_KEY, JSON.stringify(choices));
     setStatusNote("Saved as the default included context.");
+    setOpenPopover(null);
+    requestAnimationFrame(() => contextButtonRef.current?.focus());
   };
 
   const newConversation = () => {
@@ -399,8 +377,9 @@ export function AiAssistantPanel({
     setDraft("");
     setAttachments([]);
     setStatusNote(null);
-    setHistoryOpen(false);
-    textarea.current?.focus();
+    setOpenPopover(null);
+    nearBottomRef.current = true;
+    requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
   const submit = (event: FormEvent) => {
@@ -421,6 +400,7 @@ export function AiAssistantPanel({
       createdAt: request.createdAt,
       attachments: request.context,
     };
+    nearBottomRef.current = true;
     setConversations((current) => {
       const existing = current.find((item) => item.id === conversationId);
       const conversation: Conversation = {
@@ -435,26 +415,41 @@ export function AiAssistantPanel({
         ...current.filter((item) => item.id !== conversationId),
       ].slice(0, MAX_HISTORY);
     });
-    // The future adapter receives this stable, per-message snapshot. General
-    // conversation transport is intentionally not fabricated by this UI.
+    // General conversation transport is intentionally not fabricated here.
     void request;
     setDraft("");
     setStatusNote(
       aiTools.connection === "connected"
-        ? "General chat is not connected yet. Your prompt is still in the composer."
-        : "Chromecraft AI is unavailable. Start Ollama and choose a model to use tab tools.",
+        ? "Saved locally. General AI chat is not connected yet."
+        : "Saved locally. Start Ollama and choose a model to use local AI tools.",
     );
-    textarea.current?.focus();
+    requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
   const addSuggestion = (text: string) => {
     setDraft(text);
     setStatusNote(null);
-    requestAnimationFrame(() => textarea.current?.focus());
+    requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
-  const removeAttachment = (id: string) =>
-    setAttachments((current) => current.filter((item) => item.id !== id));
+  const removeContext = (item: AssistantAttachment) => {
+    if (attachments.some((attachment) => attachment.id === item.id)) {
+      setAttachments((current) =>
+        current.filter((entry) => entry.id !== item.id),
+      );
+    } else {
+      updateChoice(item.kind, false);
+    }
+  };
+
+  const copyMessage = async (message: ConversationMessage) => {
+    try {
+      await navigator.clipboard.writeText(message.text);
+      setStatusNote("Message copied.");
+    } catch {
+      setStatusNote("Could not copy this message.");
+    }
+  };
 
   const characterState =
     capturing || aiTools.run.stage === "thinking"
@@ -464,32 +459,49 @@ export function AiAssistantPanel({
         : "idle";
 
   return (
-    <div className="ai-assistant-panel" data-capturing={capturing ?? undefined}>
+    <div className="ai-assistant-panel" ref={panelRef}>
       <header className="ai-assistant-header">
-        <AssistantCharacter state={characterState} />
+        <StaticAssistantAvatar className="ai-header-avatar" size={32} />
         <div className="ai-assistant-title">
-          <strong>Chromecraft AI</strong>
+          <strong id="sidebar-panel-title">Chromecraft AI</strong>
           <span data-status={statusKind}>{statusLabel}</span>
         </div>
         <div className="ai-assistant-header-actions">
           <button
+            ref={historyButtonRef}
             type="button"
-            onClick={() => setHistoryOpen((open) => !open)}
+            onClick={() => setOnlyPopover("history")}
+            title="Conversation history"
             aria-label="Conversation history"
-            aria-expanded={historyOpen}
+            aria-haspopup="dialog"
+            aria-expanded={openPopover === "history"}
           >
             {icon("history")}
           </button>
           <button
+            className="ai-new-conversation-action"
             type="button"
             onClick={newConversation}
+            title="New conversation"
             aria-label="New conversation"
           >
             {icon("edit_square")}
           </button>
           <button
+            ref={moreButtonRef}
+            type="button"
+            onClick={() => setOnlyPopover("more")}
+            title="More options"
+            aria-label="More options"
+            aria-haspopup="menu"
+            aria-expanded={openPopover === "more"}
+          >
+            {icon("more_vert")}
+          </button>
+          <button
             type="button"
             onClick={close}
+            title="Close sidebar"
             aria-label="Close Chromecraft AI"
           >
             {icon("close")}
@@ -497,208 +509,380 @@ export function AiAssistantPanel({
         </div>
       </header>
 
-      {historyOpen && (
-        <section
+      {openPopover === "history" && (
+        <AssistantPopover
+          anchorRef={historyButtonRef}
+          boundaryRef={panelRef}
           className="ai-history-popover"
-          aria-label="Conversation history"
+          idealWidth={296}
+          label="Conversation history"
+          onClose={() => setOpenPopover(null)}
+          placement="bottom"
         >
-          <div>
+          <div className="ai-popover-heading">
             <strong>Conversations</strong>
             <button type="button" onClick={newConversation}>
               {icon("add")} New chat
             </button>
           </div>
-          {conversations.length === 0 ? (
-            <p>No saved conversations yet.</p>
-          ) : (
-            conversations.map((conversation) => (
-              <button
-                key={conversation.id}
-                type="button"
-                onClick={() => {
-                  setConversationId(conversation.id);
-                  setDraft(conversation.draft);
-                  setHistoryOpen(false);
-                }}
-              >
-                <span>{conversation.title}</span>
-                <small>
-                  {new Date(conversation.updatedAt).toLocaleDateString()}
-                </small>
-              </button>
-            ))
-          )}
-        </section>
+          <div className="ai-history-list">
+            {conversations.length === 0 ? (
+              <p>No saved conversations yet.</p>
+            ) : (
+              conversations.map((conversation) => (
+                <button
+                  key={conversation.id}
+                  type="button"
+                  aria-current={
+                    conversation.id === conversationId ? "page" : undefined
+                  }
+                  onClick={() => {
+                    setConversationId(conversation.id);
+                    setDraft(conversation.draft);
+                    setOpenPopover(null);
+                    nearBottomRef.current = true;
+                    requestAnimationFrame(() => textareaRef.current?.focus());
+                  }}
+                >
+                  <span>{conversation.title}</span>
+                  <small>
+                    {new Date(conversation.updatedAt).toLocaleDateString()}
+                  </small>
+                </button>
+              ))
+            )}
+          </div>
+        </AssistantPopover>
       )}
 
-      <div className="ai-assistant-scroll">
-        {!currentConversation?.messages.length ? (
-          <section className="ai-assistant-welcome">
-            <AssistantCharacter state="idle" />
-            <h3>Hey! What can I help you with?</h3>
-            <p>
-              Ask about this page, explore ideas, or get help with your browser.
-            </p>
-            <div className="ai-suggestions">
-              <button
-                type="button"
-                onClick={() => addSuggestion("Summarise this page")}
-              >
-                {icon("summarize")} Summarise this page
-              </button>
-              <button
-                type="button"
-                onClick={() => addSuggestion("Explain something on this page")}
-              >
-                {icon("lightbulb")} Explain something on this page
-              </button>
-              <button
-                type="button"
-                onClick={() => addSuggestion("Help me understand this website")}
-              >
-                {icon("travel_explore")} Help me understand this website
-              </button>
-              <button type="button" onClick={onOrganiseTabs}>
-                {icon("tab_group")} Organise my tabs
-              </button>
-            </div>
-          </section>
-        ) : (
-          <section className="ai-message-list" aria-live="polite">
-            {currentConversation.messages.map((message) => (
-              <article className="ai-message ai-message-user" key={message.id}>
-                <p>{message.text}</p>
-                <small>
-                  Not sent ·{" "}
-                  {new Date(message.createdAt).toLocaleTimeString([], {
-                    hour: "numeric",
-                    minute: "2-digit",
-                  })}
-                </small>
-              </article>
-            ))}
-          </section>
+      {openPopover === "more" && (
+        <AssistantPopover
+          anchorRef={moreButtonRef}
+          boundaryRef={panelRef}
+          className="ai-more-popover"
+          idealWidth={236}
+          label="More options"
+          onClose={() => setOpenPopover(null)}
+          placement="bottom"
+          role="menu"
+        >
+          <button type="button" role="menuitem" onClick={newConversation}>
+            {icon("edit_square")} <span>New conversation</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setOpenPopover(null);
+              onOrganiseTabs();
+            }}
+          >
+            {icon("tab_group")} <span>Organise my tabs</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              void refreshPage();
+              setOpenPopover(null);
+              setStatusNote("Page context refreshed.");
+            }}
+          >
+            {icon("refresh")} <span>Refresh page context</span>
+          </button>
+        </AssistantPopover>
+      )}
+
+      <div className="ai-conversation-region">
+        <div
+          className="ai-assistant-scroll"
+          ref={scrollRef}
+          onScroll={(event) => {
+            const target = event.currentTarget;
+            const nearBottom =
+              target.scrollHeight - target.scrollTop - target.clientHeight < 48;
+            nearBottomRef.current = nearBottom;
+            setShowScrollBottom(!nearBottom);
+          }}
+        >
+          {!currentConversation?.messages.length ? (
+            <section className="ai-assistant-welcome">
+              <AnimatedAssistantAvatar state={characterState} />
+              <h3>Hey! What can I help you with?</h3>
+              <p>
+                Ask about this page, explore ideas, or get help with your
+                browser.
+              </p>
+              <div className="ai-suggestions">
+                <button
+                  type="button"
+                  onClick={() => addSuggestion("Summarise this page")}
+                >
+                  {icon("summarize")} <span>Summarise this page</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    addSuggestion("Explain something on this page")
+                  }
+                >
+                  {icon("lightbulb")}{" "}
+                  <span>Explain something on this page</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    addSuggestion("Help me understand this website")
+                  }
+                >
+                  {icon("travel_explore")}{" "}
+                  <span>Help me understand this website</span>
+                </button>
+                <button type="button" onClick={onOrganiseTabs}>
+                  {icon("tab_group")} <span>Organise my tabs</span>
+                </button>
+              </div>
+            </section>
+          ) : (
+            <section className="ai-message-list" aria-live="polite">
+              {currentConversation.messages.map((message) => (
+                <article
+                  className="ai-message ai-message-user"
+                  key={message.id}
+                >
+                  <p>{message.text}</p>
+                  <footer>
+                    <small>
+                      Saved locally ·{" "}
+                      {new Date(message.createdAt).toLocaleTimeString([], {
+                        hour: "numeric",
+                        minute: "2-digit",
+                      })}
+                    </small>
+                    <button
+                      type="button"
+                      onClick={() => void copyMessage(message)}
+                      aria-label="Copy message"
+                      title="Copy message"
+                    >
+                      {icon("content_copy")}
+                    </button>
+                  </footer>
+                </article>
+              ))}
+            </section>
+          )}
+        </div>
+        {showScrollBottom && (
+          <button
+            type="button"
+            className="ai-scroll-bottom"
+            onClick={() => {
+              const scroller = scrollRef.current;
+              nearBottomRef.current = true;
+              setShowScrollBottom(false);
+              scroller?.scrollTo({
+                top: scroller.scrollHeight,
+                behavior: "smooth",
+              });
+            }}
+            aria-label="Scroll to latest message"
+            title="Scroll to latest message"
+          >
+            {icon("arrow_downward")}
+          </button>
         )}
       </div>
 
       <form className="ai-composer" onSubmit={submit}>
-        {capturing && (
-          <div className="ai-capture-status" role="status">
-            {icon(capturing === "screenshot" ? "crop" : "ads_click")} Select{" "}
-            {capturing === "screenshot" ? "an area" : "an element"} on the page.{" "}
+        {(capturing || visibleContextChips.length > 0 || statusNote) && (
+          <div className="ai-composer-extras">
+            {capturing && (
+              <div className="ai-capture-status" role="status">
+                {icon(capturing === "screenshot" ? "crop" : "ads_click")}
+                <span>
+                  Select {capturing === "screenshot" ? "an area" : "an element"}
+                  .
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void window.chromecraft.cancelAssistantSelection();
+                    setCapturing(null);
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+            {visibleContextChips.length > 0 && (
+              <div className="ai-context-chips" aria-label="Included context">
+                {visibleContextChips.map((item) => (
+                  <span
+                    className="ai-context-chip"
+                    key={item.id}
+                    title={item.detail ?? item.label}
+                  >
+                    {icon(attachmentIcon(item.kind))}
+                    <span>{item.label}</span>
+                    <button
+                      type="button"
+                      onClick={() => removeContext(item)}
+                      aria-label={`Remove ${item.label}`}
+                    >
+                      {icon("close")}
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            {statusNote && (
+              <p className="ai-status-note" role="status">
+                {statusNote}
+              </p>
+            )}
+          </div>
+        )}
+
+        <div className="ai-composer-surface">
+          <textarea
+            ref={textareaRef}
+            value={draft}
+            rows={1}
+            placeholder="Ask Chromecraft AI..."
+            onChange={(event) => {
+              setDraft(event.target.value);
+              setStatusNote(null);
+            }}
+            onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing) return;
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                event.currentTarget.form?.requestSubmit();
+              }
+            }}
+            aria-label="Ask Chromecraft AI"
+          />
+          <div className="ai-composer-toolbar">
             <button
+              ref={plusButtonRef}
               type="button"
-              onClick={() => {
-                void window.chromecraft.cancelAssistantSelection();
-                setCapturing(null);
-              }}
+              className="ai-composer-plus"
+              onClick={() => setOnlyPopover("attachments")}
+              aria-label="Add context"
+              title="Add context"
+              aria-haspopup="menu"
+              aria-expanded={openPopover === "attachments"}
             >
-              Cancel
+              {icon("add")}
+            </button>
+            <button
+              ref={contextButtonRef}
+              className="ai-page-context"
+              type="button"
+              onClick={() => setOnlyPopover("context")}
+              aria-haspopup="dialog"
+              aria-expanded={openPopover === "context"}
+              title={`Included context for ${pageDisplay}`}
+            >
+              {icon("language")}
+              <span>This page</span>
+              {icon("expand_more")}
+            </button>
+            <span className="ai-composer-toolbar-spacer" />
+            <button
+              type="submit"
+              className="ai-send"
+              disabled={!draft.trim()}
+              aria-label="Send message"
+              title="Send message"
+            >
+              {icon("arrow_upward")}
             </button>
           </div>
-        )}
-        {included.length > 0 && (
-          <div className="ai-context-chips" aria-label="Included context">
-            {included.map((item) => (
-              <span
-                className="ai-context-chip"
-                key={item.id}
-                title={item.detail ?? item.label}
-              >
-                {icon(attachmentIcon(item.kind))}
-                <span>
-                  {item.kind === "page"
-                    ? `This page · ${item.detail}`
-                    : item.label}
-                </span>
-                {attachments.some(
-                  (attachment) => attachment.id === item.id,
-                ) && (
-                  <button
-                    type="button"
-                    onClick={() => removeAttachment(item.id)}
-                    aria-label={`Remove ${item.label}`}
-                  >
-                    {icon("close")}
-                  </button>
-                )}
-              </span>
-            ))}
-          </div>
-        )}
-        <button
-          className="ai-page-context"
-          type="button"
-          onClick={() => setContextOpen((open) => !open)}
-          aria-expanded={contextOpen}
-        >
-          {icon("language")}{" "}
-          <span>
-            This page ·{" "}
-            {page?.displayUrl ?? safeUrl(activeTab.url)?.display ?? "New tab"}
-          </span>{" "}
-          {icon("expand_more")}
-        </button>
-        {contextOpen && (
-          <section className="ai-context-popover" aria-label="Included context">
-            <header>
-              <strong>Included context</strong>
+        </div>
+
+        {openPopover === "context" && (
+          <AssistantPopover
+            anchorRef={contextButtonRef}
+            boundaryRef={panelRef}
+            className="ai-context-popover"
+            idealWidth={328}
+            label="Included context"
+            onClose={() => setOpenPopover(null)}
+          >
+            <header className="ai-popover-heading">
+              <div>
+                <strong>Included context</strong>
+                <small>{pageDisplay}</small>
+              </div>
               <button
                 type="button"
-                onClick={() => setContextOpen(false)}
+                onClick={() => {
+                  setOpenPopover(null);
+                  requestAnimationFrame(() =>
+                    contextButtonRef.current?.focus(),
+                  );
+                }}
                 aria-label="Close included context"
               >
                 {icon("close")}
               </button>
             </header>
-            {(
-              [
-                "url",
-                "title",
-                "description",
-                "selected-text",
-                "screenshot",
-                "element",
-              ] as AssistantAttachmentKind[]
-            ).map((kind) => (
-              <label key={kind}>
-                <span>
-                  <b>
-                    {
-                      (
-                        {
-                          url: "Website URL",
-                          title: "Page title",
-                          description: "Page description",
-                          "selected-text": "Selected text",
-                          screenshot: "Screenshot attachment",
-                          element: "Selected page element",
-                        } as Record<string, string>
-                      )[kind]
-                    }
-                  </b>
-                  <small>
-                    {kind === "url"
-                      ? "Sensitive query parameters are removed."
-                      : kind === "description"
-                        ? "Only included when available."
-                        : kind === "selected-text"
-                          ? "Only highlighted text is included."
-                          : kind === "screenshot"
-                            ? "Captured only when you attach one."
-                            : kind === "element"
-                              ? "Uses a sanitised element summary."
-                              : ""}
-                  </small>
-                </span>
-                <input
-                  type="checkbox"
-                  checked={choices[kind]}
-                  onChange={(event) => updateChoice(kind, event.target.checked)}
-                />
-              </label>
-            ))}
-            <footer>
+            <div className="ai-context-options">
+              {(
+                [
+                  "url",
+                  "title",
+                  "description",
+                  "selected-text",
+                  "screenshot",
+                  "element",
+                ] as AssistantAttachmentKind[]
+              ).map((kind) => {
+                const labels = {
+                  url: ["Website URL", "Sensitive query details are removed."],
+                  title: ["Page title", "The title shown by this tab."],
+                  description: [
+                    "Page description",
+                    "Included when the page provides one.",
+                  ],
+                  "selected-text": [
+                    "Selected text",
+                    "Only highlighted text is included.",
+                  ],
+                  screenshot: [
+                    "Screenshot attachment",
+                    "Captured only when you attach one.",
+                  ],
+                  element: [
+                    "Selected page element",
+                    "A sanitised element summary.",
+                  ],
+                } satisfies Record<
+                  Exclude<AssistantAttachmentKind, "page">,
+                  [string, string]
+                >;
+                if (kind === "page") return null;
+                return (
+                  <label key={kind}>
+                    <span>
+                      <b>{labels[kind][0]}</b>
+                      <small>{labels[kind][1]}</small>
+                    </span>
+                    <input
+                      type="checkbox"
+                      role="switch"
+                      checked={choices[kind]}
+                      onChange={(event) =>
+                        updateChoice(kind, event.target.checked)
+                      }
+                    />
+                  </label>
+                );
+              })}
+            </div>
+            <footer className="ai-context-popover-footer">
               <button
                 type="button"
                 onClick={() => setChoices({ ...defaultChoices })}
@@ -706,16 +890,21 @@ export function AiAssistantPanel({
                 Restore defaults
               </button>
               <button type="button" onClick={saveDefaults}>
-                Save defaults
+                Save as default
               </button>
             </footer>
-          </section>
+          </AssistantPopover>
         )}
-        {attachmentMenuOpen && (
-          <section
+
+        {openPopover === "attachments" && (
+          <AssistantPopover
+            anchorRef={plusButtonRef}
+            boundaryRef={panelRef}
             className="ai-attachment-menu"
+            idealWidth={296}
+            label="Add context"
+            onClose={() => setOpenPopover(null)}
             role="menu"
-            aria-label="Add context"
           >
             <button
               type="button"
@@ -745,7 +934,7 @@ export function AiAssistantPanel({
               onClick={() => {
                 updateChoice("selected-text", true);
                 void refreshPage();
-                setAttachmentMenuOpen(false);
+                setOpenPopover(null);
               }}
             >
               {icon("format_quote")}
@@ -757,10 +946,7 @@ export function AiAssistantPanel({
             <button
               type="button"
               role="menuitem"
-              onClick={() => {
-                setAttachmentMenuOpen(false);
-                setContextOpen(true);
-              }}
+              onClick={() => setOpenPopover("context")}
             >
               {icon("tune")}
               <span>
@@ -768,45 +954,7 @@ export function AiAssistantPanel({
                 <small>Choose what information is included.</small>
               </span>
             </button>
-          </section>
-        )}
-        <div className="ai-composer-surface">
-          <button
-            type="button"
-            className="ai-composer-plus"
-            onClick={() => setAttachmentMenuOpen((open) => !open)}
-            aria-label="Add context"
-            aria-expanded={attachmentMenuOpen}
-          >
-            {icon("add")}
-          </button>
-          <textarea
-            ref={textarea}
-            value={draft}
-            rows={1}
-            placeholder="Ask Chromecraft AI..."
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                event.currentTarget.form?.requestSubmit();
-              }
-            }}
-            aria-label="Ask Chromecraft AI"
-          />
-          <button
-            type="submit"
-            className="ai-send"
-            disabled={!draft.trim()}
-            aria-label="Send message"
-          >
-            {icon("arrow_upward")}
-          </button>
-        </div>
-        {statusNote && (
-          <p className="ai-status-note" role="status">
-            {statusNote}
-          </p>
+          </AssistantPopover>
         )}
       </form>
     </div>

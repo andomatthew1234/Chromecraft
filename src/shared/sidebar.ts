@@ -1,6 +1,6 @@
 export const SIDEBAR_DETACHED_WIDTH = 0;
 export const SIDEBAR_RAIL_WIDTH = 54;
-export const SIDEBAR_PANEL_WIDTH = 286;
+export const SIDEBAR_PANEL_WIDTH = 360;
 
 export type SidebarTool =
   | "assistant"

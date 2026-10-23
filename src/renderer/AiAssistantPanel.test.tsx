@@ -14,6 +14,26 @@ const activeTab = {
 
 const aiTools: AiToolsSnapshot = {
   provider: "ollama",
+  preferredGroupingMode: "smart",
+  eligibleTabCount: 0,
+  cloudDataPreview: [],
+  ollama: {
+    endpoint: "http://127.0.0.1:11434",
+    connection: "unavailable",
+    models: [],
+    selectedModel: null,
+    error: null,
+  },
+  gemini: {
+    connection: "unknown",
+    models: [],
+    selectedModel: null,
+    error: null,
+    apiKeyConfigured: false,
+    secureStorageAvailable: false,
+    sessionOnly: true,
+    cloudConsentGranted: false,
+  },
   endpoint: "http://127.0.0.1:11434",
   connection: "unavailable",
   models: [],
@@ -73,8 +93,13 @@ describe("AiAssistantPanel", () => {
     );
 
     expect(markup).toContain("Chromecraft AI");
-    expect(markup).toContain("AI unavailable");
+    expect(markup).toContain("Local AI unavailable");
     expect(markup).toContain("Ask Chromecraft AI...");
     expect(markup).toContain("Organise my tabs");
+    expect(markup).toContain('id="sidebar-panel-title"');
+    expect(markup).toContain('class="ai-composer-toolbar"');
+    expect(markup.match(/class="ai-character /g)).toHaveLength(1);
+    expect(markup.match(/class="ai-static-avatar/g)).toHaveLength(1);
+    expect(markup).not.toContain("Ready for tab tools");
   });
 });
