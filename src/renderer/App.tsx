@@ -6441,8 +6441,10 @@ export function App() {
     [snapshot],
   );
   useEffect(() => {
-    let current = true;
     setSiteControlsOpen(false);
+  }, [activeTab?.id, activeTab?.url]);
+  useEffect(() => {
+    let current = true;
     if (!activeTab || !/^https?:\/\//u.test(activeTab.url)) {
       setActiveSiteControl(null);
       return () => {

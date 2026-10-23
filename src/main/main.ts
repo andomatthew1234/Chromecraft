@@ -2307,9 +2307,13 @@ async function createMainWindow(): Promise<void> {
   });
   await offlinePages.initialize();
   offlinePageStore = offlinePages;
-  registerOfflinePageProtocol(view.webContents.session, (id, relativePath) =>
-    offlinePages.resolveResource(id, relativePath),
+  const resolveOfflinePageResource = (id: string, relativePath: string) =>
+    offlinePages.resolveResource(id, relativePath);
+  registerOfflinePageProtocol(
+    view.webContents.session,
+    resolveOfflinePageResource,
   );
+  registerOfflinePageProtocol(browserSession, resolveOfflinePageResource);
 
   const youtubeDownloads = new YouTubeDownloadService({
     downloadsDirectory,

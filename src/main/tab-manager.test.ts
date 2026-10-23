@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   ExtensionTabLifecycle,
   isWebsiteFullscreenPermissionAllowed,
+  shouldBlockOfflineArchiveNavigation,
   TabManager,
   type ExtensionTabTransition,
 } from "./tab-manager";
@@ -138,6 +139,33 @@ describe("Gallery tabs", () => {
 });
 
 describe("Offline Pages tabs", () => {
+  it("keeps archived documents inside their isolated offline origin", () => {
+    expect(
+      shouldBlockOfflineArchiveNavigation(
+        "chromecraft-offline://archive-1/index.html",
+        "https://tracker.example/redirect",
+      ),
+    ).toBe(true);
+    expect(
+      shouldBlockOfflineArchiveNavigation(
+        "chromecraft-offline://archive-1/index.html",
+        "chromecraft-offline://archive-2/index.html",
+      ),
+    ).toBe(true);
+    expect(
+      shouldBlockOfflineArchiveNavigation(
+        "chromecraft-offline://archive-1/index.html",
+        "chromecraft-offline://archive-1/index_files/details.html",
+      ),
+    ).toBe(false);
+    expect(
+      shouldBlockOfflineArchiveNavigation(
+        "https://example.com/",
+        "https://other.example/",
+      ),
+    ).toBe(false);
+  });
+
   it("creates a dedicated library tab and reuses it for library selection", () => {
     const first = {
       id: "new-tab",

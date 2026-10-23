@@ -170,6 +170,21 @@ export function PageActionsPanel({
       );
   };
 
+  const copyLink = () => {
+    const resetLabel = () =>
+      window.setTimeout(() => setCopyLabel("Copy link"), 1800);
+    if (!navigator.clipboard) {
+      setCopyLabel("Couldn’t copy");
+      resetLabel();
+      return;
+    }
+    void navigator.clipboard
+      .writeText(pageUrl)
+      .then(() => setCopyLabel("Copied"))
+      .catch(() => setCopyLabel("Couldn’t copy"))
+      .finally(resetLabel);
+  };
+
   if (view === "security") {
     return (
       <SiteControlsPanel
@@ -198,11 +213,10 @@ export function PageActionsPanel({
       {view === "menu" && (
         <>
           <Header title={site.hostname} detail="Page actions" close={close} />
-          <div className="page-actions-list" role="menu">
+          <div className="page-actions-list">
             <button
               type="button"
               className="page-action-row"
-              role="menuitem"
               onClick={() => setView("security")}
             >
               <span className="page-action-row-icon">
@@ -217,7 +231,6 @@ export function PageActionsPanel({
             <button
               type="button"
               className="page-action-row"
-              role="menuitem"
               onClick={() => {
                 if (saveState.stage === "saving") setView("save");
                 else savePage();
@@ -239,7 +252,6 @@ export function PageActionsPanel({
             <button
               type="button"
               className="page-action-row"
-              role="menuitem"
               onClick={() => setView("share")}
             >
               <span className="page-action-row-icon">
@@ -328,11 +340,10 @@ export function PageActionsPanel({
             back={() => setView("menu")}
             close={close}
           />
-          <div className="page-actions-list" role="menu">
+          <div className="page-actions-list">
             <button
               type="button"
               className="page-action-row"
-              role="menuitem"
               onClick={() => setView("qr")}
             >
               <span className="page-action-row-icon">
@@ -368,15 +379,7 @@ export function PageActionsPanel({
             <small>{pageUrl}</small>
             {qrDataUrl && (
               <div className="page-qr-actions">
-                <button
-                  type="button"
-                  onClick={() => {
-                    void navigator.clipboard.writeText(pageUrl).then(() => {
-                      setCopyLabel("Copied");
-                      window.setTimeout(() => setCopyLabel("Copy link"), 1800);
-                    });
-                  }}
-                >
+                <button type="button" onClick={copyLink}>
                   <MaterialIcon name="content_copy" />
                   {copyLabel}
                 </button>

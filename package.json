@@ -26,6 +26,7 @@
     "test:sidebar": "node scripts/test-sidebar.mjs",
     "test:gallery-ui:win": "node scripts/test-gallery-ui.mjs",
     "test:toolbar": "node scripts/test-toolbar.mjs",
+    "test:offline-pages:win": "node scripts/test-offline-pages.mjs",
     "test:fullscreen:win": "node scripts/test-packaged-fullscreen.mjs --platform=win32",
     "test:fullscreen:linux": "node scripts/test-packaged-fullscreen.mjs --platform=linux",
     "test:youtube-utility:win": "node scripts/test-youtube-utility.mjs",
@@ -67,7 +68,8 @@
     "prettier": "3.8.1",
     "typescript": "7.0.2",
     "vite": "8.3.4",
-    "vitest": "5.0.4"
+    "vitest": "5.0.4",
+    "ws": "8.22.0"
   },
   "engines": {
     "node": ">=22.13.0"

@@ -28,6 +28,14 @@
   margin: 0 auto clamp(26px, 4vw, 42px);
 }
 
+.offline-pages-notice {
+  width: min(1180px, 100%);
+  min-height: 20px;
+  margin: -24px auto 18px;
+  color: var(--md-on-surface-variant);
+  font: var(--type-body-small);
+}
+
 .offline-pages-hero-icon {
   width: 64px;
   height: 64px;

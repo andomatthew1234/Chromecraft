@@ -35,6 +35,7 @@ export function OfflinePagesPage({
 }) {
   const [query, setQuery] = useState("");
   const [removingId, setRemovingId] = useState<string | null>(null);
+  const [notice, setNotice] = useState("");
   const visibleItems = useMemo(() => {
     const needle = query.trim().toLocaleLowerCase();
     if (!needle) return snapshot.items;
@@ -65,6 +66,9 @@ export function OfflinePagesPage({
           </label>
         )}
       </header>
+      <p className="offline-pages-notice" role="status" aria-live="polite">
+        {notice}
+      </p>
 
       {snapshot.items.length === 0 ? (
         <section className="offline-pages-empty">
@@ -159,9 +163,18 @@ export function OfflinePagesPage({
                       )
                     )
                       return;
+                    setNotice("");
                     setRemovingId(item.id);
                     void window.chromecraft
                       .deleteOfflinePage(item.id)
+                      .then(() => setNotice(`Deleted “${item.title}”.`))
+                      .catch((error: unknown) =>
+                        setNotice(
+                          error instanceof Error
+                            ? error.message
+                            : "The offline copy could not be deleted.",
+                        ),
+                      )
                       .finally(() => setRemovingId(null));
                   }}
                 >

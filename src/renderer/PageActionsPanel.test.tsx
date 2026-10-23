@@ -41,7 +41,7 @@ describe("PageActionsPanel", () => {
     expect(markup).toContain("Share page");
     expect(markup).toContain("Connection, permissions and site data");
     expect(markup).toContain("Keep a static copy available offline");
-    expect(markup.match(/role="menuitem"/g)).toHaveLength(3);
+    expect(markup.match(/class="page-action-row"/g)).toHaveLength(3);
     expect(markup).not.toContain("qrserver");
   });
 });

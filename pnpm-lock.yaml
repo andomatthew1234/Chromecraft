@@ -81,6 +81,9 @@ importers:
       vitest:
         specifier: 5.0.4
         version: 5.0.4(@types/node@26.6.5)(vite@8.3.4(@types/node@26.6.5)(jiti@2.7.0))
+      ws:
+        specifier: 8.22.0
+        version: 8.22.0
 
 packages:
 

@@ -29,7 +29,7 @@ function capture(
       await fs.mkdir(path.dirname(destinationHtml), { recursive: true });
       await fs.writeFile(
         destinationHtml,
-        '<html><link href="index_files/site.css"></html>',
+        '<html><head><base href="https://example.com/"><meta http-equiv="refresh" content="0; https://tracker.example"><meta http-equiv="Content-Security-Policy" content="default-src *"><link href="index_files/site.css"></head></html>',
       );
       const assets = path.join(path.dirname(destinationHtml), "index_files");
       await fs.mkdir(assets);
@@ -78,13 +78,15 @@ describe("OfflinePageStore", () => {
       stage: "complete",
       entryId: "archive-1",
     });
-    await expect(
-      store.resolveResource("archive-1", "index.html"),
-    ).resolves.toBe(
+    const savedHtml = await store.resolveResource("archive-1", "index.html");
+    expect(savedHtml).toBe(
       await fs.realpath(
         path.join(paths.directory, "archives", "archive-1", "index.html"),
       ),
     );
+    const savedMarkup = await fs.readFile(savedHtml!, "utf8");
+    expect(savedMarkup).not.toContain("http-equiv");
+    expect(savedMarkup).not.toContain("<base");
     await expect(
       store.resolveResource("archive-1", "index_files/site.css"),
     ).resolves.toBe(
@@ -170,6 +172,23 @@ describe("OfflinePageStore", () => {
     expect(store.snapshot.items).toEqual([]);
   });
 
+  it("checks free disk capacity before starting a page capture", async () => {
+    const paths = await fixture();
+    const saveCompletePage =
+      vi.fn<OfflinePageCaptureSource["saveCompletePage"]>();
+    const store = new OfflinePageStore({
+      ...paths,
+      generateId: () => "no-capacity",
+      maxArchiveBytes: Number.MAX_SAFE_INTEGER,
+    });
+    await store.initialize();
+
+    await expect(store.savePage(capture({ saveCompletePage }))).rejects.toThrow(
+      "not enough free disk space",
+    );
+    expect(saveCompletePage).not.toHaveBeenCalled();
+  });
+
   it("removes only the requested browser-owned archive", async () => {
     const paths = await fixture();
     const store = new OfflinePageStore({
@@ -188,5 +207,33 @@ describe("OfflinePageStore", () => {
     await expect(store.remove("../../outside")).rejects.toThrow(
       "Invalid offline page id",
     );
+  });
+
+  it("restores an archive when its index update fails during deletion", async () => {
+    const paths = await fixture();
+    const store = new OfflinePageStore({
+      ...paths,
+      generateId: () => "keep-me",
+    });
+    await store.initialize();
+    await store.savePage(capture({ capturePreview: async () => null }));
+    const indexPath = path.join(paths.directory, "index.json");
+    const storedDocument = await fs.readFile(indexPath, "utf8");
+    const internals = store as unknown as {
+      writeAtomically: () => Promise<void>;
+    };
+    internals.writeAtomically = async () => {
+      throw new Error("index unavailable");
+    };
+
+    await expect(store.remove("keep-me")).rejects.toThrow("index unavailable");
+
+    expect(store.snapshot.items).toHaveLength(1);
+    await expect(store.resolveResource("keep-me", "index.html")).resolves.toBe(
+      await fs.realpath(
+        path.join(paths.directory, "archives", "keep-me", "index.html"),
+      ),
+    );
+    expect(await fs.readFile(indexPath, "utf8")).toBe(storedDocument);
   });
 });

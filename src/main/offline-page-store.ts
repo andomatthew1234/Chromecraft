@@ -19,6 +19,8 @@ const MAX_URL_LENGTH = 8_192;
 const DEFAULT_MAX_ARCHIVE_BYTES = 2 * 1024 ** 3;
 const DEFAULT_MAX_FILES = 50_000;
 const DEFAULT_MAX_DEPTH = 32;
+const MAX_HTML_BYTES = 64 * 1024 ** 2;
+const MIN_FREE_SPACE_RESERVE = 256 * 1024 ** 2;
 
 interface PersistedOfflinePages {
   version: typeof DOCUMENT_VERSION;
@@ -172,6 +174,7 @@ export class OfflinePageStore {
       if (this.initialized) return;
       await fs.mkdir(this.archivesDirectory, { recursive: true });
       this.data = await this.loadDocument();
+      await this.recoverInterruptedDeletions();
       await this.removeStalePartialDirectories();
       const changed = await this.reconcileDraft();
       this.initialized = true;
@@ -208,9 +211,11 @@ export class OfflinePageStore {
 
     try {
       await fs.mkdir(partialDirectory, { recursive: false });
+      await this.assertStorageCapacity();
       source.assertUnchanged();
       await source.saveCompletePage(htmlPath);
       source.assertUnchanged();
+      await this.sanitizeDocument(htmlPath);
       const preview = await source.capturePreview().catch(() => null);
       source.assertUnchanged();
       if (preview?.length) {
@@ -289,11 +294,47 @@ export class OfflinePageStore {
       const next = this.data.items.filter((item) => item.id !== cleanId);
       if (next.length === this.data.items.length)
         throw new Error("Unknown offline page.");
-      await this.removeOwnedDirectory(archiveDirectory);
+      const quarantineDirectory = path.join(
+        this.archivesDirectory,
+        `.deleting-${cleanId}-${process.pid}-${this.temporaryFileCounter++}`,
+      );
+      let quarantined = false;
+      try {
+        await fs.rename(archiveDirectory, quarantineDirectory);
+        quarantined = true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      const previousItems = this.data.items;
+      const previousSave = this.save;
       this.data.items = next;
       if (this.save.entryId === cleanId) this.save = emptyOfflinePageSave();
-      await this.writeAtomically();
+      try {
+        await this.writeAtomically();
+      } catch (error) {
+        this.data.items = previousItems;
+        this.save = previousSave;
+        if (quarantined) {
+          try {
+            await fs.rename(quarantineDirectory, archiveDirectory);
+          } catch (rollbackError) {
+            throw new AggregateError(
+              [error, rollbackError],
+              "Could not update the offline page index or restore its archive.",
+            );
+          }
+        }
+        throw error;
+      }
       this.emit();
+      if (quarantined) {
+        await this.removeOwnedDirectory(quarantineDirectory).catch((error) =>
+          console.warn(
+            "Could not finish removing an offline page archive.",
+            error,
+          ),
+        );
+      }
     });
   }
 
@@ -420,6 +461,41 @@ export class OfflinePageStore {
     return inspection;
   }
 
+  private async assertStorageCapacity(): Promise<void> {
+    let availableBytes: number;
+    try {
+      const stats = await fs.statfs(this.archivesDirectory);
+      availableBytes = stats.bavail * stats.bsize;
+    } catch {
+      return;
+    }
+    const requiredBytes = this.maxArchiveBytes + MIN_FREE_SPACE_RESERVE;
+    if (!Number.isFinite(availableBytes) || availableBytes < requiredBytes) {
+      throw new Error(
+        "There is not enough free disk space to safely save this page.",
+      );
+    }
+  }
+
+  private async sanitizeDocument(htmlPath: string): Promise<void> {
+    const stats = await fs.stat(htmlPath);
+    if (!stats.isFile() || stats.size > MAX_HTML_BYTES) {
+      throw new Error("The saved page document is too large.");
+    }
+    const original = await fs.readFile(htmlPath, "utf8");
+    const sanitized = original
+      .replace(
+        /<meta\b[^>]*\bhttp-equiv\s*=\s*(?:"content-security-policy"|'content-security-policy'|content-security-policy)[^>]*>/giu,
+        "",
+      )
+      .replace(
+        /<meta\b[^>]*\bhttp-equiv\s*=\s*(?:"refresh"|'refresh'|refresh)[^>]*>/giu,
+        "",
+      )
+      .replace(/<base\b[^>]*>/giu, "");
+    if (sanitized !== original) await fs.writeFile(htmlPath, sanitized, "utf8");
+  }
+
   private async removeStalePartialDirectories(): Promise<void> {
     const entries = await fs.readdir(this.archivesDirectory, {
       withFileTypes: true,
@@ -429,6 +505,37 @@ export class OfflinePageStore {
         await this.removeOwnedDirectory(
           path.join(this.archivesDirectory, entry.name),
         );
+      }
+    }
+  }
+
+  private async recoverInterruptedDeletions(): Promise<void> {
+    const entries = await fs.readdir(this.archivesDirectory, {
+      withFileTypes: true,
+    });
+    const indexedIds = [...this.data.items]
+      .map((item) => item.id)
+      .sort((left, right) => right.length - left.length);
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !entry.name.startsWith(".deleting-"))
+        continue;
+      const quarantineDirectory = path.join(this.archivesDirectory, entry.name);
+      const indexedId = indexedIds.find((id) =>
+        entry.name.startsWith(`.deleting-${id}-`),
+      );
+      if (!indexedId) {
+        await this.removeOwnedDirectory(quarantineDirectory);
+        continue;
+      }
+      const archiveDirectory = path.join(this.archivesDirectory, indexedId);
+      const archiveExists = await fs
+        .stat(archiveDirectory)
+        .then(() => true)
+        .catch(() => false);
+      if (archiveExists) {
+        await this.removeOwnedDirectory(quarantineDirectory);
+      } else {
+        await fs.rename(quarantineDirectory, archiveDirectory);
       }
     }
   }

@@ -2119,10 +2119,15 @@ export class TabManager {
       }
     });
     contents.on("will-navigate", (event, url) => {
+      if (shouldBlockOfflineArchiveNavigation(contents.getURL(), url)) {
+        event.preventDefault();
+        return;
+      }
       if (!isAllowedWebUrl(url) && !this.isAllowedInternalUrl(url))
         event.preventDefault();
     });
     contents.setWindowOpenHandler((details) => {
+      if (isOfflineArchiveUrl(contents.getURL())) return { action: "deny" };
       if (
         details.frameName.startsWith(EXTENSION_WINDOW_NAME_PREFIX) &&
         this.extensions?.isAllowedExtensionUrl(details.url)
@@ -2957,6 +2962,25 @@ function isOfflineArchiveUrl(value: string): boolean {
     );
   } catch {
     return false;
+  }
+}
+
+/** Keeps a static offline archive within its browser-owned archive origin. */
+export function shouldBlockOfflineArchiveNavigation(
+  currentUrl: string,
+  targetUrl: string,
+): boolean {
+  if (!isOfflineArchiveUrl(currentUrl)) return false;
+  try {
+    const current = new URL(currentUrl);
+    const target = new URL(targetUrl);
+    return (
+      !isOfflineArchiveUrl(targetUrl) ||
+      current.protocol !== target.protocol ||
+      current.hostname !== target.hostname
+    );
+  } catch {
+    return true;
   }
 }
 
