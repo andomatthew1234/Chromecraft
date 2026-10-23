@@ -53,6 +53,8 @@ Be accurate, concise and practical.`;
 export interface InternalOrganiseTabsProposal {
   publicProposal: OrganiseTabsProposal;
   revision: string;
+  context: AiTabOrganizationContext;
+  replacesAppliedLayout: boolean;
 }
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -129,12 +131,18 @@ function proposalFromGroups(
   };
 }
 
+export function normaliseWebsiteHostname(hostname: string): string {
+  const normalised = hostname.trim().toLocaleLowerCase().replace(/\.$/u, "");
+  return normalised.replace(/^(?:www\d*|m|mobile)\./u, "");
+}
+
 function websiteProposal(context: AiTabOrganizationContext) {
   const byHost = new Map<string, string[]>();
   for (const tab of context.candidates) {
-    const current = byHost.get(tab.hostname) ?? [];
+    const key = normaliseWebsiteHostname(tab.hostname);
+    const current = byHost.get(key) ?? [];
     current.push(tab.id);
-    byHost.set(tab.hostname, current);
+    byHost.set(key, current);
   }
   const groups: Array<{ name: string; tabIds: string[] }> = [];
   const ungrouped: string[] = [];
@@ -256,6 +264,8 @@ function isRetryableModelOutputError(error: unknown): boolean {
 export class OrganiseTabsTool {
   readonly id = "organise-tabs" as const;
   private lastUndoToken: string | null = null;
+  private originalContext: AiTabOrganizationContext | null = null;
+  private expectedAppliedRevision: string | null = null;
 
   constructor(private readonly tabs: TabManager) {}
 
@@ -274,7 +284,20 @@ export class OrganiseTabsTool {
     provider: StructuredModelProvider | null,
     signal: AbortSignal,
   ): Promise<InternalOrganiseTabsProposal> {
-    const context = this.tabs.getAiTabOrganizationContext();
+    const liveContext = this.tabs.getAiTabOrganizationContext();
+    const reusing = Boolean(request.reuseOriginalSnapshot);
+    if (reusing && (!this.originalContext || !this.expectedAppliedRevision)) {
+      throw new Error(
+        "The original tab snapshot is no longer available. Refresh the snapshot and try again.",
+      );
+    }
+    if (reusing && liveContext.revision !== this.expectedAppliedRevision) {
+      throw new Error(
+        "Your tabs changed after they were organised. Refresh the snapshot before organising again.",
+      );
+    }
+    const context = reusing ? this.originalContext! : liveContext;
+    if (!reusing) this.originalContext = structuredClone(context);
     if (context.candidates.length < 2) {
       throw new Error(
         "Open at least two regular, unpinned website tabs to organise.",
@@ -288,7 +311,9 @@ export class OrganiseTabsTool {
     if (request.groupingMode === "website") {
       return {
         publicProposal: websiteProposal(context),
-        revision: context.revision,
+        revision: liveContext.revision,
+        context,
+        replacesAppliedLayout: reusing,
       };
     }
     if (!provider) throw new Error("The selected AI provider is unavailable.");
@@ -344,7 +369,9 @@ export class OrganiseTabsTool {
             request.provider,
             request.model,
           ),
-          revision: context.revision,
+          revision: liveContext.revision,
+          context,
+          replacesAppliedLayout: reusing,
         };
       } catch (error) {
         lastError = error;
@@ -364,15 +391,22 @@ export class OrganiseTabsTool {
     prepared: InternalOrganiseTabsProposal,
     edited: OrganiseTabsProposal,
   ): Promise<AiToolApplyResult> {
-    const context = this.tabs.getAiTabOrganizationContext();
-    if (context.revision !== prepared.revision) {
+    const liveContext = this.tabs.getAiTabOrganizationContext();
+    if (liveContext.revision !== prepared.revision) {
       throw new Error(
         "Your tabs changed while the plan was open. Organise them again.",
       );
     }
-    const plan = validateEditedProposal(edited, context);
-    const applied = await this.tabs.applyAiTabOrganization(plan);
+    const plan = {
+      ...validateEditedProposal(edited, prepared.context),
+      revision: prepared.revision,
+    };
+    const applied = prepared.replacesAppliedLayout
+      ? await this.tabs.applyAiTabOrganization(plan, this.lastUndoToken)
+      : await this.tabs.applyAiTabOrganization(plan);
     this.lastUndoToken = applied.undoToken;
+    this.expectedAppliedRevision =
+      this.tabs.getAiTabOrganizationContext().revision;
     return {
       toolId: this.id,
       summary: `Organised ${applied.organisedTabCount} tabs into ${applied.groupCount} ${applied.groupCount === 1 ? "group" : "groups"}.`,
@@ -387,6 +421,8 @@ export class OrganiseTabsTool {
       throw new Error("There is no AI tab organisation to undo.");
     const restored = await this.tabs.undoAiTabOrganization(this.lastUndoToken);
     this.lastUndoToken = null;
+    this.originalContext = null;
+    this.expectedAppliedRevision = null;
     return {
       toolId: this.id,
       summary: "Restored the previous tab layout.",

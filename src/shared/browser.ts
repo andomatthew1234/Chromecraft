@@ -883,8 +883,13 @@ export interface ChromecraftApi {
   refreshAiModels(provider?: AiProviderId): Promise<AiToolsSnapshot>;
   installRecommendedOllamaModel(): Promise<AiToolsSnapshot>;
   setAiProvider(provider: AiProviderId): Promise<AiToolsSnapshot>;
+  setAiOrganiserProvider(provider: AiProviderId): Promise<AiToolsSnapshot>;
   setAiGroupingMode(mode: AiGroupingMode): Promise<AiToolsSnapshot>;
   setAiModel(provider: AiProviderId, model: string): Promise<AiToolsSnapshot>;
+  setAiOrganiserModel(
+    provider: AiProviderId,
+    model: string,
+  ): Promise<AiToolsSnapshot>;
   setGeminiApiKey(update: GeminiApiKeyUpdate): Promise<AiToolsSnapshot>;
   removeGeminiApiKey(): Promise<AiToolsSnapshot>;
   previewAiTool(request: OrganiseTabsRequest): Promise<OrganiseTabsProposal>;

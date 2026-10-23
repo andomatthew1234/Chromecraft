@@ -841,6 +841,13 @@ function requireOrganiseTabsRequest(value: unknown): OrganiseTabsRequest {
             "rememberCustomInstructions",
           ),
     cloudConsent: requireBoolean(request.cloudConsent, "cloudConsent"),
+    reuseOriginalSnapshot:
+      request.reuseOriginalSnapshot === undefined
+        ? undefined
+        : requireBoolean(
+            request.reuseOriginalSnapshot,
+            "reuseOriginalSnapshot",
+          ),
   };
 }
 
@@ -1017,6 +1024,9 @@ function registerIpc(): void {
   ipcMain.handle(channels.setAiProvider, (event, provider: unknown) =>
     requireAiTools(event).setProvider(requireAiProvider(provider)),
   );
+  ipcMain.handle(channels.setAiOrganiserProvider, (event, provider: unknown) =>
+    requireAiTools(event).setOrganiserProvider(requireAiProvider(provider)),
+  );
   ipcMain.handle(channels.setAiGroupingMode, (event, mode: unknown) =>
     requireAiTools(event).setGroupingMode(requireAiGroupingMode(mode)),
   );
@@ -1024,6 +1034,14 @@ function registerIpc(): void {
     channels.setAiModel,
     (event, provider: unknown, model: unknown) =>
       requireAiTools(event).setModel(
+        requireAiProvider(provider),
+        requireString(model, "model", 256),
+      ),
+  );
+  ipcMain.handle(
+    channels.setAiOrganiserModel,
+    (event, provider: unknown, model: unknown) =>
+      requireAiTools(event).setOrganiserModel(
         requireAiProvider(provider),
         requireString(model, "model", 256),
       ),

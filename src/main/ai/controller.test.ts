@@ -139,12 +139,72 @@ describe("AiToolsController", () => {
 
     expect(controller.snapshot).toMatchObject({
       provider: "gemini",
+      organiserProvider: "gemini",
+      organiserModels: {
+        ollama: "qwen3:1.7b",
+        gemini: "gemini-3.5-flash-lite",
+      },
       preferredGroupingMode: "smart",
       ollama: { selectedModel: "qwen3:1.7b" },
       gemini: {
         selectedModel: "gemini-3.5-flash-lite",
         cloudConsentGranted: true,
       },
+    });
+  });
+
+  it("persists organiser models independently from Scout conversation models", async () => {
+    const file = await statePath();
+    const controller = new AiToolsController({
+      stateFilePath: file,
+      ollama: {
+        listModels: vi.fn().mockResolvedValue([
+          {
+            name: "qwen3:1.7b",
+            size: 1_000,
+            modifiedAt: null,
+            family: "qwen3",
+            parameterSize: "1.7B",
+          },
+          {
+            name: "qwen3:4b",
+            size: 2_000,
+            modifiedAt: null,
+            family: "qwen3",
+            parameterSize: "4B",
+          },
+        ]),
+      } as unknown as OllamaClient,
+      credentials: credentials(),
+      organiseTabs: organiser(),
+    });
+
+    await controller.refreshModels("ollama");
+    await controller.setModel("ollama", "qwen3:4b");
+    await controller.setOrganiserModel("ollama", "qwen3:1.7b");
+    await controller.setOrganiserProvider("ollama");
+
+    expect(controller.snapshot.ollama.selectedModel).toBe("qwen3:4b");
+    expect(controller.snapshot.organiserModels.ollama).toBe("qwen3:1.7b");
+    expect(JSON.parse(await readFile(file, "utf8"))).toMatchObject({
+      provider: "ollama",
+      organiserProvider: "ollama",
+      ollamaModel: "qwen3:4b",
+      organiserOllamaModel: "qwen3:1.7b",
+    });
+
+    const restarted = new AiToolsController({
+      stateFilePath: file,
+      ollama: { listModels: vi.fn() } as unknown as OllamaClient,
+      credentials: credentials(),
+      organiseTabs: organiser(),
+    });
+    await restarted.initialize();
+    expect(restarted.snapshot).toMatchObject({
+      provider: "ollama",
+      organiserProvider: "ollama",
+      ollama: { selectedModel: "qwen3:4b" },
+      organiserModels: { ollama: "qwen3:1.7b" },
     });
   });
 

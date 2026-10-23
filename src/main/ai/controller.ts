@@ -109,6 +109,11 @@ export class AiToolsController {
   private readonly organiseTabs: OrganiseTabsTool;
   private readonly onChange?: AiToolsControllerOptions["onChange"];
   private provider: AiProviderId = "ollama";
+  private organiserProvider: AiProviderId = "ollama";
+  private organiserModels: Record<AiProviderId, string | null> = {
+    ollama: null,
+    gemini: null,
+  };
   private preferredGroupingMode: AiGroupingMode = "smart";
   private ollamaState: AiProviderSnapshot = emptyProvider();
   private geminiState: GeminiProviderSnapshot;
@@ -132,6 +137,8 @@ export class AiToolsController {
       this.provider === "ollama" ? this.ollamaState : this.geminiState;
     return structuredClone({
       provider: this.provider,
+      organiserProvider: this.organiserProvider,
+      organiserModels: this.organiserModels,
       preferredGroupingMode: this.preferredGroupingMode,
       eligibleTabCount: this.organiseTabs.eligibleTabCount,
       cloudDataPreview: this.organiseTabs.cloudDataPreview,
@@ -153,6 +160,10 @@ export class AiToolsController {
       ) as Record<string, unknown> | null;
       if (stored && validProvider(stored.provider))
         this.provider = stored.provider;
+      this.organiserProvider =
+        stored && validProvider(stored.organiserProvider)
+          ? stored.organiserProvider
+          : this.provider;
       if (stored && validGrouping(stored.preferredGroupingMode)) {
         this.preferredGroupingMode = stored.preferredGroupingMode;
       }
@@ -162,6 +173,14 @@ export class AiToolsController {
       if (stored && typeof stored.geminiModel === "string") {
         this.geminiState.selectedModel = stored.geminiModel.slice(0, 128);
       }
+      this.organiserModels.ollama =
+        stored && typeof stored.organiserOllamaModel === "string"
+          ? stored.organiserOllamaModel.slice(0, 256)
+          : this.ollamaState.selectedModel;
+      this.organiserModels.gemini =
+        stored && typeof stored.organiserGeminiModel === "string"
+          ? stored.organiserGeminiModel.slice(0, 128)
+          : this.geminiState.selectedModel;
       this.geminiState.cloudConsentGranted =
         stored?.cloudConsentGranted === true;
     } catch (error) {
@@ -176,6 +195,16 @@ export class AiToolsController {
   async setProvider(provider: AiProviderId): Promise<AiToolsSnapshot> {
     this.assertNotBusy();
     this.provider = provider;
+    this.prepared = null;
+    this.run = idleRun();
+    await this.persist();
+    this.emit();
+    return this.snapshot;
+  }
+
+  async setOrganiserProvider(provider: AiProviderId): Promise<AiToolsSnapshot> {
+    this.assertNotBusy();
+    this.organiserProvider = provider;
     this.prepared = null;
     this.run = idleRun();
     await this.persist();
@@ -209,6 +238,7 @@ export class AiToolsController {
     try {
       if (provider === "ollama") {
         const models = await this.ollama.listModels(controller.signal);
+        const preferred = chooseOllamaModel(models);
         this.ollamaState = {
           connection: "connected",
           models,
@@ -218,14 +248,19 @@ export class AiToolsController {
               (model) => model.name === this.ollamaState.selectedModel,
             )
               ? this.ollamaState.selectedModel
-              : chooseOllamaModel(models),
+              : preferred,
           error:
             models.length === 0
               ? "Ollama is running, but no models are installed."
-              : chooseOllamaModel(models)
+              : preferred
                 ? null
                 : "No suitably small local model is installed.",
         };
+        this.organiserModels.ollama =
+          this.organiserModels.ollama &&
+          models.some((model) => model.name === this.organiserModels.ollama)
+            ? this.organiserModels.ollama
+            : preferred;
       } else {
         const apiKey = await this.credentials.get();
         if (!apiKey) throw new Error("Add a Gemini API key in Settings first.");
@@ -249,6 +284,13 @@ export class AiToolsController {
             ? null
             : "No compatible Gemini text models were found.",
         };
+        this.organiserModels.gemini =
+          this.organiserModels.gemini &&
+          models.some((model) => model.name === this.organiserModels.gemini)
+            ? this.organiserModels.gemini
+            : (models.find((model) => model.recommended)?.name ??
+              models[0]?.name ??
+              null);
       }
       this.run = idleRun();
       await this.persist();
@@ -344,6 +386,25 @@ export class AiToolsController {
     return this.snapshot;
   }
 
+  async setOrganiserModel(
+    provider: AiProviderId,
+    model: string,
+  ): Promise<AiToolsSnapshot> {
+    this.assertNotBusy();
+    const state = provider === "ollama" ? this.ollamaState : this.geminiState;
+    if (!state.models.some((candidate) => candidate.name === model)) {
+      throw new TypeError(
+        `Choose an available ${provider === "ollama" ? "Ollama" : "Gemini"} model.`,
+      );
+    }
+    this.organiserModels[provider] = model;
+    this.prepared = null;
+    this.run = idleRun();
+    await this.persist();
+    this.emit();
+    return this.snapshot;
+  }
+
   async setGeminiApiKey(update: GeminiApiKeyUpdate): Promise<AiToolsSnapshot> {
     this.assertNotBusy();
     const apiKey = update.apiKey.trim();
@@ -376,6 +437,7 @@ export class AiToolsController {
     this.assertNotBusy();
     await this.credentials.remove();
     this.geminiState = emptyGemini(this.credentials.secureStorageAvailable);
+    this.organiserModels.gemini = null;
     this.prepared = null;
     this.run = idleRun();
     await this.persist();
@@ -512,6 +574,8 @@ export class AiToolsController {
         stage: "complete",
         label: result.summary,
         undoAvailable: result.undoAvailable,
+        organisedTabCount: result.organisedTabCount,
+        groupCount: result.groupCount,
       };
       this.emit();
       return result;
@@ -626,9 +690,12 @@ export class AiToolsController {
     const temporary = `${this.stateFilePath}.${process.pid}.${this.writeCounter++}.tmp`;
     const preferences = {
       provider: this.provider,
+      organiserProvider: this.organiserProvider,
       preferredGroupingMode: this.preferredGroupingMode,
       ollamaModel: this.ollamaState.selectedModel,
       geminiModel: this.geminiState.selectedModel,
+      organiserOllamaModel: this.organiserModels.ollama,
+      organiserGeminiModel: this.organiserModels.gemini,
       cloudConsentGranted: this.geminiState.cloudConsentGranted,
     };
     await fs.writeFile(temporary, `${JSON.stringify(preferences, null, 2)}\n`, {

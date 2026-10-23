@@ -416,7 +416,7 @@ describe("tab organization", () => {
         groups: [{ name: "Work", color: "green", tabIds: ["a", "b"] }],
         ungroupedTabIds: ["c"],
       }),
-    ).rejects.toThrow("changed while Ollama was thinking");
+    ).rejects.toThrow("changed while the plan was open");
     expect([...tabs.values()].map((tab) => tab.groupId)).toEqual([
       null,
       null,

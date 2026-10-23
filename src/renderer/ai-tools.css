@@ -542,6 +542,36 @@
   color: var(--md-on-surface-variant);
 }
 
+.scout-default-context-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.scout-default-context-options label {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 10px;
+  border: 1px solid color-mix(in srgb, var(--md-outline) 32%, transparent);
+  border-radius: var(--shape-full);
+  color: var(--md-on-surface-variant);
+  background: var(--md-surface-high);
+  font: var(--type-label-large);
+  cursor: pointer;
+}
+
+.scout-default-context-options label:has(input:checked) {
+  border-color: color-mix(in srgb, var(--md-primary) 38%, transparent);
+  color: var(--md-on-primary-container);
+  background: var(--md-primary-container);
+}
+
+.scout-default-context-options input {
+  accent-color: var(--md-primary);
+}
+
 .settings-inline-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1013,7 +1043,7 @@
 .ai-tools-panel {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
-  width: min(500px, 100%);
+  width: min(620px, 100%);
   min-height: 0;
   max-height: min(720px, calc(100dvh - var(--chrome-height) - 32px));
   animation: ai-dialog-enter 180ms cubic-bezier(0.2, 0, 0, 1);
@@ -1032,6 +1062,141 @@
 .ai-tools-header .organiser-avatar {
   width: 40px;
   height: 36px;
+}
+
+.scout-method-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ai-tools-panel .scout-method-grid > button {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-height: 82px;
+  padding: 13px;
+  overflow: hidden;
+  border: 1px solid var(--md-outline-variant);
+  border-radius: 22px;
+  text-align: left;
+  color: var(--md-on-surface);
+  background: var(--md-surface-container);
+  transition:
+    border-color 180ms cubic-bezier(0.2, 0, 0, 1),
+    background-color 180ms cubic-bezier(0.2, 0, 0, 1),
+    transform 180ms cubic-bezier(0.2, 0, 0, 1),
+    box-shadow 180ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.ai-tools-panel .scout-method-grid > button:hover:not(:disabled) {
+  transform: translateY(-2px);
+  border-color: color-mix(
+    in srgb,
+    var(--md-primary) 44%,
+    var(--md-outline-variant)
+  );
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--md-scrim) 12%, transparent);
+}
+
+.ai-tools-panel .scout-method-grid > button.selected {
+  border-color: var(--md-primary);
+  background: var(--md-primary-container);
+  box-shadow: inset 0 0 0 1px var(--md-primary);
+}
+
+.scout-method-grid button > span:nth-child(2) {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.scout-method-grid strong {
+  font: var(--type-label-large);
+}
+
+.scout-method-grid small {
+  color: var(--md-on-surface-variant);
+  font: var(--type-body-small);
+  white-space: nowrap;
+}
+
+.scout-method-grid button > .material-symbols-rounded:last-child {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  opacity: 0;
+  color: var(--md-primary);
+  font-size: 18px;
+  transform: scale(0.65);
+  transition:
+    opacity 160ms ease,
+    transform 160ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.scout-method-grid button.selected > .material-symbols-rounded:last-child {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.scout-provider-logo,
+.scout-website-logo {
+  width: 30px;
+  height: 30px;
+  flex: none;
+}
+
+.scout-ollama-logo {
+  object-fit: contain;
+}
+
+.scout-provider-wordmark {
+  display: block;
+  width: min(296px, 100%);
+  height: auto;
+  user-select: none;
+}
+
+:root[data-theme="dark"] .scout-ollama-logo,
+:root[data-theme="dark"] .scout-provider-wordmark {
+  filter: invert(1);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .scout-ollama-logo,
+  :root:not([data-theme="light"]) .scout-provider-wordmark {
+    filter: invert(1);
+  }
+}
+
+.scout-website-logo {
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  color: var(--md-primary);
+  background: var(--md-secondary-container);
+  font-size: 23px;
+}
+
+.ai-original-snapshot-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 13px;
+  border-radius: 16px;
+  color: var(--md-on-tertiary-container);
+  background: var(--md-tertiary-container);
+}
+
+.ai-original-snapshot-note > span {
+  display: grid;
+  gap: 2px;
+}
+
+.ai-original-snapshot-note small {
+  font: var(--type-body-small);
 }
 
 .ai-tools-header h1 {
@@ -1302,8 +1467,79 @@
 }
 
 .ai-tools-success {
-  min-height: 140px;
-  padding: 24px 20px;
+  min-height: 260px;
+  padding: 32px 28px;
+  display: grid;
+  place-content: center;
+  grid-template-columns: auto minmax(0, 360px);
+  gap: 22px;
+  background:
+    radial-gradient(
+      circle at 28% 50%,
+      color-mix(in srgb, var(--md-primary) 13%, transparent),
+      transparent 38%
+    ),
+    var(--md-surface);
+}
+
+.ai-success-indicator {
+  width: 72px;
+  height: 72px;
+  display: grid;
+  place-items: center;
+  border-radius: 28px;
+  color: var(--md-on-primary-container);
+  background: var(--md-primary-container);
+  box-shadow: 0 10px 28px color-mix(in srgb, var(--md-primary) 18%, transparent);
+  animation: ai-success-pop 520ms cubic-bezier(0.2, 0.9, 0.2, 1.2);
+}
+
+.ai-success-indicator .material-symbols-rounded {
+  font-size: 38px;
+}
+
+.ai-success-copy {
+  display: grid;
+  gap: 8px;
+}
+
+.ai-success-copy h2,
+.ai-success-copy p {
+  margin: 0;
+}
+
+.ai-success-copy h2 {
+  font: var(--type-headline-small);
+}
+
+.ai-success-copy p,
+.ai-success-copy small {
+  color: var(--md-on-surface-variant);
+  font: var(--type-body-small);
+}
+
+.ai-success-metrics {
+  display: flex;
+  gap: 8px;
+}
+
+.ai-success-metrics span {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 7px 11px;
+  border-radius: 999px;
+  color: var(--md-on-secondary-container);
+  background: var(--md-secondary-container);
+  font: var(--type-label-medium);
+}
+
+.ai-success-metrics strong {
+  font: var(--type-title-medium);
+}
+
+.ai-remove-group {
+  color: var(--md-on-surface-variant);
 }
 
 .ai-tools-footer {
@@ -1347,6 +1583,13 @@
   }
 }
 
+@keyframes ai-success-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.72) rotate(-8deg);
+  }
+}
+
 @media (max-width: 560px) {
   .ai-tools-overlay {
     padding: 8px;
@@ -1380,6 +1623,20 @@
   .ai-tools-footer > div > button {
     flex: 1;
   }
+
+  .scout-method-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ai-tools-success {
+    grid-template-columns: 1fr;
+    justify-items: center;
+    text-align: center;
+  }
+
+  .ai-success-metrics {
+    justify-content: center;
+  }
 }
 
 @media (max-height: 620px) {
@@ -1405,6 +1662,10 @@
   .ai-tools-panel,
   .ai-more-options-content,
   .ai-cloud-consent-prompt {
+    animation: none;
+  }
+
+  .ai-success-indicator {
     animation: none;
   }
 

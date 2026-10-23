@@ -14,6 +14,12 @@ import type {
   OrganiseTabsRequest,
 } from "../shared/ai-tools";
 import type { TabGroupColor } from "../shared/browser";
+import { StaticAssistantAvatar } from "./AssistantAvatar";
+import {
+  GeminiLogo,
+  OllamaLogo,
+  WebsiteGroupingLogo,
+} from "./ScoutProviderLogo";
 import "./ai-tools.css";
 
 const GROUP_COLORS: TabGroupColor[] = [
@@ -44,21 +50,6 @@ function ChevronDownIcon({ expanded = false }: { expanded?: boolean }) {
       aria-hidden="true"
     >
       <path d="m7 9.5 5 5 5-5" />
-    </svg>
-  );
-}
-
-function StaticAssistantAvatar() {
-  return (
-    <svg className="organiser-avatar" viewBox="0 0 64 56" aria-hidden="true">
-      <path
-        d="M13 7.5C7.5 10.8 5 17.1 5 27.7c0 10.9 2.7 17.2 8.7 20.4 4.7 2.6 31.9 2.6 36.6 0 6-3.2 8.7-9.5 8.7-20.4 0-10.6-2.5-16.9-8-20.2C46.2 4.6 17.8 4.6 13 7.5Z"
-        fill="#252937"
-      />
-      <ellipse cx="21" cy="28" rx="8" ry="11" fill="#f7fbff" />
-      <ellipse cx="43" cy="28" rx="8" ry="11" fill="#f7fbff" />
-      <ellipse cx="21" cy="28" rx="3.5" ry="5.5" fill="#68ded6" />
-      <ellipse cx="43" cy="28" rx="3.5" ry="5.5" fill="#68ded6" />
     </svg>
   );
 }
@@ -113,6 +104,7 @@ export function OrganiseTabsPanel({
   const [consentOpen, setConsentOpen] = useState(false);
   const [edited, setEdited] = useState<OrganiseTabsProposal | null>(proposal);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
+  const [organiseAgain, setOrganiseAgain] = useState(false);
   const modelChecking = snapshot.run.stage === "checking";
   const busy = [
     "preparing",
@@ -123,12 +115,17 @@ export function OrganiseTabsPanel({
     "applying",
   ].includes(snapshot.run.stage);
   const ready = snapshot.run.stage === "ready" && edited;
-  const complete = snapshot.run.stage === "complete";
+  const complete = snapshot.run.stage === "complete" && !organiseAgain;
+  const method =
+    snapshot.preferredGroupingMode === "website"
+      ? "website"
+      : snapshot.organiserProvider;
   const providerState =
-    snapshot.provider === "ollama" ? snapshot.ollama : snapshot.gemini;
-  const selectedModel = providerState.selectedModel ?? "";
+    snapshot.organiserProvider === "ollama" ? snapshot.ollama : snapshot.gemini;
+  const selectedModel =
+    snapshot.organiserModels[snapshot.organiserProvider] ?? "";
   const requiresCloudConsent =
-    snapshot.provider === "gemini" &&
+    snapshot.organiserProvider === "gemini" &&
     snapshot.preferredGroupingMode === "smart" &&
     !snapshot.gemini.cloudConsentGranted;
   const canOrganise =
@@ -137,7 +134,8 @@ export function OrganiseTabsPanel({
     snapshot.eligibleTabCount >= 2 &&
     (snapshot.preferredGroupingMode === "website" ||
       (Boolean(selectedModel) &&
-        (snapshot.provider !== "gemini" || snapshot.gemini.apiKeyConfigured)));
+        (snapshot.organiserProvider !== "gemini" ||
+          snapshot.gemini.apiKeyConfigured)));
 
   useEffect(() => setEdited(proposal), [proposal]);
 
@@ -196,11 +194,12 @@ export function OrganiseTabsPanel({
 
   const request = useMemo<OrganiseTabsRequest>(
     () => ({
-      provider: snapshot.provider,
+      provider: snapshot.organiserProvider,
       model: selectedModel,
       groupingMode: snapshot.preferredGroupingMode,
       customInstructions: customInstructions.trim() || undefined,
       cloudConsent: snapshot.gemini.cloudConsentGranted || cloudConsent,
+      reuseOriginalSnapshot: organiseAgain || undefined,
     }),
     [
       cloudConsent,
@@ -208,7 +207,8 @@ export function OrganiseTabsPanel({
       selectedModel,
       snapshot.gemini.cloudConsentGranted,
       snapshot.preferredGroupingMode,
-      snapshot.provider,
+      snapshot.organiserProvider,
+      organiseAgain,
     ],
   );
 
@@ -234,6 +234,27 @@ export function OrganiseTabsPanel({
           }
         : current,
     );
+  };
+
+  const removeGroup = (index: number) => {
+    setEdited((current) => {
+      if (!current) return current;
+      const removed = current.groups[index];
+      if (!removed) return current;
+      return {
+        ...current,
+        groups: current.groups.filter((_, groupIndex) => groupIndex !== index),
+        ungroupedTabIds: [...current.ungroupedTabIds, ...removed.tabIds],
+        ungroupedTabTitles: [
+          ...current.ungroupedTabTitles,
+          ...removed.tabTitles,
+        ],
+        ungroupedTabFavicons: [
+          ...current.ungroupedTabFavicons,
+          ...removed.tabFavicons,
+        ],
+      };
+    });
   };
 
   const moveTab = (
@@ -336,13 +357,11 @@ export function OrganiseTabsPanel({
         onKeyDown={keepFocusInside}
       >
         <header className="ai-tools-header">
-          <StaticAssistantAvatar />
+          <StaticAssistantAvatar className="organiser-avatar" size={40} />
           <div>
-            <span className="ai-tools-eyebrow">Chromecraft AI</span>
+            <span className="ai-tools-eyebrow">Scout</span>
             <h1 id="organise-tabs-title">Organise tabs</h1>
-            <p>
-              Choose a provider, then review every group before it is applied.
-            </p>
+            <p>Pick a method. Scout will draft a plan for you to approve.</p>
           </div>
           <span className="ai-open-tab-count" aria-live="polite">
             {contextStatus === "loading"
@@ -364,166 +383,220 @@ export function OrganiseTabsPanel({
         <div className="ai-tools-content">
           {!ready && !complete && !busy && (
             <div className="ai-tools-setup">
+              {organiseAgain && (
+                <div className="ai-original-snapshot-note" role="status">
+                  <MaterialIcon name="history" />
+                  <span>
+                    <strong>Organise the original tabs again</strong>
+                    <small>
+                      Your current layout stays active until you approve a
+                      replacement.
+                    </small>
+                  </span>
+                </div>
+              )}
               <div
-                className="ai-provider-segmented"
+                className="scout-method-grid"
                 role="group"
-                aria-label="AI provider"
+                aria-label="Organisation method"
               >
-                {(["ollama", "gemini"] as AiProviderId[]).map((provider) => (
-                  <button
-                    type="button"
-                    key={provider}
-                    className={snapshot.provider === provider ? "selected" : ""}
-                    aria-pressed={snapshot.provider === provider}
-                    disabled={modelChecking}
-                    onClick={() => {
-                      setConsentOpen(false);
-                      selectProvider(provider);
-                    }}
-                  >
-                    <MaterialIcon
-                      name={provider === "ollama" ? "memory" : "cloud"}
-                    />
-                    {provider === "ollama" ? "Ollama" : "Gemini"}
-                  </button>
-                ))}
+                <button
+                  type="button"
+                  className={method === "gemini" ? "selected" : ""}
+                  aria-pressed={method === "gemini"}
+                  disabled={modelChecking}
+                  onClick={() => {
+                    setConsentOpen(false);
+                    selectProvider("gemini");
+                    selectGroupingMode("smart");
+                  }}
+                >
+                  <GeminiLogo />
+                  <span>
+                    <strong>Google Gemini</strong>
+                    <small>Online · smart topics</small>
+                  </span>
+                  <MaterialIcon name="check_circle" />
+                </button>
+                <button
+                  type="button"
+                  className={method === "ollama" ? "selected" : ""}
+                  aria-pressed={method === "ollama"}
+                  disabled={modelChecking}
+                  onClick={() => {
+                    setConsentOpen(false);
+                    selectProvider("ollama");
+                    selectGroupingMode("smart");
+                  }}
+                >
+                  <OllamaLogo />
+                  <span>
+                    <strong>Local Ollama</strong>
+                    <small>On-device · private</small>
+                  </span>
+                  <MaterialIcon name="check_circle" />
+                </button>
+                <button
+                  type="button"
+                  className={method === "website" ? "selected" : ""}
+                  aria-pressed={method === "website"}
+                  disabled={modelChecking}
+                  onClick={() => {
+                    setConsentOpen(false);
+                    selectGroupingMode("website");
+                  }}
+                >
+                  <WebsiteGroupingLogo />
+                  <span>
+                    <strong>Sort by website</strong>
+                    <small>Instant · no AI</small>
+                  </span>
+                  <MaterialIcon name="check_circle" />
+                </button>
               </div>
 
-              <section
-                aria-labelledby="model-title"
-                className="ai-compact-model"
-              >
-                <div className="ai-compact-field-heading">
-                  <label id="model-title" htmlFor="organiser-model">
-                    Model
-                  </label>
-                  <button
-                    type="button"
-                    className={modelChecking ? "is-checking" : ""}
-                    aria-label="Refresh available models"
-                    disabled={
-                      modelChecking ||
-                      (snapshot.provider === "gemini" &&
-                        !snapshot.gemini.apiKeyConfigured)
-                    }
-                    onClick={() => refreshModels(snapshot.provider)}
-                  >
-                    <MaterialIcon name="refresh" />
-                  </button>
-                </div>
-                {snapshot.provider === "gemini" &&
-                !snapshot.gemini.apiKeyConfigured ? (
-                  <div className="ai-provider-resolution ai-provider-resolution-compact">
-                    <MaterialIcon name="key" />
-                    <span>
-                      <strong>Gemini needs an API key</strong>
-                      <small>Configure it once in Settings → AI.</small>
-                    </span>
-                    <button type="button" onClick={openAiSettings}>
-                      Configure Gemini
-                    </button>
-                  </div>
-                ) : providerState.models.length ? (
-                  <div className="ai-model-field">
-                    <select
-                      id="organiser-model"
-                      aria-label={`${snapshot.provider === "ollama" ? "Ollama" : "Gemini"} model`}
-                      value={selectedModel}
-                      disabled={modelChecking}
-                      onChange={(event) =>
-                        selectModel(snapshot.provider, event.target.value)
-                      }
-                    >
-                      {!selectedModel && (
-                        <option value="">Choose an installed model</option>
-                      )}
-                      {providerState.models.map((model) => (
-                        <option value={model.name} key={model.name}>
-                          {formatModel(model, snapshot.provider)}
-                        </option>
-                      ))}
-                    </select>
-                    <ChevronDownIcon />
-                  </div>
-                ) : (
-                  <div className="ai-provider-resolution ai-provider-resolution-compact">
-                    <MaterialIcon
-                      name={
-                        modelChecking
-                          ? "progress_activity"
-                          : snapshot.provider === "ollama"
-                            ? "download"
-                            : "refresh"
-                      }
-                    />
-                    <span>
-                      <strong>
-                        {modelChecking
-                          ? "Checking available models"
-                          : snapshot.provider === "ollama"
-                            ? "No small local model found"
-                            : "Check available Gemini models"}
-                      </strong>
-                      <small>
-                        {providerState.error ??
-                          (snapshot.provider === "ollama"
-                            ? "Recommended: qwen3:1.7b"
-                            : "Configure and test your API key first.")}
-                      </small>
-                    </span>
+              {method !== "website" && (
+                <section
+                  aria-labelledby="model-title"
+                  className="ai-compact-model"
+                >
+                  <div className="ai-compact-field-heading">
+                    <label id="model-title" htmlFor="organiser-model">
+                      Model
+                    </label>
                     <button
                       type="button"
-                      disabled={modelChecking}
-                      onClick={() => refreshModels(snapshot.provider)}
+                      className={modelChecking ? "is-checking" : ""}
+                      aria-label="Refresh available models"
+                      disabled={
+                        modelChecking ||
+                        (snapshot.organiserProvider === "gemini" &&
+                          !snapshot.gemini.apiKeyConfigured)
+                      }
+                      onClick={() => refreshModels(snapshot.organiserProvider)}
                     >
-                      {modelChecking ? "Checking…" : "Check models"}
+                      <MaterialIcon name="refresh" />
                     </button>
                   </div>
-                )}
-                {snapshot.provider === "ollama" &&
-                  snapshot.ollama.connection === "connected" &&
-                  !snapshot.ollama.selectedModel &&
-                  (!installConfirm ? (
-                    <button
-                      type="button"
-                      className="ai-install-model"
-                      onClick={() => setInstallConfirm(true)}
-                    >
-                      <MaterialIcon name="download" /> Install recommended
-                      qwen3:1.7b
-                    </button>
-                  ) : (
-                    <div
-                      className="ai-install-confirm"
-                      role="group"
-                      aria-label="Confirm model download"
-                    >
+                  {snapshot.organiserProvider === "gemini" &&
+                  !snapshot.gemini.apiKeyConfigured ? (
+                    <div className="ai-provider-resolution ai-provider-resolution-compact">
+                      <MaterialIcon name="key" />
                       <span>
-                        <strong>Download qwen3:1.7b with Ollama?</strong>
+                        <strong>Gemini needs an API key</strong>
+                        <small>Configure it once in Settings → AI.</small>
+                      </span>
+                      <button type="button" onClick={openAiSettings}>
+                        Configure Gemini
+                      </button>
+                    </div>
+                  ) : providerState.models.length ? (
+                    <div className="ai-model-field">
+                      <select
+                        id="organiser-model"
+                        aria-label={`${snapshot.organiserProvider === "ollama" ? "Ollama" : "Gemini"} model`}
+                        value={selectedModel}
+                        disabled={modelChecking}
+                        onChange={(event) =>
+                          selectModel(
+                            snapshot.organiserProvider,
+                            event.target.value,
+                          )
+                        }
+                      >
+                        {!selectedModel && (
+                          <option value="">Choose an installed model</option>
+                        )}
+                        {providerState.models.map((model) => (
+                          <option value={model.name} key={model.name}>
+                            {formatModel(model, snapshot.organiserProvider)}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDownIcon />
+                    </div>
+                  ) : (
+                    <div className="ai-provider-resolution ai-provider-resolution-compact">
+                      <MaterialIcon
+                        name={
+                          modelChecking
+                            ? "progress_activity"
+                            : snapshot.organiserProvider === "ollama"
+                              ? "download"
+                              : "refresh"
+                        }
+                      />
+                      <span>
+                        <strong>
+                          {modelChecking
+                            ? "Checking available models"
+                            : snapshot.organiserProvider === "ollama"
+                              ? "No small local model found"
+                              : "Check available Gemini models"}
+                        </strong>
                         <small>
-                          This downloads model files to your computer. You can
-                          cancel while it is downloading.
+                          {providerState.error ??
+                            (snapshot.organiserProvider === "ollama"
+                              ? "Recommended: qwen3:1.7b"
+                              : "Configure and test your API key first.")}
                         </small>
                       </span>
                       <button
                         type="button"
-                        onClick={() => setInstallConfirm(false)}
+                        disabled={modelChecking}
+                        onClick={() =>
+                          refreshModels(snapshot.organiserProvider)
+                        }
                       >
-                        Not now
-                      </button>
-                      <button
-                        type="button"
-                        className="ai-primary"
-                        onClick={() => {
-                          setInstallConfirm(false);
-                          installRecommendedModel();
-                        }}
-                      >
-                        Confirm download
+                        {modelChecking ? "Checking…" : "Check models"}
                       </button>
                     </div>
-                  ))}
-              </section>
+                  )}
+                  {snapshot.organiserProvider === "ollama" &&
+                    snapshot.ollama.connection === "connected" &&
+                    !snapshot.organiserModels.ollama &&
+                    (!installConfirm ? (
+                      <button
+                        type="button"
+                        className="ai-install-model"
+                        onClick={() => setInstallConfirm(true)}
+                      >
+                        <MaterialIcon name="download" /> Install recommended
+                        qwen3:1.7b
+                      </button>
+                    ) : (
+                      <div
+                        className="ai-install-confirm"
+                        role="group"
+                        aria-label="Confirm model download"
+                      >
+                        <span>
+                          <strong>Download qwen3:1.7b with Ollama?</strong>
+                          <small>
+                            This downloads model files to your computer. You can
+                            cancel while it is downloading.
+                          </small>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setInstallConfirm(false)}
+                        >
+                          Not now
+                        </button>
+                        <button
+                          type="button"
+                          className="ai-primary"
+                          onClick={() => {
+                            setInstallConfirm(false);
+                            installRecommendedModel();
+                          }}
+                        >
+                          Confirm download
+                        </button>
+                      </div>
+                    ))}
+                </section>
+              )}
 
               {contextStatus === "error" && (
                 <div className="ai-context-notice error" role="alert">
@@ -552,60 +625,16 @@ export function OrganiseTabsPanel({
                 </div>
               )}
 
-              <details className="ai-more-options">
-                <summary>
-                  <span>More options</span>
-                  <ChevronDownIcon />
-                </summary>
-                <div className="ai-more-options-content">
-                  <h2 id="grouping-title">Grouping method</h2>
-                  <div className="ai-grouping-options">
-                    <label
-                      className={
-                        snapshot.preferredGroupingMode === "smart"
-                          ? "selected"
-                          : ""
-                      }
-                    >
-                      <input
-                        type="radio"
-                        name="grouping-mode"
-                        checked={snapshot.preferredGroupingMode === "smart"}
-                        onChange={() => selectGroupingMode("smart")}
-                      />
-                      <span>
-                        <strong>
-                          Smart topics <em>Recommended</em>
-                        </strong>
-                        <small>Use the selected model.</small>
-                      </span>
-                    </label>
-                    <label
-                      className={
-                        snapshot.preferredGroupingMode === "website"
-                          ? "selected"
-                          : ""
-                      }
-                    >
-                      <input
-                        type="radio"
-                        name="grouping-mode"
-                        checked={snapshot.preferredGroupingMode === "website"}
-                        onChange={() => selectGroupingMode("website")}
-                      />
-                      <span>
-                        <strong>By website</strong>
-                        <small>
-                          Instant and deterministic. No AI required.
-                        </small>
-                      </span>
-                    </label>
-                  </div>
-                  {snapshot.preferredGroupingMode === "smart" && (
+              {method !== "website" && (
+                <details className="ai-more-options">
+                  <summary>
+                    <span>
+                      Custom instructions <small>Optional</small>
+                    </span>
+                    <ChevronDownIcon />
+                  </summary>
+                  <div className="ai-more-options-content">
                     <label className="ai-custom-instructions">
-                      <span>
-                        Custom instructions <small>Optional</small>
-                      </span>
                       <textarea
                         rows={2}
                         maxLength={1_000}
@@ -616,9 +645,9 @@ export function OrganiseTabsPanel({
                         placeholder="Keep my coding tabs separate from gaming tabs."
                       />
                     </label>
-                  )}
-                </div>
-              </details>
+                  </div>
+                </details>
+              )}
 
               {consentOpen && requiresCloudConsent && (
                 <section
@@ -678,9 +707,20 @@ export function OrganiseTabsPanel({
                   </span>
                   <button
                     type="button"
-                    onClick={() => selectGroupingMode("website")}
+                    onClick={() => {
+                      if (
+                        snapshot.run.error?.includes("Refresh the snapshot")
+                      ) {
+                        setOrganiseAgain(false);
+                        refreshContext();
+                      } else {
+                        selectGroupingMode("website");
+                      }
+                    }}
                   >
-                    Use simple website grouping
+                    {snapshot.run.error?.includes("Refresh the snapshot")
+                      ? "Refresh snapshot"
+                      : "Use website grouping"}
                   </button>
                 </div>
               )}
@@ -692,7 +732,7 @@ export function OrganiseTabsPanel({
               <span className="ai-linear-progress" aria-hidden="true">
                 <i />
               </span>
-              <StaticAssistantAvatar />
+              <StaticAssistantAvatar className="organiser-avatar" size={52} />
               <div>
                 <strong>{snapshot.run.label}</strong>
                 <p>
@@ -750,6 +790,15 @@ export function OrganiseTabsPanel({
                         }
                       />
                       <small>{group.tabIds.length}</small>
+                      <button
+                        type="button"
+                        className="ai-remove-group"
+                        aria-label={`Remove ${group.name} group`}
+                        title="Remove group and leave its tabs ungrouped"
+                        onClick={() => removeGroup(groupIndex)}
+                      >
+                        <MaterialIcon name="delete" />
+                      </button>
                       <button
                         type="button"
                         aria-label={`${expanded.has(groupIndex) ? "Collapse" : "Expand"} ${group.name}`}
@@ -855,13 +904,37 @@ export function OrganiseTabsPanel({
 
           {complete && (
             <div className="ai-tools-success">
-              <MaterialIcon name="check_circle" />
-              <div>
+              <div className="ai-success-indicator" aria-hidden="true">
+                <MaterialIcon name="check" />
+              </div>
+              <div className="ai-success-copy">
+                <span className="ai-tools-eyebrow">All sorted</span>
                 <h2>{snapshot.run.label}</h2>
-                <p>
-                  The approved layout is active. You can undo it while this
-                  session remains open.
-                </p>
+                <div className="ai-success-metrics">
+                  <span>
+                    <strong>
+                      {snapshot.run.organisedTabCount ??
+                        edited?.groups.reduce(
+                          (sum, group) => sum + group.tabIds.length,
+                          0,
+                        ) ??
+                        0}
+                    </strong>{" "}
+                    tabs
+                  </span>
+                  <span>
+                    <strong>
+                      {snapshot.run.groupCount ?? edited?.groups.length ?? 0}
+                    </strong>{" "}
+                    groups
+                  </span>
+                </div>
+                {edited && edited.groups.length > 0 && (
+                  <p>{edited.groups.map((group) => group.name).join(" · ")}</p>
+                )}
+                <small>
+                  You can undo this layout while the current window stays open.
+                </small>
               </div>
             </div>
           )}
@@ -869,11 +942,13 @@ export function OrganiseTabsPanel({
 
         <footer className="ai-tools-footer">
           <p>
-            {snapshot.preferredGroupingMode === "website"
-              ? "Website grouping runs instantly without AI."
-              : snapshot.provider === "ollama"
-                ? "Titles and domains stay with your configured Ollama instance."
-                : "Gemini may have quotas or billing depending on your Google account."}
+            {complete
+              ? "Only the approved arrangement was applied."
+              : snapshot.preferredGroupingMode === "website"
+                ? "Website grouping runs instantly without AI."
+                : snapshot.organiserProvider === "ollama"
+                  ? "Titles and domains stay with your configured Ollama instance."
+                  : "Gemini may have quotas or billing depending on your Google account."}
           </p>
           <div>
             {busy && snapshot.run.stage !== "applying" && (
@@ -882,14 +957,22 @@ export function OrganiseTabsPanel({
               </button>
             )}
             {!ready && !complete && !busy && (
-              <button
-                type="button"
-                className="ai-primary"
-                disabled={!canOrganise}
-                onClick={beginOrganisation}
-              >
-                <MaterialIcon name="tab_group" /> Organise tabs
-              </button>
+              <>
+                {organiseAgain && (
+                  <button type="button" onClick={close}>
+                    Cancel
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="ai-primary"
+                  disabled={!canOrganise}
+                  onClick={beginOrganisation}
+                >
+                  <MaterialIcon name="tab_group" />{" "}
+                  {organiseAgain ? "Create new plan" : "Organise tabs"}
+                </button>
+              </>
             )}
             {ready && (
               <>
@@ -902,7 +985,10 @@ export function OrganiseTabsPanel({
                 <button
                   type="button"
                   className="ai-primary"
-                  onClick={() => apply(edited)}
+                  onClick={() => {
+                    setOrganiseAgain(false);
+                    apply(edited);
+                  }}
                 >
                   <MaterialIcon name="done_all" /> Apply groups
                 </button>
@@ -914,9 +1000,14 @@ export function OrganiseTabsPanel({
               </button>
             )}
             {complete && (
-              <button type="button" className="ai-primary" onClick={close}>
-                Done
-              </button>
+              <>
+                <button type="button" onClick={() => setOrganiseAgain(true)}>
+                  <MaterialIcon name="refresh" /> Organise again
+                </button>
+                <button type="button" className="ai-primary" onClick={close}>
+                  Done
+                </button>
+              </>
             )}
           </div>
         </footer>

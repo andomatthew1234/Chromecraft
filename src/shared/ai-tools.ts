@@ -56,10 +56,14 @@ export interface AiRunSnapshot {
   error: string | null;
   proposalId: string | null;
   undoAvailable: boolean;
+  organisedTabCount?: number | null;
+  groupCount?: number | null;
 }
 
 export interface AiToolsSnapshot {
   provider: AiProviderId;
+  organiserProvider: AiProviderId;
+  organiserModels: Record<AiProviderId, string | null>;
   preferredGroupingMode: AiGroupingMode;
   eligibleTabCount: number;
   cloudDataPreview: Array<{ title: string; hostname: string }>;
@@ -80,6 +84,8 @@ export interface OrganiseTabsRequest {
   customInstructions?: string;
   rememberCustomInstructions?: boolean;
   cloudConsent: boolean;
+  /** Regenerate from the pre-organisation tab snapshot without changing the live layout. */
+  reuseOriginalSnapshot?: boolean;
 }
 
 export interface GeminiApiKeyUpdate {

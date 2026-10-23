@@ -6,7 +6,10 @@ import {
   type TabManager,
 } from "../tab-manager";
 import type { StructuredModelProvider } from "./structured-provider";
-import { OrganiseTabsTool } from "./organise-tabs-tool";
+import {
+  normaliseWebsiteHostname,
+  OrganiseTabsTool,
+} from "./organise-tabs-tool";
 
 const smartRequest: OrganiseTabsRequest = {
   provider: "ollama",
@@ -70,7 +73,7 @@ function setup(responses: unknown[]) {
 }
 
 describe("OrganiseTabsTool", () => {
-  it.each([5, 20, 50])(
+  it.each([2, 6, 20, 50])(
     "validates a complete model plan for %i tabs",
     async (count) => {
       const candidates = Array.from({ length: count }, (_, index) => ({
@@ -208,6 +211,49 @@ describe("OrganiseTabsTool", () => {
     expect(prepared.publicProposal.groups[0].tabIds).toEqual(["alpha", "beta"]);
     expect(prepared.publicProposal.ungroupedTabIds).toEqual(["mail"]);
     expect(harness.chatStructured).not.toHaveBeenCalled();
+  });
+
+  it("normalises common mobile and www website hostnames", () => {
+    expect(normaliseWebsiteHostname("WWW.Example.com.")).toBe("example.com");
+    expect(normaliseWebsiteHostname("m.example.com")).toBe("example.com");
+    expect(normaliseWebsiteHostname("mobile.example.com")).toBe("example.com");
+  });
+
+  it("regenerates from the original snapshot and preserves the original undo", async () => {
+    const harness = setup([
+      {
+        groups: [{ name: "Research", tabIds: ["t1", "t2"] }],
+        ungroupedTabIds: ["t3"],
+      },
+      {
+        groups: [{ name: "Inbox", tabIds: ["t2", "t3"] }],
+        ungroupedTabIds: ["t1"],
+      },
+    ]);
+    const first = await harness.tool.preview(
+      smartRequest,
+      harness.provider,
+      new AbortController().signal,
+    );
+    await harness.tool.apply(first, first.publicProposal);
+
+    const replacement = await harness.tool.preview(
+      { ...smartRequest, reuseOriginalSnapshot: true },
+      harness.provider,
+      new AbortController().signal,
+    );
+    await harness.tool.apply(replacement, replacement.publicProposal);
+
+    expect(replacement.publicProposal.groups[0].tabIds).toEqual([
+      "beta",
+      "mail",
+    ]);
+    expect(harness.applyAiTabOrganization).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        groups: [{ name: "Inbox", color: "blue", tabIds: ["beta", "mail"] }],
+      }),
+      "undo-1",
+    );
   });
 
   it("keeps a one-shot undo token and classifies topology failures", async () => {

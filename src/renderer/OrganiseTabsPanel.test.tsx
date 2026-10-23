@@ -8,6 +8,8 @@ import { OrganiseTabsPanel } from "./OrganiseTabsPanel";
 function snapshot(overrides: Partial<AiToolsSnapshot> = {}): AiToolsSnapshot {
   return {
     provider: "ollama",
+    organiserProvider: "ollama",
+    organiserModels: { ollama: "qwen3:1.7b", gemini: null },
     preferredGroupingMode: "smart",
     eligibleTabCount: 3,
     cloudDataPreview: [],
@@ -92,8 +94,11 @@ describe("OrganiseTabsPanel", () => {
       "utf8",
     );
 
-    expect(markup).toContain('aria-label="AI provider"');
-    expect(markup).toContain("More options");
+    expect(markup).toContain('aria-label="Organisation method"');
+    expect(markup).toContain("Google Gemini");
+    expect(markup).toContain("Local Ollama");
+    expect(markup).toContain("Sort by website");
+    expect(markup).toContain("Custom instructions");
     expect(markup).toContain("Organise tabs");
     expect(markup).not.toContain("Choose where it runs");
     expect(markup).not.toContain("How should tabs be grouped?");
@@ -189,6 +194,68 @@ describe("OrganiseTabsPanel", () => {
     expect(markup).toContain("Titles and domains stay");
   });
 
+  it("hides model configuration for deterministic website sorting", () => {
+    const markup = renderToStaticMarkup(
+      <OrganiseTabsPanel
+        snapshot={snapshot({ preferredGroupingMode: "website" })}
+        proposal={null}
+        {...callbacks}
+      />,
+    );
+
+    expect(markup).toContain('aria-pressed="true"');
+    expect(markup).toContain("Sort by website");
+    expect(markup).not.toContain('id="organiser-model"');
+    expect(markup).not.toContain("Custom instructions");
+  });
+
+  it("shows a result summary and no provider billing warning after apply", () => {
+    const proposal: OrganiseTabsProposal = {
+      id: "done",
+      toolId: "organise-tabs",
+      provider: "gemini",
+      model: "gemini-flash-lite",
+      createdAt: 1,
+      groups: [
+        {
+          name: "Research",
+          color: "blue",
+          tabIds: ["a", "b"],
+          tabTitles: ["A", "B"],
+          tabFavicons: [null, null],
+        },
+      ],
+      ungroupedTabIds: [],
+      ungroupedTabTitles: [],
+      ungroupedTabFavicons: [],
+      preservedTabCount: 0,
+      summary: "Organise 2 tabs into 1 group.",
+      warnings: [],
+    };
+    const markup = renderToStaticMarkup(
+      <OrganiseTabsPanel
+        snapshot={snapshot({
+          provider: "gemini",
+          run: {
+            ...snapshot().run,
+            stage: "complete",
+            label: "Organised 2 tabs into 1 group.",
+            undoAvailable: true,
+            organisedTabCount: 2,
+            groupCount: 1,
+          },
+        })}
+        proposal={proposal}
+        {...callbacks}
+      />,
+    );
+
+    expect(markup).toContain("All sorted");
+    expect(markup).toContain("Organise again");
+    expect(markup).toContain("Research");
+    expect(markup).not.toContain("quotas or billing");
+  });
+
   it("gives useful recovery guidance when Ollama is unavailable", () => {
     const current = snapshot({
       connection: "unavailable",
@@ -216,6 +283,6 @@ describe("OrganiseTabsPanel", () => {
 
     expect(markup).toContain("Ollama unavailable");
     expect(markup).toContain("Start Ollama");
-    expect(markup).toContain("Use simple website grouping");
+    expect(markup).toContain("Use website grouping");
   });
 });

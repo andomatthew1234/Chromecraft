@@ -1567,6 +1567,7 @@ export class TabManager {
 
   async applyAiTabOrganization(
     plan: AiTabOrganizationPlan,
+    preserveUndoToken: string | null = null,
   ): Promise<AppliedAiTabOrganization> {
     this.assertAiTabTopologyMutable();
     this.aiTabOrganizationMutationInProgress = true;
@@ -1574,7 +1575,7 @@ export class TabManager {
       const context = this.getAiTabOrganizationContext();
       if (plan.revision !== context.revision) {
         throw new Error(
-          "Your tabs changed while Ollama was thinking. Reanalyse them before applying this plan.",
+          "Your tabs changed while the plan was open. Refresh the snapshot before applying it.",
         );
       }
       const candidateIds = context.candidates.map((tab) => tab.id);
@@ -1591,6 +1592,19 @@ export class TabManager {
         throw new Error("The AI tab plan no longer matches the open tabs.");
       }
       const previous = this.captureTabOrganizationTopology();
+      const preservedUndo = preserveUndoToken
+        ? this.aiTabOrganizationUndo
+        : null;
+      if (
+        preserveUndoToken &&
+        (!preservedUndo ||
+          preservedUndo.token !== preserveUndoToken ||
+          preservedUndo.afterRevision !== context.revision)
+      ) {
+        throw new AiTabOrganizationUndoUnavailableError(
+          "Your tabs changed after they were organised, so the original layout can no longer be replaced safely.",
+        );
+      }
       const nextGroups = new Map(
         [...this.tabGroups.entries()]
           .filter(([, group]) => {
@@ -1649,12 +1663,13 @@ export class TabManager {
         throw error;
       }
       this.emitSnapshot();
-      const undoToken = randomUUID();
+      const undoToken = preservedUndo?.token ?? randomUUID();
       this.aiTabOrganizationUndo = {
         token: undoToken,
-        before: previous,
+        before: preservedUndo?.before ?? previous,
         afterRevision: this.aiTabOrganizationRevision(),
-        organisedTabCount: candidateIds.length,
+        organisedTabCount:
+          preservedUndo?.organisedTabCount ?? candidateIds.length,
         groupCount: plan.groups.length,
       };
       return {

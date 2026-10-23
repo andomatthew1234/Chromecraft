@@ -197,6 +197,8 @@ const data: BrowserDataSnapshot = {
 
 const aiTools: AiToolsSnapshot = {
   provider: "ollama",
+  organiserProvider: "ollama",
+  organiserModels: { ollama: null, gemini: null },
   preferredGroupingMode: "smart",
   eligibleTabCount: 0,
   cloudDataPreview: [],

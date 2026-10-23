@@ -186,6 +186,8 @@ const emptyExtensions: ExtensionsSnapshot = {
 };
 const emptyAiTools: AiToolsSnapshot = {
   provider: "ollama",
+  organiserProvider: "ollama",
+  organiserModels: { ollama: null, gemini: null },
   preferredGroupingMode: "smart",
   eligibleTabCount: 0,
   cloudDataPreview: [],
@@ -7441,7 +7443,7 @@ export function App() {
           }}
           selectProvider={(provider) => {
             void window.chromecraft
-              .setAiProvider(provider)
+              .setAiOrganiserProvider(provider)
               .then((nextAiTools) => {
                 setAiTools(nextAiTools);
                 const providerState =
@@ -7471,7 +7473,7 @@ export function App() {
           }}
           selectModel={(provider, model) => {
             void window.chromecraft
-              .setAiModel(provider, model)
+              .setAiOrganiserModel(provider, model)
               .then(setAiTools)
               .catch(() => undefined);
           }}

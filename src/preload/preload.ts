@@ -528,6 +528,11 @@ const api: ChromecraftApi = {
       channels.setAiProvider,
       provider as AiProviderId,
     ) as Promise<AiToolsSnapshot>,
+  setAiOrganiserProvider: (provider) =>
+    ipcRenderer.invoke(
+      channels.setAiOrganiserProvider,
+      provider as AiProviderId,
+    ) as Promise<AiToolsSnapshot>,
   setAiGroupingMode: (mode) =>
     ipcRenderer.invoke(
       channels.setAiGroupingMode,
@@ -536,6 +541,12 @@ const api: ChromecraftApi = {
   setAiModel: (provider, model) =>
     ipcRenderer.invoke(
       channels.setAiModel,
+      provider as AiProviderId,
+      model,
+    ) as Promise<AiToolsSnapshot>,
+  setAiOrganiserModel: (provider, model) =>
+    ipcRenderer.invoke(
+      channels.setAiOrganiserModel,
       provider as AiProviderId,
       model,
     ) as Promise<AiToolsSnapshot>,
