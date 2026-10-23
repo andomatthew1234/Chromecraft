@@ -298,19 +298,13 @@ export class OrganiseTabsTool {
       properties: {
         groups: {
           type: "array",
-          maxItems: Math.min(
-            MAX_GROUPS,
-            Math.floor(context.candidates.length / 2),
-          ),
           items: {
             type: "object",
             additionalProperties: false,
             properties: {
-              name: { type: "string", minLength: 1, maxLength: 48 },
+              name: { type: "string" },
               tabIds: {
                 type: "array",
-                minItems: 2,
-                maxItems: context.candidates.length,
                 items: { type: "string" },
               },
             },
@@ -319,7 +313,6 @@ export class OrganiseTabsTool {
         },
         ungroupedTabIds: {
           type: "array",
-          maxItems: context.candidates.length,
           items: { type: "string" },
         },
       },

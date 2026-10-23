@@ -281,6 +281,27 @@ describe("tab organization", () => {
     expect(tabs.get("c")?.pinned).toBe(true);
   });
 
+  it("counts website tabs even when an internal Settings tab is active", () => {
+    const { manager, tabs } = organizedManager();
+    tabs.set("settings", {
+      id: "settings",
+      title: "Settings",
+      url: "",
+      groupId: null,
+      pinned: false,
+      view: null,
+    });
+    Object.assign(manager as unknown as Record<string, unknown>, {
+      order: ["a", "b", "settings"],
+      activeTabId: "settings",
+    });
+
+    const context = manager.getAiTabOrganizationContext();
+
+    expect(context.candidates.map((tab) => tab.id)).toEqual(["a", "b"]);
+    expect(context.preservedTabIds).toEqual(["settings"]);
+  });
+
   it("keeps a saved group restorable when its live tabs are closed", async () => {
     const { manager } = organizedManager();
     const saved: Array<Record<string, unknown>> = [];

@@ -54,6 +54,11 @@ describe("GeminiClient", () => {
   });
 
   it.each([
+    [
+      400,
+      { error: { message: "Invalid thinking budget" } },
+      "Gemini returned 400: Invalid thinking budget",
+    ],
     [403, { error: { message: "invalid" } }, "rejected this Gemini API key"],
     [429, { error: { message: "rate exceeded" } }, "rate-limiting"],
     [429, { error: { message: "quota exhausted" } }, "quota is exhausted"],
@@ -68,7 +73,7 @@ describe("GeminiClient", () => {
     await expect(client.listModels()).rejects.toThrow(message);
   });
 
-  it("requests schema-constrained JSON with low randomness", async () => {
+  it("requests schema-constrained JSON without incompatible thinking controls", async () => {
     const request = vi.fn().mockResolvedValue(
       json({
         candidates: [
@@ -97,11 +102,37 @@ describe("GeminiClient", () => {
     ).resolves.toEqual({ groups: [], ungroupedTabIds: [] });
 
     const body = JSON.parse(request.mock.calls[0][1].body as string);
+    expect(request.mock.calls[0][0]).toBe(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
+    );
     expect(body.generationConfig).toMatchObject({
-      temperature: 0.1,
       responseMimeType: "application/json",
       responseJsonSchema: schema,
-      thinkingConfig: { thinkingBudget: 0 },
     });
+    expect(body.generationConfig).not.toHaveProperty("thinkingConfig");
+    expect(body.generationConfig).not.toHaveProperty("temperature");
+  });
+
+  it("never invents a fallback model that the Gemini API did not list", async () => {
+    const request = vi.fn().mockResolvedValue(
+      json({
+        models: [
+          {
+            name: "models/gemini-2.5-flash-lite",
+            displayName: "Gemini 2.5 Flash-Lite",
+            supportedGenerationMethods: ["generateContent"],
+          },
+        ],
+      }),
+    );
+
+    const models = await new GeminiClient(
+      "secret-key",
+      request as unknown as typeof fetch,
+    ).listModels();
+
+    expect(models.map((model) => model.name)).toEqual([
+      "gemini-2.5-flash-lite",
+    ]);
   });
 });

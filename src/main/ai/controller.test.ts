@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -116,6 +116,38 @@ function request(
 }
 
 describe("AiToolsController", () => {
+  it("restores the last provider and independent model choices", async () => {
+    const file = await statePath();
+    await writeFile(
+      file,
+      JSON.stringify({
+        provider: "gemini",
+        preferredGroupingMode: "smart",
+        ollamaModel: "qwen3:1.7b",
+        geminiModel: "gemini-3.5-flash-lite",
+        cloudConsentGranted: true,
+      }),
+    );
+    const controller = new AiToolsController({
+      stateFilePath: file,
+      ollama: { listModels: vi.fn() } as unknown as OllamaClient,
+      credentials: credentials("secret"),
+      organiseTabs: organiser(),
+    });
+
+    await controller.initialize();
+
+    expect(controller.snapshot).toMatchObject({
+      provider: "gemini",
+      preferredGroupingMode: "smart",
+      ollama: { selectedModel: "qwen3:1.7b" },
+      gemini: {
+        selectedModel: "gemini-3.5-flash-lite",
+        cloudConsentGranted: true,
+      },
+    });
+  });
+
   it("does no inference on initialise and recommends a small Ollama model", async () => {
     const file = await statePath();
     const ollama = {

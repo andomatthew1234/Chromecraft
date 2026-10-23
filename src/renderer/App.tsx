@@ -6715,6 +6715,9 @@ export function App() {
   const [extensions, setExtensions] = useState(emptyExtensions);
   const [updates, setUpdates] = useState<UpdateSnapshot | null>(null);
   const [aiTools, setAiTools] = useState<AiToolsSnapshot>(emptyAiTools);
+  const [aiContextStatus, setAiContextStatus] = useState<
+    "idle" | "loading" | "ready" | "error"
+  >("idle");
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
   const [aiProposal, setAiProposal] = useState<OrganiseTabsProposal | null>(
     null,
@@ -7099,6 +7102,41 @@ export function App() {
       await window.chromecraft.setSidebarOpen(false);
     })();
   };
+  const refreshOrganiserContext = () => {
+    setAiContextStatus("loading");
+    void window.chromecraft
+      .getAiTools()
+      .then((nextAiTools) => {
+        setAiTools(nextAiTools);
+        setAiContextStatus("ready");
+        const providerState =
+          nextAiTools.provider === "ollama"
+            ? nextAiTools.ollama
+            : nextAiTools.gemini;
+        const canRefreshProvider =
+          nextAiTools.provider === "ollama" ||
+          nextAiTools.gemini.apiKeyConfigured;
+        if (
+          canRefreshProvider &&
+          (providerState.connection === "unknown" ||
+            providerState.models.length === 0)
+        ) {
+          void window.chromecraft
+            .refreshAiModels(nextAiTools.provider)
+            .then(setAiTools)
+            .catch(() => undefined);
+        }
+      })
+      .catch(() => setAiContextStatus("error"));
+  };
+  const openOrganiseTabs = () => {
+    setUpdatesOpen(false);
+    setExtensionsPageOpen(false);
+    setAiPanelOpen(true);
+    setBrandMenuOpen(false);
+    setAiProposal(null);
+    refreshOrganiserContext();
+  };
   const requestAiTabPlan = async (request: OrganiseTabsRequest) => {
     setAiProposal(null);
     try {
@@ -7150,14 +7188,7 @@ export function App() {
             setUpdatesOpen(true);
             setBrandMenuOpen(false);
           }}
-          onOpenOrganiseTabs={() => {
-            setUpdatesOpen(false);
-            setExtensionsPageOpen(false);
-            setAiPanelOpen(true);
-            setBrandMenuOpen(false);
-            setAiProposal(null);
-            void window.chromecraft.getAiTools().then(setAiTools);
-          }}
+          onOpenOrganiseTabs={openOrganiseTabs}
           onMenu={(event, tab) => {
             event.preventDefault();
             event.stopPropagation();
@@ -7346,13 +7377,7 @@ export function App() {
         openFullSettings={openFullSettings}
         activeTab={activeTab}
         aiTools={aiTools}
-        openOrganiseTabs={() => {
-          setUpdatesOpen(false);
-          setExtensionsPageOpen(false);
-          setAiPanelOpen(true);
-          setAiProposal(null);
-          void window.chromecraft.getAiTools().then(setAiTools);
-        }}
+        openOrganiseTabs={openOrganiseTabs}
         requestClearHistory={(range) => {
           if (range === "all") {
             setDialog({ kind: "clear-history" });
@@ -7398,6 +7423,8 @@ export function App() {
         <OrganiseTabsPanel
           snapshot={aiTools}
           proposal={aiProposal}
+          contextStatus={aiContextStatus}
+          refreshContext={refreshOrganiserContext}
           close={() => setAiPanelOpen(false)}
           organise={(request) => void requestAiTabPlan(request)}
           refreshModels={(provider) => {
@@ -7415,7 +7442,25 @@ export function App() {
           selectProvider={(provider) => {
             void window.chromecraft
               .setAiProvider(provider)
-              .then(setAiTools)
+              .then((nextAiTools) => {
+                setAiTools(nextAiTools);
+                const providerState =
+                  provider === "ollama"
+                    ? nextAiTools.ollama
+                    : nextAiTools.gemini;
+                const canRefreshProvider =
+                  provider === "ollama" || nextAiTools.gemini.apiKeyConfigured;
+                if (
+                  canRefreshProvider &&
+                  (providerState.connection === "unknown" ||
+                    providerState.models.length === 0)
+                ) {
+                  void window.chromecraft
+                    .refreshAiModels(provider)
+                    .then(setAiTools)
+                    .catch(() => undefined);
+                }
+              })
               .catch(() => undefined);
           }}
           selectGroupingMode={(mode) => {

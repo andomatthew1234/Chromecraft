@@ -7,7 +7,6 @@ import type {
 const GEMINI_ORIGIN = "https://generativelanguage.googleapis.com";
 const RESPONSE_LIMIT = 1024 ** 2;
 const REQUEST_TIMEOUT_MS = 45_000;
-const FALLBACK_MODEL = "gemini-3.5-flash-lite";
 const PREFERRED_MODELS = [
   "gemini-3.5-flash-lite",
   "gemini-3.1-flash-lite",
@@ -149,17 +148,6 @@ export class GeminiClient implements StructuredModelProvider {
         ...new Map(models.map((model) => [model.name, model])).values(),
       ];
       unique.sort((left, right) => rankModel(left) - rankModel(right));
-      if (!unique.some((model) => model.name === FALLBACK_MODEL)) {
-        unique.unshift({
-          name: FALLBACK_MODEL,
-          displayName: "Gemini 3.5 Flash-Lite",
-          size: null,
-          modifiedAt: null,
-          family: "Gemini",
-          parameterSize: null,
-          recommended: true,
-        });
-      }
       return unique;
     } catch (error) {
       if (scoped.signal.aborted) {
@@ -193,11 +181,9 @@ export class GeminiClient implements StructuredModelProvider {
             systemInstruction: { parts: [{ text: request.system }] },
             contents: [{ role: "user", parts: [{ text: request.prompt }] }],
             generationConfig: {
-              temperature: 0.1,
               maxOutputTokens: 2_048,
               responseMimeType: "application/json",
               responseJsonSchema: request.schema,
-              thinkingConfig: { thinkingBudget: 0 },
             },
           }),
         },

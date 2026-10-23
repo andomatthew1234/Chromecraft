@@ -1,4 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 import type { AiToolsSnapshot, OrganiseTabsProposal } from "../shared/ai-tools";
@@ -62,6 +63,8 @@ function snapshot(overrides: Partial<AiToolsSnapshot> = {}): AiToolsSnapshot {
 }
 
 const callbacks = {
+  contextStatus: "ready" as const,
+  refreshContext: vi.fn(),
   close: vi.fn(),
   organise: vi.fn(),
   refreshModels: vi.fn(),
@@ -76,6 +79,71 @@ const callbacks = {
 };
 
 describe("OrganiseTabsPanel", () => {
+  it("renders one compact setup with a persistent primary action", () => {
+    const markup = renderToStaticMarkup(
+      <OrganiseTabsPanel
+        snapshot={snapshot()}
+        proposal={null}
+        {...callbacks}
+      />,
+    );
+    const stylesheet = readFileSync(
+      new URL("./ai-tools.css", import.meta.url),
+      "utf8",
+    );
+
+    expect(markup).toContain('aria-label="AI provider"');
+    expect(markup).toContain("More options");
+    expect(markup).toContain("Organise tabs");
+    expect(markup).not.toContain("Choose where it runs");
+    expect(markup).not.toContain("How should tabs be grouped?");
+    expect(markup).not.toContain("expand_more");
+    expect(stylesheet).toContain(
+      "grid-template-rows: auto minmax(0, 1fr) auto",
+    );
+    expect(stylesheet).toContain(".ai-tools-content");
+    expect(stylesheet).toContain("min-height: 0");
+  });
+
+  it("does not present a stale zero while tab collection is loading or failed", () => {
+    const loading = renderToStaticMarkup(
+      <OrganiseTabsPanel
+        snapshot={snapshot({ eligibleTabCount: 0 })}
+        proposal={null}
+        {...callbacks}
+        contextStatus="loading"
+      />,
+    );
+    const failed = renderToStaticMarkup(
+      <OrganiseTabsPanel
+        snapshot={snapshot({ eligibleTabCount: 0 })}
+        proposal={null}
+        {...callbacks}
+        contextStatus="error"
+      />,
+    );
+
+    expect(loading).toContain("Checking tabs…");
+    expect(loading).not.toContain("0 eligible tabs");
+    expect(failed).toContain("Couldn’t read the open tabs");
+    expect(failed).toContain("Try again");
+  });
+
+  it("explains genuine zero eligible-tab states", () => {
+    const markup = renderToStaticMarkup(
+      <OrganiseTabsPanel
+        snapshot={snapshot({ eligibleTabCount: 0 })}
+        proposal={null}
+        {...callbacks}
+      />,
+    );
+
+    expect(markup).toContain("0 eligible tabs");
+    expect(markup).toContain("Open at least two regular website tabs");
+    expect(markup).toContain("New Tab, Settings, pinned tabs");
+    expect(markup).toContain('disabled=""');
+  });
+
   it("renders a reviewable tab-group plan and local-data disclosure", () => {
     const proposal: OrganiseTabsProposal = {
       id: "proposal-1",

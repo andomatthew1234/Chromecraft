@@ -110,6 +110,12 @@ describe("OrganiseTabsTool", () => {
           0,
         ) + prepared.publicProposal.ungroupedTabIds.length;
       expect(included).toBe(count);
+      const schema = (
+        provider as unknown as { chatStructured: ReturnType<typeof vi.fn> }
+      ).chatStructured.mock.calls[0][0].schema;
+      expect(JSON.stringify(schema)).not.toMatch(
+        /minItems|maxItems|minLength|maxLength/u,
+      );
     },
   );
 
