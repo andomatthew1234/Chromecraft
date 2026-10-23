@@ -133,6 +133,7 @@ export const channels = {
   deleteGalleryItem: "gallery:delete",
   importGalleryDownloads: "gallery:import-downloads",
   updateGalleryMediaMetadata: "gallery:update-media-metadata",
+  repairGalleryMedia: "gallery:repair-media",
   setSmartDownloadKeepForever: "gallery:set-smart-keep-forever",
   markGalleryItemWatched: "gallery:mark-watched",
   galleryChanged: "gallery:snapshot-changed",

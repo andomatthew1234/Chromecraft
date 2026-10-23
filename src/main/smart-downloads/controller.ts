@@ -75,7 +75,11 @@ export interface SmartDownloadsControllerStore {
   ): Promise<FollowedChannel>;
   recordChannelCheck(
     id: string,
-    options: { successful: boolean; nextCheckAt: number | null },
+    options: {
+      successful: boolean;
+      nextCheckAt: number | null;
+      error?: string | null;
+    },
   ): Promise<FollowedChannel>;
   removeChannel(id: string): Promise<boolean>;
   markVideoSeen(input: SeenVideoInput): Promise<unknown>;
@@ -97,6 +101,7 @@ export interface SmartDownloadsControllerSnapshot extends SmartDownloadsSnapshot
   queuePaused: boolean;
   checking: boolean;
   channelErrors: Record<string, string>;
+  check: SmartDownloadCheckSnapshot;
 }
 export interface SmartDownloadsControllerOptions {
   store: SmartDownloadsControllerStore;
@@ -109,10 +114,33 @@ export interface SmartDownloadsControllerOptions {
   onChange?: (snapshot: SmartDownloadsControllerSnapshot) => void;
 }
 export interface SmartDownloadCheckResult {
+  state: "completed" | "partial" | "failed" | "blocked";
+  trigger: "manual" | "scheduled";
+  reason: "disabled" | "no-channels" | "no-enabled-channels" | null;
+  channelId: string | null;
+  totalChannels: number;
   checkedChannels: number;
-  discoveredVideos: number;
+  newVideosFound: number;
   queuedVideos: number;
   failures: number;
+  startedAt: number;
+  completedAt: number;
+  error: string | null;
+}
+
+export interface SmartDownloadCheckSnapshot {
+  state: "idle" | "checking" | SmartDownloadCheckResult["state"];
+  trigger: SmartDownloadCheckResult["trigger"] | null;
+  reason: SmartDownloadCheckResult["reason"];
+  channelId: string | null;
+  totalChannels: number;
+  checkedChannels: number;
+  newVideosFound: number;
+  queuedVideos: number;
+  failures: number;
+  startedAt: number | null;
+  completedAt: number | null;
+  error: string | null;
 }
 
 export function retryDelayMs(failures: number): number {
@@ -131,6 +159,7 @@ export class SmartDownloadsController extends EventEmitter {
   private disposed = false;
   private queuePaused = false;
   private checking: Promise<SmartDownloadCheckResult> | null = null;
+  private checkProgress: SmartDownloadCheckSnapshot = idleCheckSnapshot();
   private pumping: Promise<void> | null = null;
 
   constructor(private readonly options: SmartDownloadsControllerOptions) {
@@ -144,7 +173,13 @@ export class SmartDownloadsController extends EventEmitter {
       ...this.options.store.snapshot,
       queuePaused: this.queuePaused,
       checking: this.checking !== null,
-      channelErrors: Object.fromEntries(this.channelErrors),
+      channelErrors: Object.fromEntries(
+        this.options.store.snapshot.channels.flatMap((channel) => {
+          const error = this.channelErrors.get(channel.id) ?? channel.lastError;
+          return error ? [[channel.id, error]] : [];
+        }),
+      ),
+      check: { ...this.checkProgress },
     };
   }
 
@@ -257,7 +292,9 @@ export class SmartDownloadsController extends EventEmitter {
 
   async checkDue(): Promise<SmartDownloadCheckResult> {
     this.assertReady();
-    if (!this.options.store.snapshot.config.enabled) return emptyResult();
+    if (!this.options.store.snapshot.config.enabled) {
+      return this.blockedCheck("scheduled", "disabled", null);
+    }
     const now = this.now();
     const ids = this.options.store.snapshot.channels
       .filter(
@@ -266,18 +303,33 @@ export class SmartDownloadsController extends EventEmitter {
           (channel.nextCheckAt === null || channel.nextCheckAt <= now),
       )
       .map((channel) => channel.id);
-    return this.runCheck(ids);
+    return this.runCheck(ids, "scheduled", null);
   }
 
   async checkNow(channelId?: string): Promise<SmartDownloadCheckResult> {
     this.assertReady();
+    if (!this.options.store.snapshot.config.enabled) {
+      return this.blockedCheck("manual", "disabled", channelId ?? null);
+    }
     const channels = this.options.store.snapshot.channels;
+    if (channels.length === 0) {
+      return this.blockedCheck("manual", "no-channels", channelId ?? null);
+    }
     const ids = channelId
-      ? [requireChannel(channels, channelId).id]
+      ? [requireChannel(channels, channelId)]
+          .filter((channel) => channel.enabled)
+          .map((channel) => channel.id)
       : channels
           .filter((channel) => channel.enabled)
           .map((channel) => channel.id);
-    return this.runCheck(ids);
+    if (ids.length === 0) {
+      return this.blockedCheck(
+        "manual",
+        "no-enabled-channels",
+        channelId ?? null,
+      );
+    }
+    return this.runCheck(ids, "manual", channelId ?? null);
   }
 
   async pauseQueue(): Promise<void> {
@@ -347,9 +399,25 @@ export class SmartDownloadsController extends EventEmitter {
     this.removeAllListeners();
   }
 
-  private async runCheck(ids: string[]): Promise<SmartDownloadCheckResult> {
+  private async runCheck(
+    ids: string[],
+    trigger: SmartDownloadCheckResult["trigger"],
+    channelId: string | null,
+  ): Promise<SmartDownloadCheckResult> {
     if (this.checking) return this.checking;
-    this.checking = this.performCheck(ids).finally(() => {
+    const uniqueIds = [...new Set(ids)];
+    if (uniqueIds.length === 0) {
+      return this.blockedCheck(trigger, "no-enabled-channels", channelId);
+    }
+    this.checkProgress = {
+      ...idleCheckSnapshot(),
+      state: "checking",
+      trigger,
+      channelId,
+      totalChannels: uniqueIds.length,
+      startedAt: this.now(),
+    };
+    this.checking = this.performCheck(uniqueIds).finally(() => {
       this.checking = null;
       this.emitChange();
       this.scheduleWake();
@@ -359,13 +427,12 @@ export class SmartDownloadsController extends EventEmitter {
   }
 
   private async performCheck(ids: string[]): Promise<SmartDownloadCheckResult> {
-    const result = emptyResult();
-    for (const channelId of [...new Set(ids)]) {
+    const progress = this.checkProgress;
+    for (const channelId of ids) {
       const channel = this.options.store.snapshot.channels.find(
         (item) => item.id === channelId,
       );
       if (!channel) continue;
-      result.checkedChannels += 1;
       try {
         const recent = sanitizeVideos(
           await this.options.discovery.discoverRecent(
@@ -391,9 +458,9 @@ export class SmartDownloadsController extends EventEmitter {
             state: "discovered",
             publishedAt: item.publishedAt,
           });
-          result.discoveredVideos += 1;
+          progress.newVideosFound += 1;
           if (await this.queueVideo(channelId, item, 10))
-            result.queuedVideos += 1;
+            progress.queuedVideos += 1;
         }
         this.channelFailures.delete(channelId);
         this.channelErrors.delete(channelId);
@@ -404,18 +471,65 @@ export class SmartDownloadsController extends EventEmitter {
             this.options.store.snapshot.config.checkIntervalMinutes * MINUTE_MS,
         });
       } catch (error) {
+        const message = safeError(error);
         const failures = (this.channelFailures.get(channelId) ?? 0) + 1;
         this.channelFailures.set(channelId, failures);
-        this.channelErrors.set(channelId, safeError(error));
+        this.channelErrors.set(channelId, message);
         await this.options.store.recordChannelCheck(channelId, {
           successful: false,
           nextCheckAt: this.now() + retryDelayMs(failures),
+          error: message,
         });
-        result.failures += 1;
+        progress.failures += 1;
+        progress.error ??= message;
       }
+      progress.checkedChannels += 1;
+      this.checkProgress = { ...progress };
       this.emitChange();
     }
     await this.pumpQueue();
+    const state =
+      progress.failures === 0
+        ? "completed"
+        : progress.failures === progress.checkedChannels
+          ? "failed"
+          : "partial";
+    const result: SmartDownloadCheckResult = {
+      ...progress,
+      state,
+      trigger: progress.trigger!,
+      reason: null,
+      startedAt: progress.startedAt!,
+      completedAt: this.now(),
+    };
+    this.checkProgress = result;
+    return result;
+  }
+
+  private blockedCheck(
+    trigger: SmartDownloadCheckResult["trigger"],
+    reason: Exclude<SmartDownloadCheckResult["reason"], null>,
+    channelId: string | null,
+  ): SmartDownloadCheckResult {
+    const now = this.now();
+    const result: SmartDownloadCheckResult = {
+      state: "blocked",
+      trigger,
+      reason,
+      channelId,
+      totalChannels: 0,
+      checkedChannels: 0,
+      newVideosFound: 0,
+      queuedVideos: 0,
+      failures: 0,
+      startedAt: now,
+      completedAt: now,
+      error: null,
+    };
+    if (trigger === "manual") {
+      this.checkProgress = result;
+      this.emitChange();
+    }
     return result;
   }
 
@@ -564,14 +678,23 @@ export class SmartDownloadsController extends EventEmitter {
   }
 }
 
-function emptyResult(): SmartDownloadCheckResult {
+function idleCheckSnapshot(): SmartDownloadCheckSnapshot {
   return {
+    state: "idle",
+    trigger: null,
+    reason: null,
+    channelId: null,
+    totalChannels: 0,
     checkedChannels: 0,
-    discoveredVideos: 0,
+    newVideosFound: 0,
     queuedVideos: 0,
     failures: 0,
+    startedAt: null,
+    completedAt: null,
+    error: null,
   };
 }
+
 function safeError(error: unknown): string {
   const message =
     error instanceof Error

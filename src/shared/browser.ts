@@ -71,10 +71,18 @@ export interface GalleryEntrySnapshot {
   durationSeconds: number | null;
   width: number | null;
   height: number | null;
+  /** Container/format label recovered once and cached in the Gallery index. */
+  videoFormat?: string | null;
+  /** Size of the media file when its technical metadata was last inspected. */
+  metadataFileSize?: number | null;
+  /** Timestamp of the last completed local metadata inspection. */
+  metadataCheckedAt?: number | null;
   fileSize: number;
   downloadedAt: number;
   sourceName: string | null;
   sourceUrl: string | null;
+  /** Original publisher title, retained independently from user renames. */
+  sourceTitle?: string | null;
   available: boolean;
   managedBy?: "manual" | "smart";
   smartChannelId?: string | null;
@@ -84,6 +92,24 @@ export interface GalleryEntrySnapshot {
 
 export interface GallerySnapshot {
   items: GalleryEntrySnapshot[];
+}
+
+export interface GalleryMediaRepairRequest {
+  /** Allows the explicit operation to contact YouTube for original artwork. */
+  fetchOriginalThumbnails: boolean;
+  /** Allows a local ffmpeg installation to generate a frame as a last resort. */
+  generateLocalFallbacks: boolean;
+}
+
+export interface GalleryMediaRepairResult {
+  scanned: number;
+  thumbnailsRepaired: number;
+  originalThumbnailsFetched: number;
+  localFallbacksGenerated: number;
+  metadataRecovered: number;
+  missingThumbnails: number;
+  metadataUnavailable: number;
+  errors: Array<{ id: string; message: string }>;
 }
 
 export interface YouTubeDownloadsSnapshot {
@@ -162,6 +188,53 @@ export interface SmartDownloadsCleanupCandidateSnapshot {
   downloadedAt: number;
 }
 
+export type SmartDownloadsCheckState =
+  | "idle"
+  | "checking"
+  | "completed"
+  | "partial"
+  | "failed"
+  | "blocked";
+
+export interface SmartDownloadsCheckSnapshot {
+  state: SmartDownloadsCheckState;
+  trigger: "manual" | "scheduled" | null;
+  reason: "disabled" | "no-channels" | "no-enabled-channels" | null;
+  channelId: string | null;
+  totalChannels: number;
+  checkedChannels: number;
+  newVideosFound: number;
+  queuedVideos: number;
+  failures: number;
+  startedAt: number | null;
+  completedAt: number | null;
+  error: string | null;
+}
+
+export interface SmartDownloadsCheckResult extends SmartDownloadsCheckSnapshot {
+  state: Exclude<SmartDownloadsCheckState, "idle" | "checking">;
+  trigger: "manual" | "scheduled";
+  startedAt: number;
+  completedAt: number;
+}
+
+export type SmartDownloadsOperationalState =
+  | "not-configured"
+  | "disabled"
+  | "paused"
+  | "checking"
+  | "attention"
+  | "active";
+
+export interface SmartDownloadsStatusSnapshot {
+  /** Derived from persisted followed channels, never from renderer state. */
+  configured: boolean;
+  state: SmartDownloadsOperationalState;
+  paused: boolean;
+  enabledChannelCount: number;
+  error: string | null;
+}
+
 export interface SmartDownloadsSnapshot {
   config: SmartDownloadsConfigSnapshot;
   storage: {
@@ -183,6 +256,8 @@ export interface SmartDownloadsSnapshot {
   nextCheckAt: number | null;
   backgroundRunning: boolean;
   error: string | null;
+  status: SmartDownloadsStatusSnapshot;
+  check: SmartDownloadsCheckSnapshot;
 }
 
 export type NewTabTheme = "overworld" | "nether" | "end" | "minimal";
@@ -584,7 +659,7 @@ export interface ChromecraftApi {
     initialMode: SmartDownloadInitialMode,
   ): Promise<void>;
   setSmartDownloadsChannelEnabled(id: string, enabled: boolean): Promise<void>;
-  checkSmartDownloads(channelId?: string): Promise<void>;
+  checkSmartDownloads(channelId?: string): Promise<SmartDownloadsCheckResult>;
   removeSmartDownloadsChannel(id: string): Promise<void>;
   pauseSmartDownloadsQueue(): Promise<void>;
   resumeSmartDownloadsQueue(): Promise<void>;
@@ -623,6 +698,9 @@ export interface ChromecraftApi {
     width: number,
     height: number,
   ): Promise<void>;
+  repairGalleryMedia(
+    request: GalleryMediaRepairRequest,
+  ): Promise<GalleryMediaRepairResult>;
   setSmartDownloadKeepForever(id: string, keepForever: boolean): Promise<void>;
   markGalleryItemWatched(id: string): Promise<void>;
   setShowDownloadProgressInToolbar(enabled: boolean): Promise<void>;

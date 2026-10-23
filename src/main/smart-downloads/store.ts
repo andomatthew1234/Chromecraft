@@ -217,6 +217,7 @@ export class SmartDownloadsStore {
           lastCheckedAt: null,
           lastSuccessfulCheckAt: null,
           nextCheckAt: null,
+          lastError: null,
         };
         draft.channels.push(channel);
         return {
@@ -244,7 +245,11 @@ export class SmartDownloadsStore {
 
   async recordChannelCheck(
     channelId: string,
-    options: { successful: boolean; nextCheckAt: number | null },
+    options: {
+      successful: boolean;
+      nextCheckAt: number | null;
+      error?: string | null;
+    },
   ): Promise<FollowedChannel> {
     const id = canonicalYouTubeChannelId(channelId);
     const nextCheckAt = cleanNullableTimestamp(
@@ -255,7 +260,15 @@ export class SmartDownloadsStore {
     return this.mutate((draft) => {
       const channel = requireChannel(draft, id);
       channel.lastCheckedAt = now;
-      if (options.successful) channel.lastSuccessfulCheckAt = now;
+      if (options.successful) {
+        channel.lastSuccessfulCheckAt = now;
+        channel.lastError = null;
+      } else {
+        channel.lastError = cleanOptionalText(
+          options.error ?? "The channel check failed.",
+          MAX_ERROR_TEXT,
+        );
+      }
       channel.nextCheckAt = nextCheckAt;
       return { result: structuredClone(channel), changed: true };
     });
@@ -1114,6 +1127,7 @@ function validateChannel(value: unknown): FollowedChannel | null {
         "lastSuccessfulCheckAt",
       ),
       nextCheckAt: cleanNullableTimestamp(value.nextCheckAt, "nextCheckAt"),
+      lastError: cleanOptionalText(value.lastError, MAX_ERROR_TEXT),
     };
   } catch {
     return null;

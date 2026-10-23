@@ -5,6 +5,8 @@ import type {
   SmartDownloadCleanupPolicy,
   SmartDownloadInitialMode,
   SmartDownloadQuality,
+  SmartDownloadsCheckResult as RendererSmartDownloadsCheckResult,
+  SmartDownloadsOperationalState,
   SmartDownloadsSnapshot as RendererSmartDownloadsSnapshot,
   YouTubeDownloadItemSnapshot,
   YouTubeDownloadsSnapshot,
@@ -197,8 +199,10 @@ export class SmartDownloadsService {
     await this.controller.removeChannel(id);
   }
 
-  async checkNow(channelId?: string): Promise<void> {
-    await this.controller.checkNow(channelId);
+  async checkNow(
+    channelId?: string,
+  ): Promise<RendererSmartDownloadsCheckResult> {
+    return this.controller.checkNow(channelId);
   }
 
   async pauseQueue(): Promise<void> {
@@ -487,6 +491,29 @@ export class SmartDownloadsService {
         ? [channel.nextCheckAt]
         : [],
     );
+    const enabledChannelCount = source.channels.filter(
+      (channel) => channel.enabled,
+    ).length;
+    const persistedQueueError = [...source.queue]
+      .reverse()
+      .find((job) => job.state === "failed" && job.lastError)?.lastError;
+    const statusError =
+      this.lastError ??
+      Object.values(source.channelErrors)[0] ??
+      persistedQueueError ??
+      null;
+    const configured = source.channels.length > 0;
+    const paused =
+      configured &&
+      (!source.config.enabled ||
+        source.queuePaused ||
+        enabledChannelCount === 0);
+    let operationalState: SmartDownloadsOperationalState = "active";
+    if (!configured) operationalState = "not-configured";
+    else if (!source.config.enabled) operationalState = "disabled";
+    else if (source.check.state === "checking") operationalState = "checking";
+    else if (statusError) operationalState = "attention";
+    else if (paused) operationalState = "paused";
     return {
       config: source.config,
       storage: {
@@ -559,7 +586,15 @@ export class SmartDownloadsService {
       lastCheckAt: lastChecks.length ? Math.max(...lastChecks) : null,
       nextCheckAt: nextChecks.length ? Math.min(...nextChecks) : null,
       backgroundRunning: source.config.backgroundEnabled,
-      error: this.lastError,
+      error: statusError,
+      status: {
+        configured,
+        state: operationalState,
+        paused,
+        enabledChannelCount,
+        error: statusError,
+      },
+      check: source.check,
     };
   }
 

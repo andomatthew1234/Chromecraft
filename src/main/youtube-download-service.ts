@@ -8,6 +8,7 @@ import type {
   YouTubeDownloadsSnapshot,
 } from "../shared/browser";
 import type { YouTubeWatchTarget } from "../shared/youtube-watch";
+import { hasSupportedThumbnailSignature } from "./gallery-store";
 
 export type YouTubeDownloadQuality =
   | "best"
@@ -26,6 +27,15 @@ export interface YouTubeDownloadCompletionContext {
   origin: "manual" | "smart";
   smartChannelId: string | null;
   thumbnailPath: string | null;
+  mediaMetadata: YouTubeDownloadedMediaMetadata | null;
+}
+
+export interface YouTubeDownloadedMediaMetadata {
+  title: string | null;
+  durationSeconds: number | null;
+  width: number | null;
+  height: number | null;
+  videoFormat: string | null;
 }
 
 export const YT_DLP_VERSION = "2026.10.21";
@@ -116,6 +126,7 @@ export function buildYtDlpArguments(
     "--format",
     format,
     "--write-thumbnail",
+    "--write-info-json",
     "--output",
     path.join(stagingDirectory, "%(title).160s [%(id)s].%(ext)s"),
     "--progress-template",
@@ -598,6 +609,7 @@ export class YouTubeDownloadService {
         job.destinationDirectory,
       );
       const thumbnailPath = await this.commitThumbnail(job);
+      const mediaMetadata = await this.readMediaMetadata(job);
       job.snapshot.filename = path.basename(destination);
       job.finalPath = destination;
       job.snapshot.finishedAt = Date.now();
@@ -613,6 +625,7 @@ export class YouTubeDownloadService {
               origin: job.snapshot.origin ?? "manual",
               smartChannelId: job.snapshot.smartChannelId ?? null,
               thumbnailPath,
+              mediaMetadata,
             },
           )) ?? false;
       } catch (error) {
@@ -672,6 +685,7 @@ export class YouTubeDownloadService {
       path.join(job.stagingDirectory, thumbnail.name),
       job.stagingDirectory,
     );
+    if (!(await hasSupportedThumbnailSignature(source))) return null;
     await fs.mkdir(this.options.thumbnailDirectory, { recursive: true });
     const extension = path.extname(thumbnail.name).toLowerCase();
     const destination = path.join(
@@ -680,6 +694,32 @@ export class YouTubeDownloadService {
     );
     await fs.copyFile(source, destination);
     return destination;
+  }
+
+  private async readMediaMetadata(
+    job: DownloadJob,
+  ): Promise<YouTubeDownloadedMediaMetadata | null> {
+    let entries: import("node:fs").Dirent[];
+    try {
+      entries = await fs.readdir(job.stagingDirectory, { withFileTypes: true });
+    } catch {
+      return null;
+    }
+    const info = entries.find(
+      (entry) => entry.isFile() && entry.name.endsWith(".info.json"),
+    );
+    if (!info) return null;
+    const infoPath = path.join(job.stagingDirectory, info.name);
+    try {
+      const safePath = await assertFileInside(infoPath, job.stagingDirectory);
+      const stat = await fs.stat(safePath);
+      if (stat.size < 2 || stat.size > 4 * 1024 * 1024) return null;
+      return parseYtDlpInfoJson(
+        JSON.parse(await fs.readFile(safePath, "utf8")),
+      );
+    } catch {
+      return null;
+    }
   }
 
   private emit(immediate = false): void {
@@ -705,6 +745,39 @@ export class YouTubeDownloadService {
     if (delay === 0) notify();
     else this.emitTimer = setTimeout(notify, delay);
   }
+}
+
+export function parseYtDlpInfoJson(
+  value: unknown,
+): YouTubeDownloadedMediaMetadata | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const boundedText = (input: unknown, limit: number): string | null => {
+    if (typeof input !== "string") return null;
+    const clean = input.trim().replace(/\s+/gu, " ");
+    return clean && clean.length <= limit ? clean : null;
+  };
+  const finite = (input: unknown): number | null =>
+    typeof input === "number" && Number.isFinite(input) && input >= 0
+      ? input
+      : null;
+  const dimension = (input: unknown): number | null => {
+    const number = finite(input);
+    return number !== null && Number.isInteger(number) && number <= 65_535
+      ? number
+      : null;
+  };
+  const title = boundedText(record.title, 240);
+  const durationSeconds = finite(record.duration);
+  const width = dimension(record.width);
+  const height = dimension(record.height);
+  const formatNote = boundedText(record.format_note, 60);
+  const extension = boundedText(record.ext, 12)?.toUpperCase() ?? null;
+  const videoFormat =
+    [extension, formatNote].filter(Boolean).join(" · ") || null;
+  return title || durationSeconds !== null || width !== null || height !== null
+    ? { title, durationSeconds, width, height, videoFormat }
+    : null;
 }
 
 async function sha256(file: string): Promise<string> {

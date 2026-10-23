@@ -11,6 +11,7 @@ const MAX_IMPORTS_PER_SCAN = 1_000;
 const MAX_ID_LENGTH = 128;
 const MAX_TITLE_LENGTH = 240;
 const MAX_SOURCE_NAME_LENGTH = 120;
+const MAX_FORMAT_LENGTH = 80;
 const MAX_URL_LENGTH = 8_192;
 
 const MEDIA_EXTENSIONS = new Set([
@@ -41,9 +42,11 @@ export interface GalleryCompletedInput {
   durationSeconds?: number | null;
   width?: number | null;
   height?: number | null;
+  videoFormat?: string | null;
   downloadedAt?: number;
   sourceName?: string | null;
   sourceUrl?: string | null;
+  sourceTitle?: string | null;
   thumbnailPath?: string | null;
   managedBy?: "manual" | "smart";
   smartChannelId?: string | null;
@@ -135,8 +138,8 @@ export class GalleryStore {
     if (!inspected) {
       throw new Error("The completed Gallery file is unavailable or unsafe.");
     }
-    const title =
-      cleanTitle(input.title) ?? titleFromFilename(inspected.filename);
+    const requestedTitle = cleanTitle(input.title);
+    const title = requestedTitle ?? titleFromFilename(inspected.filename);
     const downloadedAt = cleanTimestamp(input.downloadedAt ?? this.now());
     if (downloadedAt === null) throw new TypeError("downloadedAt is invalid.");
     const sourceName = cleanOptionalString(
@@ -144,9 +147,14 @@ export class GalleryStore {
       MAX_SOURCE_NAME_LENGTH,
     );
     const sourceUrl = cleanOptionalWebUrl(input.sourceUrl);
+    const sourceTitle = cleanTitle(input.sourceTitle);
     const durationSeconds = cleanDuration(input.durationSeconds);
     const width = cleanDimension(input.width);
     const height = cleanDimension(input.height);
+    const videoFormat = cleanOptionalString(
+      input.videoFormat,
+      MAX_FORMAT_LENGTH,
+    );
     const thumbnailPath = await this.inspectThumbnailFile(input.thumbnailPath);
     const managedBy = input.managedBy === "smart" ? "smart" : "manual";
     const smartChannelId =
@@ -160,20 +168,35 @@ export class GalleryStore {
         (item) => normalizePathKey(item.filePath) === pathKey,
       );
       if (existing) {
+        const retainedThumbnail =
+          thumbnailPath ?? existing.thumbnailPath ?? null;
+        const hasNewMetadata =
+          durationSeconds !== null ||
+          width !== null ||
+          height !== null ||
+          videoFormat !== null;
         Object.assign(existing, {
-          title,
+          title: requestedTitle ?? existing.title,
           filename: inspected.filename,
           filePath: inspected.filePath,
-          durationSeconds,
-          width,
-          height,
+          durationSeconds: durationSeconds ?? existing.durationSeconds,
+          width: width ?? existing.width,
+          height: height ?? existing.height,
+          videoFormat: videoFormat ?? existing.videoFormat ?? null,
+          metadataFileSize: hasNewMetadata
+            ? inspected.fileSize
+            : (existing.metadataFileSize ?? null),
+          metadataCheckedAt: hasNewMetadata
+            ? this.now()
+            : (existing.metadataCheckedAt ?? null),
           fileSize: inspected.fileSize,
           downloadedAt,
-          sourceName,
-          sourceUrl,
+          sourceName: sourceName ?? existing.sourceName,
+          sourceUrl: sourceUrl ?? existing.sourceUrl,
+          sourceTitle: sourceTitle ?? existing.sourceTitle ?? null,
           available: true,
-          thumbnailPath,
-          thumbnailUrl: thumbnailPath ? thumbnailUrl(existing.id) : null,
+          thumbnailPath: retainedThumbnail,
+          thumbnailUrl: retainedThumbnail ? thumbnailUrl(existing.id) : null,
           managedBy,
           smartChannelId,
           keepForever: existing.keepForever ?? false,
@@ -189,9 +212,31 @@ export class GalleryStore {
         ? draft.items.find((item) => item.sourceUrl === sourceUrl)
         : undefined;
       if (sourceDuplicate) {
+        const changed =
+          (!!thumbnailPath &&
+            sourceDuplicate.thumbnailPath !== thumbnailPath) ||
+          (sourceDuplicate.durationSeconds === null &&
+            durationSeconds !== null) ||
+          (sourceDuplicate.width === null && width !== null) ||
+          (sourceDuplicate.height === null && height !== null) ||
+          (!sourceDuplicate.videoFormat && !!videoFormat) ||
+          (!sourceDuplicate.sourceTitle && !!sourceTitle);
+        if (thumbnailPath) {
+          sourceDuplicate.thumbnailPath = thumbnailPath;
+          sourceDuplicate.thumbnailUrl = thumbnailUrl(sourceDuplicate.id);
+        }
+        sourceDuplicate.durationSeconds ??= durationSeconds;
+        sourceDuplicate.width ??= width;
+        sourceDuplicate.height ??= height;
+        sourceDuplicate.videoFormat ??= videoFormat;
+        sourceDuplicate.sourceTitle ??= sourceTitle;
+        if (changed) {
+          sourceDuplicate.metadataFileSize = sourceDuplicate.fileSize;
+          sourceDuplicate.metadataCheckedAt = this.now();
+        }
         return {
           result: structuredClone(sourceDuplicate),
-          changed: false,
+          changed,
         };
       }
 
@@ -208,10 +253,26 @@ export class GalleryStore {
         durationSeconds,
         width,
         height,
+        videoFormat,
+        metadataFileSize:
+          durationSeconds !== null ||
+          width !== null ||
+          height !== null ||
+          videoFormat
+            ? inspected.fileSize
+            : null,
+        metadataCheckedAt:
+          durationSeconds !== null ||
+          width !== null ||
+          height !== null ||
+          videoFormat
+            ? this.now()
+            : null,
         fileSize: inspected.fileSize,
         downloadedAt,
         sourceName,
         sourceUrl,
+        sourceTitle,
         available: true,
         managedBy,
         smartChannelId,
@@ -329,11 +390,7 @@ export class GalleryStore {
     if (!clean || !this.thumbnailDirectory) return null;
     const entry = this.data.items.find((item) => item.id === clean);
     if (!entry?.thumbnailPath) return null;
-    return this.resolveOwnedFile(
-      entry.thumbnailPath,
-      this.thumbnailDirectory,
-      THUMBNAIL_EXTENSIONS,
-    );
+    return this.inspectThumbnailFile(entry.thumbnailPath);
   }
 
   async rename(
@@ -435,10 +492,70 @@ export class GalleryStore {
       const changed =
         entry.durationSeconds !== duration ||
         entry.width !== cleanWidth ||
-        entry.height !== cleanHeight;
+        entry.height !== cleanHeight ||
+        entry.metadataFileSize !== entry.fileSize;
       entry.durationSeconds = duration;
       entry.width = cleanWidth;
       entry.height = cleanHeight;
+      entry.metadataFileSize = entry.fileSize;
+      entry.metadataCheckedAt = this.now();
+      return { result: changed, changed };
+    });
+  }
+
+  async updateTechnicalMetadata(
+    id: string,
+    metadata: {
+      durationSeconds: number | null;
+      width: number | null;
+      height: number | null;
+      videoFormat: string | null;
+      sourceTitle?: string | null;
+    },
+  ): Promise<boolean> {
+    const clean = requireId(id);
+    const duration = cleanDuration(metadata.durationSeconds);
+    const cleanWidth = cleanDimension(metadata.width);
+    const cleanHeight = cleanDimension(metadata.height);
+    const videoFormat = cleanOptionalString(
+      metadata.videoFormat,
+      MAX_FORMAT_LENGTH,
+    );
+    const sourceTitle = cleanTitle(metadata.sourceTitle);
+    return this.mutate((draft) => {
+      const entry = draft.items.find((candidate) => candidate.id === clean);
+      if (!entry) return { result: false, changed: false };
+      const changed =
+        entry.durationSeconds !== duration ||
+        entry.width !== cleanWidth ||
+        entry.height !== cleanHeight ||
+        entry.videoFormat !== videoFormat ||
+        (sourceTitle !== null && entry.sourceTitle !== sourceTitle) ||
+        entry.metadataFileSize !== entry.fileSize ||
+        entry.metadataCheckedAt == null;
+      entry.durationSeconds = duration;
+      entry.width = cleanWidth;
+      entry.height = cleanHeight;
+      entry.videoFormat = videoFormat;
+      if (sourceTitle !== null) entry.sourceTitle = sourceTitle;
+      entry.metadataFileSize = entry.fileSize;
+      entry.metadataCheckedAt = this.now();
+      return { result: changed, changed };
+    });
+  }
+
+  /** Registers artwork only after it has been copied into the owned cache. */
+  async setThumbnail(id: string, candidate: string | null): Promise<boolean> {
+    const clean = requireId(id);
+    const thumbnailPath = await this.inspectThumbnailFile(candidate);
+    return this.mutate((draft) => {
+      const entry = draft.items.find((item) => item.id === clean);
+      if (!entry) throw new Error("Unknown Gallery item.");
+      const nextUrl = thumbnailPath ? thumbnailUrl(clean) : null;
+      const changed =
+        entry.thumbnailPath !== thumbnailPath || entry.thumbnailUrl !== nextUrl;
+      entry.thumbnailPath = thumbnailPath;
+      entry.thumbnailUrl = nextUrl;
       return { result: changed, changed };
     });
   }
@@ -508,6 +625,24 @@ export class GalleryStore {
         entry.fileSize = fileSize;
         changed += 1;
       }
+      if (entry.thumbnailPath) {
+        const thumbnail = await this.inspectThumbnailFile(entry.thumbnailPath);
+        if (!thumbnail) {
+          entry.thumbnailPath = null;
+          entry.thumbnailUrl = null;
+          changed += 1;
+        } else if (
+          entry.thumbnailPath !== thumbnail ||
+          entry.thumbnailUrl !== thumbnailUrl(entry.id)
+        ) {
+          entry.thumbnailPath = thumbnail;
+          entry.thumbnailUrl = thumbnailUrl(entry.id);
+          changed += 1;
+        }
+      } else if (entry.thumbnailUrl) {
+        entry.thumbnailUrl = null;
+        changed += 1;
+      }
     }
     return changed;
   }
@@ -542,11 +677,14 @@ export class GalleryStore {
     candidate: string | null | undefined,
   ): Promise<string | null> {
     if (!candidate || !this.thumbnailDirectory) return null;
-    return this.resolveOwnedFile(
+    const resolved = await this.resolveOwnedFile(
       candidate,
       this.thumbnailDirectory,
       THUMBNAIL_EXTENSIONS,
     );
+    return resolved && (await hasSupportedThumbnailSignature(resolved))
+      ? resolved
+      : null;
   }
 
   private async resolveOwnedFile(
@@ -629,6 +767,31 @@ export class GalleryStore {
     if (!this.initialized) {
       throw new Error("GalleryStore must be initialized before use.");
     }
+  }
+}
+
+export async function hasSupportedThumbnailSignature(
+  filePath: string,
+): Promise<boolean> {
+  let handle: fs.FileHandle | null = null;
+  try {
+    handle = await fs.open(filePath, "r");
+    const buffer = Buffer.alloc(32);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    if (bytesRead < 6) return false;
+    const ascii = buffer.subarray(0, bytesRead).toString("ascii");
+    return (
+      buffer.subarray(0, 4).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47])) ||
+      buffer.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff])) ||
+      ascii.startsWith("GIF87a") ||
+      ascii.startsWith("GIF89a") ||
+      (ascii.startsWith("RIFF") && ascii.slice(8, 12) === "WEBP") ||
+      (ascii.slice(4, 8) === "ftyp" && /(?:avif|avis)/u.test(ascii.slice(8)))
+    );
+  } catch {
+    return false;
+  } finally {
+    await handle?.close().catch(() => undefined);
   }
 }
 
@@ -800,14 +963,18 @@ function validateEntry(
   let height: number | null;
   let sourceName: string | null;
   let sourceUrl: string | null;
+  let sourceTitle: string | null;
   let smartChannelId: string | null;
+  let videoFormat: string | null;
   try {
     durationSeconds = cleanDuration(value.durationSeconds);
     width = cleanDimension(value.width);
     height = cleanDimension(value.height);
     sourceName = cleanOptionalString(value.sourceName, MAX_SOURCE_NAME_LENGTH);
     sourceUrl = cleanOptionalWebUrl(value.sourceUrl);
+    sourceTitle = cleanTitle(value.sourceTitle);
     smartChannelId = cleanOptionalString(value.smartChannelId, 256);
+    videoFormat = cleanOptionalString(value.videoFormat, MAX_FORMAT_LENGTH);
   } catch {
     return null;
   }
@@ -848,10 +1015,14 @@ function validateEntry(
     durationSeconds,
     width,
     height,
+    videoFormat,
+    metadataFileSize: cleanTimestamp(value.metadataFileSize),
+    metadataCheckedAt: cleanTimestamp(value.metadataCheckedAt),
     fileSize,
     downloadedAt,
     sourceName,
     sourceUrl,
+    sourceTitle,
     available: value.available,
     managedBy: value.managedBy === "smart" ? "smart" : "manual",
     smartChannelId: value.managedBy === "smart" ? smartChannelId : null,

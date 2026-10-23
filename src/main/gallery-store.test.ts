@@ -117,7 +117,7 @@ describe("GalleryStore", () => {
     await fs.mkdir(thumbnails, { recursive: true });
     const file = await video(managed, "smart [abcdefghijk].mp4");
     const thumbnailPath = path.join(thumbnails, "abcdefghijk.webp");
-    await fs.writeFile(thumbnailPath, "image");
+    await fs.writeFile(thumbnailPath, "RIFF0000WEBPimage");
     const store = new GalleryStore({
       ...paths,
       thumbnailDirectory: thumbnails,
@@ -143,6 +143,77 @@ describe("GalleryStore", () => {
     await expect(store.resolveFile(entry.id)).resolves.toBe(
       await fs.realpath(file),
     );
+  });
+
+  it("clears stale thumbnail references during reconciliation", async () => {
+    const paths = await fixture();
+    const thumbnails = path.join(paths.root, "profile", "smart", "thumbnails");
+    await fs.mkdir(thumbnails, { recursive: true });
+    const file = await video(paths.downloadsDirectory, "stale.mp4");
+    const thumbnailPath = path.join(thumbnails, "stale.webp");
+    await fs.writeFile(thumbnailPath, "RIFF0000WEBPimage");
+    const store = new GalleryStore({
+      ...paths,
+      thumbnailDirectory: thumbnails,
+      generateId: () => "stale-thumbnail",
+    });
+    await store.initialize();
+    await store.addCompleted({ filePath: file, thumbnailPath });
+    await fs.rm(thumbnailPath);
+
+    expect(await store.reconcile()).toBe(1);
+    expect(store.snapshot.items[0]).toMatchObject({
+      thumbnailPath: null,
+      thumbnailUrl: null,
+    });
+
+    const restored = new GalleryStore({
+      ...paths,
+      thumbnailDirectory: thumbnails,
+    });
+    await restored.initialize();
+    expect(restored.snapshot.items[0].thumbnailUrl).toBeNull();
+  });
+
+  it("merges recovered artwork and metadata into a source duplicate", async () => {
+    const paths = await fixture();
+    const thumbnails = path.join(paths.root, "profile", "smart", "thumbnails");
+    await fs.mkdir(thumbnails, { recursive: true });
+    const first = await video(paths.downloadsDirectory, "first.mp4");
+    const duplicate = await video(paths.downloadsDirectory, "second.mp4");
+    const thumbnailPath = path.join(thumbnails, "abcdefghijk.webp");
+    await fs.writeFile(thumbnailPath, "RIFF0000WEBPimage");
+    const store = new GalleryStore({
+      ...paths,
+      thumbnailDirectory: thumbnails,
+      generateId: () => "source-merge",
+      now: () => 99,
+    });
+    await store.initialize();
+    const sourceUrl = "https://www.youtube.com/watch?v=abcdefghijk";
+    const original = await store.addCompleted({ filePath: first, sourceUrl });
+    const merged = await store.addCompleted({
+      filePath: duplicate,
+      sourceUrl,
+      sourceTitle: "Publisher title",
+      durationSeconds: 45,
+      width: 1280,
+      height: 720,
+      videoFormat: "MP4 · 720p",
+      thumbnailPath,
+    });
+
+    expect(merged.id).toBe(original.id);
+    expect(store.snapshot.items).toHaveLength(1);
+    expect(merged).toMatchObject({
+      sourceTitle: "Publisher title",
+      durationSeconds: 45,
+      width: 1280,
+      height: 720,
+      videoFormat: "MP4 · 720p",
+      thumbnailUrl: "chromecraft-media://thumbnail/source-merge",
+      metadataCheckedAt: 99,
+    });
   });
 
   it("imports only bounded Chromecraft-named top-level media", async () => {

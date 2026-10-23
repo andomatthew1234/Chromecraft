@@ -13,6 +13,7 @@ import {
   buildYtDlpArguments,
   isYtDlpPostprocessLine,
   parseYtDlpFileLine,
+  parseYtDlpInfoJson,
   parseYtDlpProgressLine,
   YouTubeDownloadService,
 } from "./youtube-download-service";
@@ -50,10 +51,31 @@ describe("YouTubeDownloadService helpers", () => {
     expect(args).toContain("utf-8");
     expect(args).toContain("0.1");
     expect(args).toContain("--write-thumbnail");
+    expect(args).toContain("--write-info-json");
     expect(args).toContain("postprocess:CHROMECRAFT_POSTPROCESS:%(progress)j");
     expect(args).toContain("after_move:CHROMECRAFT_FILE:%(filepath)j");
     expect(args.at(-1)).toBe("https://www.youtube.com/watch?v=dQw4w9WgXcQ");
     expect(args.join(" ")).not.toContain("list=ignored");
+  });
+
+  it("extracts bounded source metadata from the yt-dlp sidecar", () => {
+    expect(
+      parseYtDlpInfoJson({
+        title: "Original source title",
+        duration: 62.5,
+        width: 1920,
+        height: 1080,
+        ext: "mp4",
+        format_note: "1080p",
+      }),
+    ).toEqual({
+      title: "Original source title",
+      durationSeconds: 62.5,
+      width: 1920,
+      height: 1080,
+      videoFormat: "MP4 · 1080p",
+    });
+    expect(parseYtDlpInfoJson({ unexpected: true })).toBeNull();
   });
 
   it("applies a bounded quality ceiling without shell interpolation", () => {
@@ -269,6 +291,76 @@ describe("YouTubeDownloadService helpers", () => {
       });
       await restored.dispose();
     } finally {
+      await fs.rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it("retains original artwork and source metadata before cleaning staging", async () => {
+    const directory = await fs.mkdtemp(
+      path.join(os.tmpdir(), "chromecraft-youtube-completion-"),
+    );
+    const thumbnails = path.join(directory, "profile", "thumbnails");
+    const child = fakeChildProcess();
+    const onCompleted = vi.fn(async () => true);
+    const service = new YouTubeDownloadService({
+      downloadsDirectory: directory,
+      thumbnailDirectory: thumbnails,
+      toolsDirectory: path.join(directory, "tools"),
+      spawnProcess: () => child,
+      onCompleted,
+    });
+    (service as unknown as { verified: boolean }).verified = true;
+    try {
+      const id = await service.start({
+        videoId: "dQw4w9WgXcQ",
+        url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+      });
+      const staging = path.join(directory, ".chromecraft-media", id);
+      const media = path.join(staging, "Source title [dQw4w9WgXcQ].mp4");
+      await fs.writeFile(media, "video");
+      await fs.writeFile(
+        path.join(staging, "Source title [dQw4w9WgXcQ].webp"),
+        "RIFF0000WEBPoriginal",
+      );
+      await fs.writeFile(
+        path.join(staging, "Source title [dQw4w9WgXcQ].info.json"),
+        JSON.stringify({
+          title: "Source title",
+          duration: 30,
+          width: 1280,
+          height: 720,
+          ext: "mp4",
+          format_note: "720p",
+        }),
+      );
+      (child.stdout as PassThrough).write(
+        `CHROMECRAFT_FILE:${JSON.stringify(media)}\n`,
+      );
+      child.emit("close", 0, null);
+
+      await vi.waitFor(() => {
+        expect(service.snapshot.items[0].stage).toBe("completed");
+      });
+      expect(onCompleted).toHaveBeenCalledWith(
+        expect.objectContaining({ videoId: "dQw4w9WgXcQ" }),
+        expect.stringContaining("Source title [dQw4w9WgXcQ].mp4"),
+        expect.objectContaining({
+          thumbnailPath: path.join(thumbnails, "dQw4w9WgXcQ.webp"),
+          mediaMetadata: {
+            title: "Source title",
+            durationSeconds: 30,
+            width: 1280,
+            height: 720,
+            videoFormat: "MP4 · 720p",
+          },
+        }),
+      );
+      await expect(
+        fs.readFile(path.join(thumbnails, "dQw4w9WgXcQ.webp"), "utf8"),
+      ).resolves.toBe("RIFF0000WEBPoriginal");
+      await expect(fs.stat(staging)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await service.dispose();
       await fs.rm(directory, { recursive: true, force: true });
     }
   });

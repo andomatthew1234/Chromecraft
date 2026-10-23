@@ -133,21 +133,83 @@ describe("SmartDownloadsController", () => {
     ]);
 
     expect(await test.controller.checkNow()).toMatchObject({
-      discoveredVideos: 1,
+      newVideosFound: 1,
       queuedVideos: 1,
     });
     expect(await test.controller.checkNow()).toMatchObject({
-      discoveredVideos: 0,
+      newVideosFound: 0,
       queuedVideos: 0,
     });
     expect(test.store.snapshot.seenVideos).toHaveLength(2);
     expect(test.store.snapshot.queue).toHaveLength(1);
   });
 
+  it("reports real manual-check progress and reuses one in-flight scan", async () => {
+    const test = await harness();
+    test.setRecent([]);
+    await test.controller.initialize();
+    await test.controller.setEnabled(true);
+    await test.controller.addChannel("@channel");
+    test.setRecent([video("aaaaaaaaaaa", 2)]);
+    let releaseDiscovery: (() => void) | undefined;
+    test.discoverRecent.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          releaseDiscovery = () => resolve([video("aaaaaaaaaaa", 2)]);
+        }),
+    );
+
+    const first = test.controller.checkNow();
+    const duplicate = test.controller.checkNow();
+
+    expect(test.controller.snapshot.check).toMatchObject({
+      state: "checking",
+      trigger: "manual",
+      totalChannels: 1,
+      checkedChannels: 0,
+      newVideosFound: 0,
+    });
+    expect(test.discoverRecent).toHaveBeenCalledOnce();
+
+    releaseDiscovery?.();
+    const [firstResult, duplicateResult] = await Promise.all([
+      first,
+      duplicate,
+    ]);
+    expect(duplicateResult).toEqual(firstResult);
+    expect(firstResult).toMatchObject({
+      state: "completed",
+      checkedChannels: 1,
+      newVideosFound: 1,
+      queuedVideos: 1,
+      failures: 0,
+    });
+    expect(test.controller.snapshot.check).toEqual(firstResult);
+  });
+
+  it("returns actionable blocked results when checking is unavailable", async () => {
+    const test = await harness();
+    await test.controller.initialize();
+
+    await expect(test.controller.checkNow()).resolves.toMatchObject({
+      state: "blocked",
+      reason: "disabled",
+      checkedChannels: 0,
+    });
+
+    await test.controller.setEnabled(true);
+    await expect(test.controller.checkNow()).resolves.toMatchObject({
+      state: "blocked",
+      reason: "no-channels",
+      checkedChannels: 0,
+    });
+  });
+
   it("uses bounded exponential channel-check backoff", async () => {
     const test = await harness();
     test.setRecent([]);
     await test.controller.initialize();
+    await test.controller.setEnabled(true);
     await test.controller.addChannel("@channel");
     test.discoverRecent.mockRejectedValue(new Error("offline"));
 
@@ -160,6 +222,13 @@ describe("SmartDownloadsController", () => {
       1_000_000 + retryDelayMs(2),
     );
     expect(test.controller.snapshot.channelErrors[CHANNEL_ID]).toBe("offline");
+    expect(test.store.snapshot.channels[0].lastError).toBe("offline");
+
+    const reloaded = new SmartDownloadsStore({
+      filePath: path.join(directories.at(-1)!, "smart-downloads.json"),
+    });
+    await reloaded.initialize();
+    expect(reloaded.snapshot.channels[0].lastError).toBe("offline");
   });
 
   it("pauses pending jobs and resumes through the existing queue", async () => {

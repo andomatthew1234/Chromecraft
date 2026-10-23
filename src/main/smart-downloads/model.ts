@@ -52,6 +52,8 @@ export interface FollowedChannel {
   lastCheckedAt: number | null;
   lastSuccessfulCheckAt: number | null;
   nextCheckAt: number | null;
+  /** Sanitized failure from the most recent channel check, cleared on success. */
+  lastError: string | null;
 }
 
 export interface SeenVideoRecord {

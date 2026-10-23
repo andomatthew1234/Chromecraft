@@ -59,6 +59,7 @@ import { ElectronUpdateAdapter } from "./electron-update-adapter";
 import { registerInternalProtocol } from "./internal-protocol";
 import { GalleryStore } from "./gallery-store";
 import { registerGalleryMediaProtocol } from "./gallery-media-protocol";
+import { GalleryMediaRepairService } from "./gallery-media-repair";
 import { HyperdriveController } from "./hyperdrive/controller";
 import { PreferencesStore } from "./preferences";
 import { SearchSuggestionService } from "./search-suggestions";
@@ -68,6 +69,7 @@ import { UpdateManager } from "./update-manager";
 import {
   YouTubeDownloadService,
   YT_DLP_VERSION,
+  mediaToolPaths,
 } from "./youtube-download-service";
 import { parseChromeWebStoreListingUrl } from "../shared/web-store-listing";
 import {
@@ -150,6 +152,7 @@ let updateManager: UpdateManager | null = null;
 let websitePermissionController: WebsitePermissionController | null = null;
 let youtubeDownloadService: YouTubeDownloadService | null = null;
 let galleryStore: GalleryStore | null = null;
+let galleryMediaRepairService: GalleryMediaRepairService | null = null;
 let smartDownloadsService: SmartDownloadsService | null = null;
 let smartDownloadsTray: Tray | null = null;
 let quittingCompletely = false;
@@ -482,6 +485,16 @@ function requireGallery(event: IpcMainInvokeEvent): GalleryStore {
   requireTrusted(event);
   if (!galleryStore) throw new Error("My Gallery is not ready.");
   return galleryStore;
+}
+
+function requireGalleryMediaRepair(
+  event: IpcMainInvokeEvent,
+): GalleryMediaRepairService {
+  requireTrusted(event);
+  if (!galleryMediaRepairService) {
+    throw new Error("Gallery media repair is not ready.");
+  }
+  return galleryMediaRepairService;
 }
 
 function requireSmartDownloads(
@@ -1596,6 +1609,22 @@ function registerIpc(): void {
       );
     },
   );
+  ipcMain.handle(channels.repairGalleryMedia, (event, request: unknown) => {
+    if (!request || typeof request !== "object" || Array.isArray(request)) {
+      throw new TypeError("Gallery media repair options are invalid.");
+    }
+    const options = request as Record<string, unknown>;
+    if (
+      typeof options.fetchOriginalThumbnails !== "boolean" ||
+      typeof options.generateLocalFallbacks !== "boolean"
+    ) {
+      throw new TypeError("Gallery media repair options are invalid.");
+    }
+    return requireGalleryMediaRepair(event).repair({
+      fetchOriginalThumbnails: options.fetchOriginalThumbnails,
+      generateLocalFallbacks: options.generateLocalFallbacks,
+    });
+  });
   ipcMain.handle(
     channels.setSmartDownloadKeepForever,
     (event, id: unknown, keepForever: unknown) =>
@@ -1933,9 +1962,16 @@ async function createMainWindow(): Promise<void> {
         try {
           const galleryEntry = await gallery.addCompleted({
             filePath: savePath,
-            title: item.filename
-              ?.replace(/\s+\[[a-zA-Z0-9_-]{6,}\](?=\.[^.]+$)/u, "")
-              .replace(/\.[^.]+$/u, ""),
+            title:
+              context.mediaMetadata?.title ??
+              item.filename
+                ?.replace(/\s+\[[a-zA-Z0-9_-]{6,}\](?=\.[^.]+$)/u, "")
+                .replace(/\.[^.]+$/u, ""),
+            sourceTitle: context.mediaMetadata?.title,
+            durationSeconds: context.mediaMetadata?.durationSeconds,
+            width: context.mediaMetadata?.width,
+            height: context.mediaMetadata?.height,
+            videoFormat: context.mediaMetadata?.videoFormat,
             downloadedAt: item.finishedAt ?? Date.now(),
             sourceName: "YouTube",
             sourceUrl: item.sourceUrl,
@@ -1986,6 +2022,15 @@ async function createMainWindow(): Promise<void> {
   } catch (error) {
     console.error("Bundled YouTube downloader is unavailable.", error);
   }
+  const repairTools = mediaToolPaths(mediaToolsDirectory);
+  galleryMediaRepairService = new GalleryMediaRepairService({
+    gallery,
+    downloadsDirectory,
+    thumbnailDirectory: smartDownloadsThumbnailDirectory,
+    ytDlpPath: repairTools.ytDlp,
+    denoPath: repairTools.deno,
+    canFetchOriginals: () => youtubeDownloads.snapshot.available,
+  });
 
   const smartDownloads = new SmartDownloadsService({
     stateFilePath: path.join(smartDownloadsDataDirectory, "state.json"),

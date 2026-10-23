@@ -2,6 +2,8 @@ import { useEffect, useState, type ReactNode } from "react";
 
 import type {
   SmartDownloadCleanupPolicy,
+  SmartDownloadsCheckResult,
+  SmartDownloadsCheckSnapshot,
   SmartDownloadInitialMode,
   SmartDownloadQuality,
   SmartDownloadsSnapshot,
@@ -30,6 +32,27 @@ function formatTime(value: number | null): string {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(value);
+}
+
+export function smartDownloadsCheckMessage(
+  check: SmartDownloadsCheckSnapshot,
+): string | null {
+  if (check.state === "idle") return null;
+  if (check.state === "checking") {
+    if (check.totalChannels === 0) return "Preparing channel check…";
+    return `Checking ${Math.min(check.checkedChannels + 1, check.totalChannels)} of ${check.totalChannels} ${check.totalChannels === 1 ? "channel" : "channels"}…`;
+  }
+  if (check.state === "blocked") {
+    if (check.reason === "disabled") return "Smart Downloads is off";
+    if (check.reason === "no-channels") return "No channels are followed yet";
+    return "No followed channels are enabled";
+  }
+  if (check.state === "failed") return "Check failed — Retry";
+  if (check.state === "partial") {
+    return `${check.newVideosFound} new ${check.newVideosFound === 1 ? "video" : "videos"} found · ${check.failures} ${check.failures === 1 ? "channel" : "channels"} failed`;
+  }
+  if (check.newVideosFound === 0) return "No new videos found";
+  return `${check.newVideosFound} new ${check.newVideosFound === 1 ? "video" : "videos"} found`;
 }
 
 function SwitchRow({
@@ -78,6 +101,8 @@ export function SmartDownloadsPage({
   );
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [lastManualCheck, setLastManualCheck] =
+    useState<SmartDownloadsCheckResult | null>(null);
   useEffect(
     () => setQuotaGb(snapshot.config.storageQuotaBytes / GB),
     [snapshot.config.storageQuotaBytes],
@@ -95,6 +120,17 @@ export function SmartDownloadsPage({
       )
       .finally(() => setBusy(null));
   };
+  const runCheck = (key: string, channelId?: string) => {
+    setBusy(key);
+    setError(null);
+    void window.chromecraft
+      .checkSmartDownloads(channelId)
+      .then(setLastManualCheck)
+      .catch(() =>
+        setError("Smart Downloads could not check followed channels."),
+      )
+      .finally(() => setBusy(null));
+  };
   const maximumGb = Math.max(0.5, snapshot.storage.maximumQuotaBytes / GB);
   const windowsStartupSupported =
     typeof navigator !== "undefined" && navigator.userAgent.includes("Windows");
@@ -108,6 +144,11 @@ export function SmartDownloadsPage({
       job.state,
     ),
   );
+  const displayedCheck =
+    snapshot.check.state === "checking"
+      ? snapshot.check
+      : (lastManualCheck ?? snapshot.check);
+  const checkMessage = smartDownloadsCheckMessage(displayedCheck);
 
   return (
     <div className="smart-downloads-page">
@@ -211,15 +252,34 @@ export function SmartDownloadsPage({
           <button
             type="button"
             className="tonal-button"
-            disabled={snapshot.checking || snapshot.channels.length === 0}
-            onClick={() =>
-              run("check-all", () => window.chromecraft.checkSmartDownloads())
+            disabled={
+              snapshot.checking ||
+              busy === "check-all" ||
+              snapshot.channels.length === 0
             }
+            onClick={() => runCheck("check-all")}
           >
             <Icon>refresh</Icon>
-            {snapshot.checking ? "Checking…" : "Check now"}
+            {snapshot.checking ? "Checking…" : "Check Smart Downloads now"}
           </button>
         </header>
+        {checkMessage && (
+          <div
+            className={`smart-check-feedback smart-check-feedback--${displayedCheck.state}`}
+            role="status"
+            aria-live="polite"
+          >
+            <Icon>
+              {displayedCheck.state === "failed" ||
+              displayedCheck.state === "partial"
+                ? "error"
+                : displayedCheck.state === "checking"
+                  ? "sync"
+                  : "check_circle"}
+            </Icon>
+            <span>{checkMessage}</span>
+          </div>
+        )}
         <form
           className="smart-add-channel"
           onSubmit={(event) => {
@@ -316,11 +376,7 @@ export function SmartDownloadsPage({
                 <div>
                   <button
                     type="button"
-                    onClick={() =>
-                      run(`check-${channel.id}`, () =>
-                        window.chromecraft.checkSmartDownloads(channel.id),
-                      )
-                    }
+                    onClick={() => runCheck(`check-${channel.id}`, channel.id)}
                   >
                     Check for new videos now
                   </button>

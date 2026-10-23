@@ -19,6 +19,7 @@ import type {
   DownloadSnapshot,
   ExtensionInstallPreviewSnapshot,
   ExtensionsSnapshot,
+  GalleryEntrySnapshot,
   GallerySnapshot,
   HyperdriveDestinationSnapshot,
   HyperdriveMode,
@@ -114,6 +115,27 @@ const emptySmartDownloads: SmartDownloadsSnapshot = {
   nextCheckAt: null,
   backgroundRunning: false,
   error: null,
+  status: {
+    configured: false,
+    state: "not-configured",
+    paused: false,
+    enabledChannelCount: 0,
+    error: null,
+  },
+  check: {
+    state: "idle",
+    trigger: null,
+    reason: null,
+    channelId: null,
+    totalChannels: 0,
+    checkedChannels: 0,
+    newVideosFound: 0,
+    queuedVideos: 0,
+    failures: 0,
+    startedAt: null,
+    completedAt: null,
+    error: null,
+  },
 };
 const emptyExtensions: ExtensionsSnapshot = {
   initialized: false,
@@ -3477,6 +3499,58 @@ export function ExtensionsPage({
   );
 }
 
+function GallerySidebarPreview({ item }: { item: GalleryEntrySnapshot }) {
+  const [imageFailed, setImageFailed] = useState(false);
+  const [videoFailed, setVideoFailed] = useState(false);
+
+  useEffect(() => {
+    setImageFailed(false);
+    setVideoFailed(false);
+  }, [item.id, item.thumbnailUrl, item.mediaUrl]);
+
+  const showImage = Boolean(item.thumbnailUrl) && !imageFailed;
+  const showVideo = item.available && !videoFailed && !showImage;
+  return (
+    <span className="gallery-sidebar-thumb">
+      {showImage && (
+        <img
+          src={item.thumbnailUrl!}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          onError={() => setImageFailed(true)}
+        />
+      )}
+      {showVideo && (
+        <video
+          src={item.mediaUrl}
+          muted
+          preload="metadata"
+          playsInline
+          onError={() => setVideoFailed(true)}
+          onLoadedMetadata={(event) => {
+            const preview = event.currentTarget;
+            if (preview.duration > 2) {
+              preview.currentTime = Math.min(3, preview.duration * 0.08);
+            }
+          }}
+          aria-hidden="true"
+        />
+      )}
+      {!showImage && !showVideo && (
+        <span
+          className="gallery-sidebar-fallback material-icon material-symbols-rounded"
+          aria-hidden="true"
+        >
+          {item.available ? "movie" : "broken_image"}
+        </span>
+      )}
+      {item.available && <Icon name="play" />}
+      {!item.available && <Icon name="warning" />}
+    </span>
+  );
+}
+
 function Sidebar({
   snapshot,
   data,
@@ -4018,35 +4092,7 @@ function Sidebar({
                     disabled={!item.available}
                     onClick={() => void openGalleryFromSidebar(item.id)}
                   >
-                    <span className="gallery-sidebar-thumb">
-                      {item.thumbnailUrl ? (
-                        <img
-                          src={item.thumbnailUrl}
-                          alt=""
-                          loading="lazy"
-                          decoding="async"
-                        />
-                      ) : (
-                        <video
-                          src={item.mediaUrl}
-                          muted
-                          preload="metadata"
-                          playsInline
-                          onLoadedMetadata={(event) => {
-                            const preview = event.currentTarget;
-                            if (preview.duration > 2) {
-                              preview.currentTime = Math.min(
-                                3,
-                                preview.duration * 0.08,
-                              );
-                            }
-                          }}
-                          aria-hidden="true"
-                        />
-                      )}
-                      {item.available && <Icon name="play" />}
-                      {!item.available && <Icon name="warning" />}
-                    </span>
+                    <GallerySidebarPreview item={item} />
                     <span>
                       <strong>{item.title}</strong>
                       <small>
@@ -5580,6 +5626,7 @@ export function App() {
           snapshot={gallery}
           selectedId={new URL(activeTab.url).searchParams.get("video")}
           onOpenSmartDownloads={openSmartDownloadsSettings}
+          smartDownloads={smartDownloads}
         />
       ) : activeTab.id === fullSettingsTabId ? (
         <FullSettingsPage

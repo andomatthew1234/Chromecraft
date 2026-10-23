@@ -8,9 +8,11 @@ import type {
   ExtensionInstallPreviewSnapshot,
   ExtensionsSnapshot,
   FindResultSnapshot,
+  GalleryMediaRepairResult,
   GallerySnapshot,
   HyperdriveSnapshot,
   SmartDownloadsSnapshot,
+  SmartDownloadsCheckResult,
   TabId,
   YouTubeDownloadsSnapshot,
 } from "../shared/browser";
@@ -276,7 +278,7 @@ const api: ChromecraftApi = {
     ipcRenderer.invoke(
       channels.checkSmartDownloads,
       channelId,
-    ) as Promise<void>,
+    ) as Promise<SmartDownloadsCheckResult>,
   removeSmartDownloadsChannel: (id) =>
     ipcRenderer.invoke(
       channels.removeSmartDownloadsChannel,
@@ -365,6 +367,11 @@ const api: ChromecraftApi = {
       width,
       height,
     ) as Promise<void>,
+  repairGalleryMedia: (request) =>
+    ipcRenderer.invoke(
+      channels.repairGalleryMedia,
+      request,
+    ) as Promise<GalleryMediaRepairResult>,
   setSmartDownloadKeepForever: (id, keepForever) =>
     ipcRenderer.invoke(
       channels.setSmartDownloadKeepForever,

@@ -24,6 +24,7 @@
     "test:settings-scroll": "node scripts/test-settings-scroll.mjs",
     "test:full-settings": "node scripts/test-full-settings.mjs",
     "test:sidebar": "node scripts/test-sidebar.mjs",
+    "test:gallery-ui:win": "node scripts/test-gallery-ui.mjs",
     "test:toolbar": "node scripts/test-toolbar.mjs",
     "test:fullscreen:win": "node scripts/test-packaged-fullscreen.mjs --platform=win32",
     "test:fullscreen:linux": "node scripts/test-packaged-fullscreen.mjs --platform=linux",
