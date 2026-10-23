@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 
 import {
@@ -32,6 +32,12 @@ import type {
   WebStoreListingSnapshot,
   YouTubeWatchSnapshot,
 } from "../shared/browser";
+import type {
+  AssistantAttachment,
+  AssistantContextCaptured,
+  AssistantElementContext,
+  AssistantPageContext,
+} from "../shared/ai-assistant";
 import { channels } from "../shared/channels";
 import {
   isAllowedWebUrl,
@@ -61,6 +67,9 @@ export const EXTENSION_INSTALL_BANNER_HEIGHT = 88;
 export const YOUTUBE_DOWNLOAD_BANNER_HEIGHT = 48;
 export const YOUTUBE_GLOBAL_PROGRESS_HEIGHT = 34;
 export const HYPERDRIVE_MONITOR_WIDTH = 372;
+const ASSISTANT_TEXT_LIMIT = 2_000;
+const ASSISTANT_DESCRIPTION_LIMIT = 600;
+const ASSISTANT_SCREENSHOT_LIMIT = 1_500_000;
 const SESSION_WRITE_DELAY_MS = 300;
 const EXTENSION_WINDOW_NAME_PREFIX = "__chromecraft_extension_window_";
 const ZOOM_FACTORS = [
@@ -73,6 +82,53 @@ export function isWebsiteFullscreenPermissionAllowed(
   topLevelUrl: string,
 ): boolean {
   return permission === "fullscreen" && isAllowedWebUrl(topLevelUrl);
+}
+
+function cleanAssistantText(value: unknown, maximum: number): string | null {
+  if (typeof value !== "string") return null;
+  const cleaned = value.replace(/\s+/gu, " ").trim();
+  return cleaned ? cleaned.slice(0, maximum) : null;
+}
+
+function cleanAssistantUrl(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    return url.href.length <= 2_048 ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function displayAssistantUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.hostname}${parsed.pathname}`.slice(0, 240);
+  } catch {
+    return "Current page";
+  }
+}
+
+function cleanAssistantElement(value: unknown): AssistantElementContext | null {
+  if (!value || typeof value !== "object") return null;
+  const source = value as Record<string, unknown>;
+  const tag = cleanAssistantText(source.tag, 40)?.toLowerCase();
+  if (!tag || !/^[a-z][a-z0-9-]*$/u.test(tag)) return null;
+  const text = cleanAssistantText(source.text, 800);
+  const label = cleanAssistantText(source.label, 240);
+  const role = cleanAssistantText(source.role, 80);
+  const alt = cleanAssistantText(source.alt, 240);
+  const placeholder = cleanAssistantText(source.placeholder, 240);
+  const type = cleanAssistantText(source.type, 80);
+  const href = cleanAssistantUrl(source.href);
+  const markup = cleanAssistantText(source.markup, 1_200);
+  if (!markup) return null;
+  return { tag, role, label, text, href, alt, placeholder, type, markup };
 }
 
 interface TabRecord {
@@ -102,6 +158,59 @@ interface TabRecord {
   groupId: string | null;
   thumbnailDataUrl: string | null;
 }
+
+export interface AiTabOrganizationCandidate {
+  id: TabId;
+  title: string;
+  hostname: string;
+  pathHint: string;
+}
+
+export interface AiTabOrganizationContext {
+  revision: string;
+  candidates: AiTabOrganizationCandidate[];
+  preservedTabIds: TabId[];
+}
+
+export interface AiTabOrganizationPlan {
+  revision: string;
+  groups: Array<{
+    name: string;
+    color: TabGroupColor;
+    tabIds: TabId[];
+  }>;
+  ungroupedTabIds: TabId[];
+}
+
+export interface AppliedAiTabOrganization {
+  undoToken: string;
+  organisedTabCount: number;
+  groupCount: number;
+}
+
+export class AiTabOrganizationUndoUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AiTabOrganizationUndoUnavailableError";
+  }
+}
+
+interface TabOrganizationTopology {
+  order: TabId[];
+  groupIds: Map<TabId, string | null>;
+  pinned: Map<TabId, boolean>;
+  groups: Map<string, TabGroupSnapshot>;
+}
+
+interface AiTabOrganizationUndo {
+  token: string;
+  before: TabOrganizationTopology;
+  afterRevision: string;
+  organisedTabCount: number;
+  groupCount: number;
+}
+
+class TabTopologyBusyError extends Error {}
 
 export type ExtensionTabStatus = "loading" | "complete";
 
@@ -277,6 +386,9 @@ export class TabManager {
   private readonly order: TabId[] = [];
   private readonly tabGroups = new Map<string, TabGroupSnapshot>();
   private readonly selectedTabIds = new Set<TabId>();
+  private aiTabOrganizationUndo: AiTabOrganizationUndo | null = null;
+  private aiTabOrganizationMutationInProgress = false;
+  private tabTopologyMutationOperations = 0;
   private selectionAnchorId: TabId | null = null;
   private rendererMemoryCache = new Map<number, number>();
   private rendererMemoryCacheAt = 0;
@@ -327,7 +439,8 @@ export class TabManager {
     this.extensionPopup = extensions
       ? new ExtensionPopupController(window, browserSession, extensions, {
           onStateChanged: onExtensionsChanged,
-          openExternalUrl: (url) => this.createTab(url),
+          openExternalUrl: (url) =>
+            this.runNativeTabTopologyAction(() => this.createTab(url)),
         })
       : null;
     this.fullscreenHint = new FullscreenHintController(window);
@@ -576,6 +689,220 @@ export class TabManager {
     return (await tab.view.webContents.capturePage()).toPNG();
   }
 
+  async getAssistantPageContext(tabId: string): Promise<AssistantPageContext> {
+    if (tabId !== this.activeTabId) {
+      throw new Error(
+        "The active page changed. Open the assistant again to refresh context.",
+      );
+    }
+    const tab = this.requireTab(tabId);
+    const contents = tab.view?.webContents;
+    if (!contents || contents.isDestroyed() || !isAllowedWebUrl(tab.url)) {
+      throw new Error("Page context is available only for loaded websites.");
+    }
+    const expectedUrl = tab.url;
+    const expectedEpoch = tab.documentEpoch;
+    const value = (await contents.executeJavaScript(
+      `(() => {
+        const meta = (selector) => document.querySelector(selector)?.getAttribute("content") || "";
+        const selection = getSelection()?.toString() || "";
+        return {
+          title: document.title || "",
+          description: meta('meta[name="description"]') || meta('meta[property="og:description"]'),
+          selectedText: selection,
+          contentType: document.contentType || "",
+        };
+      })()`,
+      true,
+    )) as Record<string, unknown>;
+    const current = this.tabs.get(tabId);
+    if (
+      current !== tab ||
+      this.activeTabId !== tabId ||
+      tab.documentEpoch !== expectedEpoch ||
+      tab.url !== expectedUrl ||
+      contents.isDestroyed()
+    ) {
+      throw new Error("The page changed while its context was being read.");
+    }
+    const url = cleanAssistantUrl(expectedUrl);
+    if (!url)
+      throw new Error("This page cannot be included as assistant context.");
+    return {
+      tabId,
+      url,
+      displayUrl: displayAssistantUrl(url),
+      title:
+        cleanAssistantText(value.title, 240) ??
+        cleanAssistantText(tab.title, 240) ??
+        "Untitled page",
+      description: cleanAssistantText(
+        value.description,
+        ASSISTANT_DESCRIPTION_LIMIT,
+      ),
+      selectedText: cleanAssistantText(
+        value.selectedText,
+        ASSISTANT_TEXT_LIMIT,
+      ),
+      contentType: cleanAssistantText(value.contentType, 100),
+    };
+  }
+
+  startAssistantSelection(kind: "screenshot" | "element"): void {
+    const tab = this.requireTab(this.activeTabId);
+    const contents = tab.view?.webContents;
+    if (
+      !contents ||
+      contents.isDestroyed() ||
+      tab.isLoading ||
+      !isAllowedWebUrl(tab.url)
+    ) {
+      throw new Error(
+        "Wait for a website to finish loading before selecting context.",
+      );
+    }
+    contents.send(channels.assistantStartSelection, { kind });
+  }
+
+  cancelAssistantSelection(): void {
+    const contents = this.tabs.get(this.activeTabId)?.view?.webContents;
+    if (!contents || contents.isDestroyed()) return;
+    contents.send(channels.assistantCancelSelection);
+  }
+
+  private sendAssistantContextCaptured(value: AssistantContextCaptured): void {
+    if (!this.shellView.webContents.isDestroyed()) {
+      this.shellView.webContents.send(channels.assistantContextCaptured, value);
+    }
+  }
+
+  private async handleAssistantSelection(
+    tab: TabRecord,
+    contents: WebContents,
+    value: unknown,
+  ): Promise<void> {
+    if (!value || typeof value !== "object" || tab.id !== this.activeTabId)
+      return;
+    const source = value as Record<string, unknown>;
+    const requestId = cleanAssistantText(source.requestId, 100);
+    const kind =
+      source.kind === "screenshot" || source.kind === "element"
+        ? source.kind
+        : null;
+    if (
+      !requestId ||
+      !kind ||
+      !isAllowedWebUrl(tab.url) ||
+      contents.isDestroyed()
+    )
+      return;
+    const url = cleanAssistantUrl(tab.url);
+    if (!url) return;
+    if (kind === "element") {
+      const element = cleanAssistantElement(source.element);
+      if (!element) return;
+      const label = element.label ?? element.text ?? element.alt ?? element.tag;
+      this.sendAssistantContextCaptured({
+        requestId,
+        attachment: {
+          id: `element-${requestId}`,
+          kind: "element",
+          label:
+            `${element.tag[0].toUpperCase()}${element.tag.slice(1)} · ${label}`.slice(
+              0,
+              180,
+            ),
+          detail: element.role ?? element.tag,
+          createdAt: Date.now(),
+          data: { element },
+        },
+      });
+      return;
+    }
+    const rectangle = source.rectangle as Record<string, unknown> | undefined;
+    const viewport = source.viewport as Record<string, unknown> | undefined;
+    const numbers = [
+      rectangle?.x,
+      rectangle?.y,
+      rectangle?.width,
+      rectangle?.height,
+      viewport?.width,
+      viewport?.height,
+    ];
+    if (
+      !numbers.every(
+        (entry) => typeof entry === "number" && Number.isFinite(entry),
+      )
+    )
+      return;
+    const [x, y, width, height, viewportWidth, viewportHeight] =
+      numbers as number[];
+    if (
+      width < 8 ||
+      height < 8 ||
+      width > viewportWidth ||
+      height > viewportHeight ||
+      x < 0 ||
+      y < 0 ||
+      x + width > viewportWidth + 1 ||
+      y + height > viewportHeight + 1 ||
+      viewportWidth < 1 ||
+      viewportHeight < 1
+    )
+      return;
+    try {
+      const image = await contents.capturePage();
+      if (
+        contents.isDestroyed() ||
+        tab.id !== this.activeTabId ||
+        image.isEmpty()
+      )
+        return;
+      const size = image.getSize();
+      const scaleX = size.width / viewportWidth;
+      const scaleY = size.height / viewportHeight;
+      const crop = image.crop({
+        x: Math.max(0, Math.floor(x * scaleX)),
+        y: Math.max(0, Math.floor(y * scaleY)),
+        width: Math.max(1, Math.floor(width * scaleX)),
+        height: Math.max(1, Math.floor(height * scaleY)),
+      });
+      if (crop.isEmpty()) return;
+      const croppedSize = crop.getSize();
+      const targetWidth = Math.min(720, croppedSize.width);
+      const resized = crop.resize({
+        width: targetWidth,
+        height: Math.max(
+          1,
+          Math.round((croppedSize.height / croppedSize.width) * targetWidth),
+        ),
+        quality: "good",
+      });
+      const png = resized.toPNG();
+      if (png.byteLength > ASSISTANT_SCREENSHOT_LIMIT) {
+        throw new Error(
+          "The selected screenshot is too large. Select a smaller area.",
+        );
+      }
+      this.sendAssistantContextCaptured({
+        requestId,
+        attachment: {
+          id: `screenshot-${requestId}`,
+          kind: "screenshot",
+          label: "Screenshot · Selected area",
+          detail: `${Math.round(width)} × ${Math.round(height)}`,
+          createdAt: Date.now(),
+          data: {
+            screenshotDataUrl: `data:image/png;base64,${png.toString("base64")}`,
+            url,
+          },
+        },
+      });
+    } catch (error) {
+      console.warn("Could not capture assistant screenshot context.", error);
+    }
+  }
+
   createOfflinePageCapture(tabId: TabId): OfflinePageCaptureSource {
     if (tabId !== this.activeTabId) {
       throw new Error("The selected page is no longer active.");
@@ -699,6 +1026,7 @@ export class TabManager {
   }
 
   createTab(input?: string, activate = true): TabId {
+    this.assertTabTopologyMutable();
     const id = randomUUID();
     const tab = this.makeTab(id, "New Tab", "", true);
     this.tabs.set(id, tab);
@@ -715,6 +1043,7 @@ export class TabManager {
   }
 
   openGallery(entryId?: string, forceNew = false): TabId {
+    this.assertTabTopologyMutable();
     const suffix = entryId ? `?video=${encodeURIComponent(entryId)}` : "";
     const url = `chromecraft://gallery/${suffix}`;
     const active = this.tabs.get(this.activeTabId);
@@ -745,6 +1074,7 @@ export class TabManager {
   }
 
   openOfflinePages(entryId?: string, forceNew = false): TabId {
+    this.assertTabTopologyMutable();
     if (entryId && !/^[a-z0-9_-]{1,128}$/u.test(entryId)) {
       throw new TypeError("Invalid offline page id.");
     }
@@ -839,6 +1169,7 @@ export class TabManager {
   }
 
   closeTab(tabId: TabId): void {
+    this.assertTabTopologyMutable();
     const tab = this.requireTab(tabId);
     const group = tab.groupId ? this.tabGroups.get(tab.groupId) : null;
     if (this.htmlFullscreenTabId === tab.id) this.exitWebsiteFullscreen(tab);
@@ -890,67 +1221,78 @@ export class TabManager {
   }
 
   async duplicateTab(tabId: TabId): Promise<TabId> {
-    const source = this.requireTab(tabId);
-    if (isGalleryUrl(source.url)) {
-      const videoId =
-        new URL(source.url).searchParams.get("video") ?? undefined;
-      return this.openGallery(videoId);
+    const finish = this.beginTabTopologyMutation();
+    try {
+      const source = this.requireTab(tabId);
+      if (isGalleryUrl(source.url)) {
+        const videoId =
+          new URL(source.url).searchParams.get("video") ?? undefined;
+        return this.openGallery(videoId);
+      }
+      if (isOfflinePagesUrl(source.url)) {
+        const entryId =
+          new URL(source.url).searchParams.get("page") ?? undefined;
+        return this.openOfflinePages(entryId, true);
+      }
+      const duplicateId = this.createTab(undefined, false);
+      const currentIndex = this.order.indexOf(duplicateId);
+      this.order.splice(currentIndex, 1);
+      this.order.splice(this.order.indexOf(tabId) + 1, 0, duplicateId);
+      const duplicate = this.requireTab(duplicateId);
+      duplicate.isMuted = source.isMuted;
+      duplicate.zoomFactor = source.zoomFactor;
+      duplicate.groupId = source.groupId;
+      duplicate.pinned = source.pinned;
+      if (source.url) {
+        await this.navigateToUrl(
+          duplicate,
+          source.url,
+          this.isAllowedInternalUrl(source.url),
+          true,
+        );
+      } else {
+        this.activateTab(duplicateId);
+      }
+      return duplicateId;
+    } finally {
+      finish();
     }
-    if (isOfflinePagesUrl(source.url)) {
-      const entryId = new URL(source.url).searchParams.get("page") ?? undefined;
-      return this.openOfflinePages(entryId, true);
-    }
-    const duplicateId = this.createTab(undefined, false);
-    const currentIndex = this.order.indexOf(duplicateId);
-    this.order.splice(currentIndex, 1);
-    this.order.splice(this.order.indexOf(tabId) + 1, 0, duplicateId);
-    const duplicate = this.requireTab(duplicateId);
-    duplicate.isMuted = source.isMuted;
-    duplicate.zoomFactor = source.zoomFactor;
-    duplicate.groupId = source.groupId;
-    duplicate.pinned = source.pinned;
-    if (source.url) {
-      await this.navigateToUrl(
-        duplicate,
-        source.url,
-        this.isAllowedInternalUrl(source.url),
-        true,
-      );
-    } else {
-      this.activateTab(duplicateId);
-    }
-    return duplicateId;
   }
 
   async reopenClosedTab(id?: string): Promise<TabId | null> {
-    const closed = await this.browserData.takeRecentlyClosedTab(id);
-    if (!closed) return null;
-    this.onBrowserDataChanged();
-    const active = this.tabs.get(this.activeTabId);
-    if (this.order.length === 1 && active?.isNewTab)
-      this.closeTabWithoutHistory(active.id);
-    const idOfTab = this.createTab(closed.url);
-    this.requireTab(idOfTab).pinned = closed.pinned;
-    if (closed.pinned) this.setTabsPinned([idOfTab], true);
-    if (closed.groupId && closed.groupName && closed.groupColor) {
-      const existing = this.tabGroups.get(closed.groupId);
-      if (!existing) {
-        this.tabGroups.set(closed.groupId, {
-          id: closed.groupId,
-          name: closed.groupName,
-          color: closed.groupColor,
-          collapsed: false,
-          saved: this.browserData
-            .listSavedTabGroups()
-            .some((group) => group.id === closed.groupId),
-          createdAt: Date.now(),
-        });
+    const finish = this.beginTabTopologyMutation();
+    try {
+      const closed = await this.browserData.takeRecentlyClosedTab(id);
+      if (!closed) return null;
+      this.onBrowserDataChanged();
+      const active = this.tabs.get(this.activeTabId);
+      if (this.order.length === 1 && active?.isNewTab)
+        this.closeTabWithoutHistory(active.id);
+      const idOfTab = this.createTab(closed.url);
+      this.requireTab(idOfTab).pinned = closed.pinned;
+      if (closed.pinned) this.setTabsPinned([idOfTab], true);
+      if (closed.groupId && closed.groupName && closed.groupColor) {
+        const existing = this.tabGroups.get(closed.groupId);
+        if (!existing) {
+          this.tabGroups.set(closed.groupId, {
+            id: closed.groupId,
+            name: closed.groupName,
+            color: closed.groupColor,
+            collapsed: false,
+            saved: this.browserData
+              .listSavedTabGroups()
+              .some((group) => group.id === closed.groupId),
+            createdAt: Date.now(),
+          });
+        }
+        this.requireTab(idOfTab).groupId = closed.groupId;
+        this.emitSnapshot();
+        this.scheduleSessionSave();
       }
-      this.requireTab(idOfTab).groupId = closed.groupId;
-      this.emitSnapshot();
-      this.scheduleSessionSave();
+      return idOfTab;
+    } finally {
+      finish();
     }
-    return idOfTab;
   }
 
   createTabGroup(
@@ -958,6 +1300,7 @@ export class TabManager {
     name = "New group",
     color: TabGroupColor = "grey",
   ): string {
+    this.assertTabTopologyMutable();
     const tabIds = this.requireTabIds(requestedTabIds);
     if (tabIds.length === 0) {
       throw new RangeError("A tab group must contain at least one tab.");
@@ -983,43 +1326,54 @@ export class TabManager {
   }
 
   async updateTabGroup(groupId: string, update: TabGroupUpdate): Promise<void> {
-    const group = this.requireTabGroup(groupId);
-    if (update.name !== undefined)
-      group.name = requireTabGroupName(update.name);
-    if (update.color !== undefined)
-      group.color = requireTabGroupColor(update.color);
-    if (update.collapsed !== undefined) group.collapsed = update.collapsed;
-    if (update.saved !== undefined) group.saved = update.saved;
-    if (group.saved) await this.syncSavedTabGroup(group);
-    else if (update.saved === false) {
-      await this.browserData.removeSavedTabGroup(group.id);
-      this.onBrowserDataChanged();
+    const finish = this.beginTabTopologyMutation();
+    try {
+      const group = this.requireTabGroup(groupId);
+      if (update.name !== undefined)
+        group.name = requireTabGroupName(update.name);
+      if (update.color !== undefined)
+        group.color = requireTabGroupColor(update.color);
+      if (update.collapsed !== undefined) group.collapsed = update.collapsed;
+      if (update.saved !== undefined) group.saved = update.saved;
+      if (group.saved) await this.syncSavedTabGroup(group);
+      else if (update.saved === false) {
+        await this.browserData.removeSavedTabGroup(group.id);
+        this.onBrowserDataChanged();
+      }
+      this.emitSnapshot();
+      this.scheduleSessionSave();
+    } finally {
+      finish();
     }
-    this.emitSnapshot();
-    this.scheduleSessionSave();
   }
 
   async deleteTabGroup(groupId: string, closeTabs = false): Promise<void> {
-    const group = this.requireTabGroup(groupId);
-    const tabIds = this.order.filter(
-      (tabId) => this.requireTab(tabId).groupId === group.id,
-    );
-    if (closeTabs && group.saved) await this.syncSavedTabGroup(group);
-    this.tabGroups.delete(group.id);
-    if (closeTabs) {
-      this.closeTabs(tabIds);
-      return;
-    }
-    for (const tabId of tabIds) this.requireTab(tabId).groupId = null;
-    this.emitSnapshot();
-    this.scheduleSessionSave();
-    if (group.saved) {
-      await this.browserData.removeSavedTabGroup(group.id);
-      this.onBrowserDataChanged();
+    const finish = this.beginTabTopologyMutation();
+    try {
+      const group = this.requireTabGroup(groupId);
+      const tabIds = this.order.filter(
+        (tabId) => this.requireTab(tabId).groupId === group.id,
+      );
+      if (closeTabs && group.saved) await this.syncSavedTabGroup(group);
+      this.tabGroups.delete(group.id);
+      if (closeTabs) {
+        this.closeTabs(tabIds);
+        return;
+      }
+      for (const tabId of tabIds) this.requireTab(tabId).groupId = null;
+      this.emitSnapshot();
+      this.scheduleSessionSave();
+      if (group.saved) {
+        await this.browserData.removeSavedTabGroup(group.id);
+        this.onBrowserDataChanged();
+      }
+    } finally {
+      finish();
     }
   }
 
   async restoreSavedTabGroup(groupId: string): Promise<TabId[]> {
+    this.assertTabTopologyMutable();
     const saved = this.browserData
       .listSavedTabGroups()
       .find((group) => group.id === groupId);
@@ -1058,12 +1412,17 @@ export class TabManager {
   }
 
   async removeSavedTabGroup(groupId: string): Promise<void> {
-    await this.browserData.removeSavedTabGroup(groupId);
-    const group = this.tabGroups.get(groupId);
-    if (group) group.saved = false;
-    this.onBrowserDataChanged();
-    this.emitSnapshot();
-    this.scheduleSessionSave();
+    const finish = this.beginTabTopologyMutation();
+    try {
+      await this.browserData.removeSavedTabGroup(groupId);
+      const group = this.tabGroups.get(groupId);
+      if (group) group.saved = false;
+      this.onBrowserDataChanged();
+      this.emitSnapshot();
+      this.scheduleSessionSave();
+    } finally {
+      finish();
+    }
   }
 
   selectTabs(requestedTabIds: TabId[], mode: TabSelectionMode): void {
@@ -1104,6 +1463,7 @@ export class TabManager {
     targetIndex: number,
     groupId?: string | null,
   ): void {
+    this.assertTabTopologyMutable();
     if (!Number.isSafeInteger(targetIndex))
       throw new TypeError("Tab target index must be an integer.");
     const moving = this.requireTabIds(requestedTabIds).sort(
@@ -1130,6 +1490,7 @@ export class TabManager {
   }
 
   closeTabs(requestedTabIds: TabId[]): void {
+    this.assertTabTopologyMutable();
     const tabIds = this.requireTabIds(requestedTabIds);
     const active = tabIds.includes(this.activeTabId) ? this.activeTabId : null;
     for (const tabId of tabIds) {
@@ -1139,6 +1500,7 @@ export class TabManager {
   }
 
   setTabsPinned(requestedTabIds: TabId[], pinned: boolean): void {
+    this.assertTabTopologyMutable();
     const tabIds = this.requireTabIds(requestedTabIds);
     const affectedGroups = new Set<string>();
     for (const tabId of tabIds) {
@@ -1161,6 +1523,186 @@ export class TabManager {
     this.sortPinnedTabsFirst();
     this.emitSnapshot();
     this.scheduleSessionSave();
+  }
+
+  getAiTabOrganizationContext(): AiTabOrganizationContext {
+    const protectedGroups = new Set<string>();
+    for (const group of this.tabGroups.values()) {
+      const members = this.order
+        .map((tabId) => this.requireTab(tabId))
+        .filter((tab) => tab.groupId === group.id);
+      if (
+        group.saved ||
+        members.some((tab) => tab.pinned || !isAllowedWebUrl(tab.url))
+      ) {
+        protectedGroups.add(group.id);
+      }
+    }
+    const candidates: AiTabOrganizationCandidate[] = [];
+    const preservedTabIds: TabId[] = [];
+    for (const tabId of this.order) {
+      const tab = this.requireTab(tabId);
+      if (
+        tab.pinned ||
+        !isAllowedWebUrl(tab.url) ||
+        (tab.groupId !== null && protectedGroups.has(tab.groupId))
+      ) {
+        preservedTabIds.push(tab.id);
+        continue;
+      }
+      const url = new URL(tab.url);
+      candidates.push({
+        id: tab.id,
+        title: cleanAiPromptText(tab.title || url.hostname, 160),
+        hostname: cleanAiPromptText(url.hostname, 255),
+        pathHint: cleanAiPromptText(url.pathname, 180),
+      });
+    }
+    return {
+      revision: this.aiTabOrganizationRevision(),
+      candidates,
+      preservedTabIds,
+    };
+  }
+
+  async applyAiTabOrganization(
+    plan: AiTabOrganizationPlan,
+  ): Promise<AppliedAiTabOrganization> {
+    this.assertAiTabTopologyMutable();
+    this.aiTabOrganizationMutationInProgress = true;
+    try {
+      const context = this.getAiTabOrganizationContext();
+      if (plan.revision !== context.revision) {
+        throw new Error(
+          "Your tabs changed while Ollama was thinking. Reanalyse them before applying this plan.",
+        );
+      }
+      const candidateIds = context.candidates.map((tab) => tab.id);
+      const candidateSet = new Set(candidateIds);
+      const requestedIds = [
+        ...plan.groups.flatMap((group) => group.tabIds),
+        ...plan.ungroupedTabIds,
+      ];
+      if (
+        requestedIds.length !== candidateIds.length ||
+        new Set(requestedIds).size !== requestedIds.length ||
+        requestedIds.some((id) => !candidateSet.has(id))
+      ) {
+        throw new Error("The AI tab plan no longer matches the open tabs.");
+      }
+      const previous = this.captureTabOrganizationTopology();
+      const nextGroups = new Map(
+        [...this.tabGroups.entries()]
+          .filter(([, group]) => {
+            if (group.saved) return true;
+            return this.order.some((tabId) => {
+              const tab = this.requireTab(tabId);
+              return tab.groupId === group.id && !candidateSet.has(tab.id);
+            });
+          })
+          .map(([id, group]) => [id, { ...group }] as const),
+      );
+      const nextGroupIds = new Map<TabId, string | null>();
+      for (const tabId of this.order)
+        nextGroupIds.set(tabId, this.requireTab(tabId).groupId);
+      for (const tabId of candidateIds) nextGroupIds.set(tabId, null);
+
+      for (const requested of plan.groups) {
+        if (requested.tabIds.length < 2)
+          throw new Error("AI-created tab groups need at least two tabs.");
+        const group: TabGroupSnapshot = {
+          id: randomUUID(),
+          name: requireTabGroupName(requested.name),
+          color: requireTabGroupColor(requested.color),
+          collapsed: false,
+          saved: false,
+          createdAt: Date.now(),
+        };
+        nextGroups.set(group.id, group);
+        for (const tabId of requested.tabIds) nextGroupIds.set(tabId, group.id);
+      }
+
+      const arrangedCandidates = [
+        ...plan.groups.flatMap((group) => group.tabIds),
+        ...plan.ungroupedTabIds,
+      ];
+      const nextOrder: TabId[] = [];
+      let candidatesInserted = false;
+      for (const tabId of this.order) {
+        if (!candidateSet.has(tabId)) {
+          nextOrder.push(tabId);
+        } else if (!candidatesInserted) {
+          nextOrder.push(...arrangedCandidates);
+          candidatesInserted = true;
+        }
+      }
+      this.installTabOrganizationTopology({
+        order: nextOrder,
+        groupIds: nextGroupIds,
+        pinned: new Map(previous.pinned),
+        groups: nextGroups,
+      });
+      try {
+        await this.flushSession();
+      } catch (error) {
+        this.installTabOrganizationTopology(previous);
+        throw error;
+      }
+      this.emitSnapshot();
+      const undoToken = randomUUID();
+      this.aiTabOrganizationUndo = {
+        token: undoToken,
+        before: previous,
+        afterRevision: this.aiTabOrganizationRevision(),
+        organisedTabCount: candidateIds.length,
+        groupCount: plan.groups.length,
+      };
+      return {
+        undoToken,
+        organisedTabCount: candidateIds.length,
+        groupCount: plan.groups.length,
+      };
+    } finally {
+      this.aiTabOrganizationMutationInProgress = false;
+    }
+  }
+
+  async undoAiTabOrganization(
+    undoToken: string,
+  ): Promise<AppliedAiTabOrganization> {
+    this.assertAiTabTopologyMutable();
+    this.aiTabOrganizationMutationInProgress = true;
+    try {
+      const undo = this.aiTabOrganizationUndo;
+      if (!undo || undo.token !== undoToken) {
+        throw new AiTabOrganizationUndoUnavailableError(
+          "There is no AI tab organisation to undo.",
+        );
+      }
+      if (this.aiTabOrganizationRevision() !== undo.afterRevision) {
+        this.aiTabOrganizationUndo = null;
+        throw new AiTabOrganizationUndoUnavailableError(
+          "Your tabs changed after they were organised, so this action can no longer be undone safely.",
+        );
+      }
+      const current = this.captureTabOrganizationTopology();
+      this.installTabOrganizationTopology(undo.before);
+      try {
+        await this.flushSession();
+      } catch (error) {
+        this.installTabOrganizationTopology(current);
+        throw error;
+      }
+      this.aiTabOrganizationUndo = null;
+      this.emitSnapshot();
+      return {
+        undoToken: "",
+        organisedTabCount: undo.organisedTabCount,
+        groupCount: undo.groupCount,
+      };
+    } finally {
+      this.aiTabOrganizationMutationInProgress = false;
+    }
   }
 
   searchTabs(query: string): TabSearchResult[] {
@@ -1220,37 +1762,42 @@ export class TabManager {
   }
 
   async reopenClosedWindow(id?: string): Promise<TabId[]> {
-    const closed = await this.browserData.takeRecentlyClosedWindow(id);
-    if (!closed) return [];
-    const active = this.tabs.get(this.activeTabId);
-    if (this.order.length === 1 && active?.isNewTab)
-      this.closeTabWithoutHistory(active.id);
-    const groupIdMap = new Map<string, string>();
-    for (const group of closed.tabGroups) {
-      const nextId = this.tabGroups.has(group.id) ? randomUUID() : group.id;
-      groupIdMap.set(group.id, nextId);
-      this.tabGroups.set(nextId, { ...group, id: nextId, collapsed: false });
+    const finish = this.beginTabTopologyMutation();
+    try {
+      const closed = await this.browserData.takeRecentlyClosedWindow(id);
+      if (!closed) return [];
+      const active = this.tabs.get(this.activeTabId);
+      if (this.order.length === 1 && active?.isNewTab)
+        this.closeTabWithoutHistory(active.id);
+      const groupIdMap = new Map<string, string>();
+      for (const group of closed.tabGroups) {
+        const nextId = this.tabGroups.has(group.id) ? randomUUID() : group.id;
+        groupIdMap.set(group.id, nextId);
+        this.tabGroups.set(nextId, { ...group, id: nextId, collapsed: false });
+      }
+      const created: TabId[] = [];
+      let activeId: TabId | null = null;
+      for (const savedTab of closed.tabs) {
+        const tabId = this.createTab(savedTab.url || undefined, false);
+        const tab = this.requireTab(tabId);
+        tab.title = savedTab.title;
+        tab.pinned = savedTab.pinned;
+        tab.groupId = savedTab.groupId
+          ? (groupIdMap.get(savedTab.groupId) ?? null)
+          : null;
+        created.push(tabId);
+        if (savedTab.id === closed.activeTabId) activeId = tabId;
+      }
+      this.sortPinnedTabsFirst();
+      if (created.length === 0) this.createTab();
+      else this.activateTab(activeId ?? created[0]);
+      this.onBrowserDataChanged();
+      this.emitSnapshot();
+      this.scheduleSessionSave();
+      return created;
+    } finally {
+      finish();
     }
-    const created: TabId[] = [];
-    let activeId: TabId | null = null;
-    for (const savedTab of closed.tabs) {
-      const tabId = this.createTab(savedTab.url || undefined, false);
-      const tab = this.requireTab(tabId);
-      tab.title = savedTab.title;
-      tab.pinned = savedTab.pinned;
-      tab.groupId = savedTab.groupId
-        ? (groupIdMap.get(savedTab.groupId) ?? null)
-        : null;
-      created.push(tabId);
-      if (savedTab.id === closed.activeTabId) activeId = tabId;
-    }
-    this.sortPinnedTabsFirst();
-    if (created.length === 0) this.createTab();
-    else this.activateTab(activeId ?? created[0]);
-    this.onBrowserDataChanged();
-    this.emitSnapshot();
-    this.scheduleSessionSave();
-    return created;
   }
 
   async navigate(tabId: TabId, input: string, typed = false): Promise<void> {
@@ -1812,7 +2359,10 @@ export class TabManager {
             goBack: withLiveTab(() => this.goBack(tab.id)),
             goForward: withLiveTab(() => this.goForward(tab.id)),
             reload: withLiveTab(() => this.reload(tab.id)),
-            openInNewTab: (url) => withLiveTab(() => this.createTab(url))(),
+            openInNewTab: (url) =>
+              withLiveTab(() =>
+                this.runNativeTabTopologyAction(() => this.createTab(url)),
+              )(),
             download: (url) => {
               if (!contents.isDestroyed()) contents.downloadURL(url);
             },
@@ -1940,6 +2490,14 @@ export class TabManager {
       (event, value: unknown) => {
         if (event.senderFrame !== contents.mainFrame) return;
         this.hyperdrive.handlePreparationResult(tab.id, value);
+      },
+    );
+    contents.ipc.on(
+      channels.assistantSelectionResult,
+      (event, value: unknown) => {
+        if (event.senderFrame !== contents.mainFrame || contents.isDestroyed())
+          return;
+        void this.handleAssistantSelection(tab, contents, value);
       },
     );
     contents.setZoomMode("isolated");
@@ -2185,7 +2743,12 @@ export class TabManager {
         (this.shouldAllowWebsitePopup?.(contents.getURL()) ?? true)
       )
         queueMicrotask(() =>
-          this.createTab(details.url, details.disposition !== "background-tab"),
+          this.runNativeTabTopologyAction(() =>
+            this.createTab(
+              details.url,
+              details.disposition !== "background-tab",
+            ),
+          ),
         );
       return { action: "deny" };
     });
@@ -2215,11 +2778,15 @@ export class TabManager {
     extensionWindow.webContents.on("will-navigate", (event, url) => {
       if (this.extensions?.isAllowedExtensionUrl(url)) return;
       event.preventDefault();
-      if (isAllowedWebUrl(url)) this.createTab(url);
+      if (isAllowedWebUrl(url)) {
+        this.runNativeTabTopologyAction(() => this.createTab(url));
+      }
     });
     extensionWindow.webContents.setWindowOpenHandler((request) => {
       if (isAllowedWebUrl(request.url)) {
-        queueMicrotask(() => this.createTab(request.url));
+        queueMicrotask(() =>
+          this.runNativeTabTopologyAction(() => this.createTab(request.url)),
+        );
       }
       return { action: "deny" };
     });
@@ -2362,7 +2929,7 @@ export class TabManager {
       const active = this.tabs.get(this.activeTabId);
       if (command && input.shift && key === "t") {
         event.preventDefault();
-        void this.reopenClosedTab();
+        this.runNativeTabTopologyPromise(this.reopenClosedTab());
       } else if (command && input.shift && key === "p") {
         event.preventDefault();
         this.shellView.webContents.send(channels.openCommandPalette);
@@ -2375,11 +2942,14 @@ export class TabManager {
         this.focusOmnibox();
       } else if (command && !input.shift && key === "t") {
         event.preventDefault();
-        this.createTab();
-        this.focusOmnibox();
+        this.runNativeTabTopologyAction(() => {
+          this.createTab();
+          this.focusOmnibox();
+        });
       } else if (command && key === "w") {
         event.preventDefault();
-        if (active) this.closeTab(active.id);
+        if (active)
+          this.runNativeTabTopologyAction(() => this.closeTab(active.id));
       } else if (command && key === "f") {
         event.preventDefault();
         this.shellView.webContents.focus();
@@ -2813,6 +3383,123 @@ export class TabManager {
     );
   }
 
+  private aiTabOrganizationRevision(): string {
+    const tabs = this.order.map((tabId) => {
+      const tab = this.requireTab(tabId);
+      return {
+        id: tab.id,
+        title: tab.title,
+        url: tab.url,
+        pinned: tab.pinned,
+        groupId: tab.groupId,
+      };
+    });
+    const groups = [...this.tabGroups.values()]
+      .map((group) => ({ ...group }))
+      .sort((left, right) => left.id.localeCompare(right.id));
+    return createHash("sha256")
+      .update(JSON.stringify({ tabs, groups }))
+      .digest("hex");
+  }
+
+  private captureTabOrganizationTopology(): TabOrganizationTopology {
+    return {
+      order: [...this.order],
+      groupIds: new Map(
+        this.order.map((tabId) => [tabId, this.requireTab(tabId).groupId]),
+      ),
+      pinned: new Map(
+        this.order.map((tabId) => [tabId, this.requireTab(tabId).pinned]),
+      ),
+      groups: new Map(
+        [...this.tabGroups.entries()].map(([id, group]) => [id, { ...group }]),
+      ),
+    };
+  }
+
+  private installTabOrganizationTopology(
+    topology: TabOrganizationTopology,
+  ): void {
+    if (
+      topology.order.length !== this.order.length ||
+      new Set(topology.order).size !== topology.order.length ||
+      topology.order.some((tabId) => !this.tabs.has(tabId)) ||
+      this.order.some((tabId) => !topology.order.includes(tabId))
+    ) {
+      throw new Error(
+        "The stored tab organisation no longer matches this window.",
+      );
+    }
+    for (const tabId of topology.order) {
+      const groupId = topology.groupIds.get(tabId) ?? null;
+      if (
+        (groupId !== null && !topology.groups.has(groupId)) ||
+        typeof topology.pinned.get(tabId) !== "boolean"
+      ) {
+        throw new Error("The tab organisation references an unknown group.");
+      }
+    }
+    this.order.splice(0, this.order.length, ...topology.order);
+    this.tabGroups.clear();
+    for (const [id, group] of topology.groups)
+      this.tabGroups.set(id, { ...group });
+    for (const tabId of this.order) {
+      const groupId = topology.groupIds.get(tabId) ?? null;
+      const tab = this.requireTab(tabId);
+      tab.groupId = groupId;
+      tab.pinned = topology.pinned.get(tabId) ?? false;
+    }
+  }
+
+  private assertTabTopologyMutable(): void {
+    if (this.aiTabOrganizationMutationInProgress) {
+      throw new TabTopologyBusyError(
+        "Tabs are being organised. Wait for the current AI action to finish.",
+      );
+    }
+  }
+
+  private assertAiTabTopologyMutable(): void {
+    this.assertTabTopologyMutable();
+    if (this.tabTopologyMutationOperations > 0) {
+      throw new Error(
+        "Tabs are changing. Wait for the current tab action to finish, then try again.",
+      );
+    }
+  }
+
+  private beginTabTopologyMutation(): () => void {
+    this.assertTabTopologyMutable();
+    this.tabTopologyMutationOperations += 1;
+    let finished = false;
+    return () => {
+      if (finished) return;
+      finished = true;
+      this.tabTopologyMutationOperations = Math.max(
+        0,
+        this.tabTopologyMutationOperations - 1,
+      );
+    };
+  }
+
+  private runNativeTabTopologyAction(action: () => void): void {
+    try {
+      action();
+    } catch (error) {
+      if (!(error instanceof TabTopologyBusyError)) {
+        console.warn("A browser tab action failed.", error);
+      }
+    }
+  }
+
+  private runNativeTabTopologyPromise(promise: Promise<unknown>): void {
+    void promise.catch((error: unknown) => {
+      if (!(error instanceof TabTopologyBusyError)) {
+        console.warn("A browser tab action failed.", error);
+      }
+    });
+  }
+
   private serializableTabs(): SessionTabInput[] {
     return this.order
       .map((id): SessionTabInput | null => {
@@ -3000,6 +3687,14 @@ function cleanListingText(
   const text = value.replace(/\s+/gu, " ").trim();
   if (!text) return null;
   return text.slice(0, maximumLength);
+}
+
+function cleanAiPromptText(value: string, maximumLength: number): string {
+  return value
+    .replace(/[\u0000-\u001f\u007f]/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, maximumLength);
 }
 
 const TAB_GROUP_COLORS = new Set<TabGroupColor>([

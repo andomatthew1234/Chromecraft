@@ -49,6 +49,7 @@ import type {
   GallerySnapshot,
 } from "../shared/browser";
 import type { OfflinePagesSnapshot } from "../shared/offline-pages";
+import type { AiToolId, AiToolsSnapshot } from "../shared/ai-tools";
 import { isAllowedWebUrl } from "../shared/navigation";
 import { BrowserDataStore } from "./browser-data";
 import {
@@ -87,6 +88,9 @@ import {
   type WebsitePermissionPrompt,
 } from "./website-permission-controller";
 import { SmartDownloadsService } from "./smart-downloads/service";
+import { AiToolsController, type AiToolDefinition } from "./ai/controller";
+import { OllamaClient } from "./ai/ollama-client";
+import { OrganiseTabsTool } from "./ai/organise-tabs-tool";
 import {
   canonicalWebOrigin,
   isSecureDnsMode,
@@ -184,6 +188,7 @@ let galleryStore: GalleryStore | null = null;
 let offlinePageStore: OfflinePageStore | null = null;
 let galleryMediaRepairService: GalleryMediaRepairService | null = null;
 let smartDownloadsService: SmartDownloadsService | null = null;
+let aiToolsController: AiToolsController | null = null;
 let smartDownloadsTray: Tray | null = null;
 let quittingCompletely = false;
 let deleteAllGalleryItemsInFlight = false;
@@ -314,13 +319,25 @@ function sendUpdateSnapshot(snapshot = updateManager?.snapshot): void {
   shellView.webContents.send(channels.updatesChanged, snapshot);
 }
 
+function sendAiToolsSnapshot(snapshot: AiToolsSnapshot): void {
+  if (!shellView || shellView.webContents.isDestroyed()) return;
+  shellView.webContents.send(channels.aiToolsChanged, snapshot);
+}
+
 function requireUpdateManager(): UpdateManager {
   if (!updateManager) throw new Error("The update service is unavailable.");
   return updateManager;
 }
 
+function requireAiTools(event: IpcMainInvokeEvent): AiToolsController {
+  requireTrusted(event);
+  if (!aiToolsController) throw new Error("AI tools are not ready.");
+  return aiToolsController;
+}
+
 function prepareForUpdateRestart(): Promise<void> {
   if (updateShutdownPromise) return updateShutdownPromise;
+  aiToolsController?.dispose();
   updateShutdownPromise = Promise.all([
     tabManager?.flushSession() ?? Promise.resolve(),
     downloadManager?.dispose() ?? Promise.resolve(),
@@ -773,6 +790,11 @@ function requireTabGroupUpdate(value: unknown): TabGroupUpdate {
   return update;
 }
 
+function requireAiToolId(value: unknown): AiToolId {
+  if (value !== "organise-tabs") throw new TypeError("Unknown AI tool.");
+  return value;
+}
+
 function requireBookmarkInput(value: unknown): BookmarkInput {
   if (!value || typeof value !== "object")
     throw new TypeError("Bookmark input is invalid.");
@@ -883,6 +905,40 @@ function registerIpc(): void {
   ipcMain.handle(channels.restartToUpdate, async (event) => {
     requireTrusted(event);
     await requireUpdateManager().restart();
+  });
+  ipcMain.handle(
+    channels.getAiTools,
+    (event) => requireAiTools(event).snapshot,
+  );
+  ipcMain.handle(channels.refreshAiModels, (event) =>
+    requireAiTools(event).refreshModels(),
+  );
+  ipcMain.handle(channels.setAiModel, (event, model: unknown) =>
+    requireAiTools(event).setModel(requireString(model, "model", 256)),
+  );
+  ipcMain.handle(channels.previewAiTool, (event, toolId: unknown) =>
+    requireAiTools(event).preview(requireAiToolId(toolId)),
+  );
+  ipcMain.handle(channels.applyAiTool, (event, proposalId: unknown) =>
+    requireAiTools(event).apply(requireString(proposalId, "proposalId", 128)),
+  );
+  ipcMain.handle(channels.cancelAiTool, (event) => {
+    requireAiTools(event).cancel();
+  });
+  ipcMain.handle(channels.undoAiTool, (event) => requireAiTools(event).undo());
+  ipcMain.handle(channels.getAssistantPageContext, (event, tabId: unknown) =>
+    requireManager(event).getAssistantPageContext(
+      requireString(tabId, "tabId", 128),
+    ),
+  );
+  ipcMain.handle(channels.startAssistantSelection, (event, kind: unknown) => {
+    if (kind !== "screenshot" && kind !== "element") {
+      throw new TypeError("Choose a supported assistant selection mode.");
+    }
+    requireManager(event).startAssistantSelection(kind);
+  });
+  ipcMain.handle(channels.cancelAssistantSelection, (event) => {
+    requireManager(event).cancelAssistantSelection();
   });
   ipcMain.handle(channels.createTab, (event, input?: unknown) =>
     requireManager(event).createTab(
@@ -2538,6 +2594,28 @@ async function createMainWindow(): Promise<void> {
     },
   );
   tabManager = manager;
+  const organiseTabs = new OrganiseTabsTool(manager);
+  const organiseTabsDefinition: AiToolDefinition = {
+    id: organiseTabs.id,
+    preview: async ({ model, ollama, signal }) => {
+      const value = await organiseTabs.preview(model, ollama, signal);
+      return {
+        proposal: value.publicProposal,
+        apply: () => organiseTabs.apply(value),
+      };
+    },
+    undo: () => organiseTabs.undo(),
+    isUndoRetryable: (error) => organiseTabs.isUndoRetryable(error),
+  };
+  aiToolsController?.dispose();
+  const aiTools = new AiToolsController({
+    stateFilePath: path.join(app.getPath("userData"), "ai-tools.json"),
+    ollama: new OllamaClient(),
+    tools: [organiseTabsDefinition],
+    onChange: sendAiToolsSnapshot,
+  });
+  aiToolsController = aiTools;
+  await aiTools.initialize();
   websitePermissionController = new WebsitePermissionController({
     contextFor: (contents) =>
       manager.getActiveWebsitePermissionContext(contents),
@@ -2574,6 +2652,7 @@ async function createMainWindow(): Promise<void> {
   let closingApproved = false;
   window.on("close", (event) => {
     if (closingApproved || updateRestartPrepared) {
+      aiTools.dispose();
       suggestions.dispose();
       hyperdrive.dispose();
       manager.dispose();
@@ -2628,6 +2707,8 @@ async function createMainWindow(): Promise<void> {
       galleryStore = null;
       offlinePageStore = null;
       smartDownloadsService = null;
+      aiTools.dispose();
+      if (aiToolsController === aiTools) aiToolsController = null;
       smartDownloadsTray?.destroy();
       smartDownloadsTray = null;
       if (youtubeIndicatorHideTimer) clearTimeout(youtubeIndicatorHideTimer);

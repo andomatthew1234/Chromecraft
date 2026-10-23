@@ -224,6 +224,270 @@ function anchorFromTarget(
     : null;
 }
 
+type AssistantSelectionKind = "screenshot" | "element";
+
+let assistantSelection: {
+  kind: AssistantSelectionKind;
+  requestId: string;
+  overlay: HTMLDivElement;
+  selection: HTMLDivElement;
+  tooltip: HTMLDivElement;
+  start: { x: number; y: number } | null;
+  cleanup: () => void;
+} | null = null;
+
+function assistantText(value: string | null | undefined, maximum: number) {
+  const text = value?.replace(/\s+/gu, " ").trim() ?? "";
+  return text ? text.slice(0, maximum) : null;
+}
+
+function assistantUrl(value: string | null | undefined) {
+  if (!value) return null;
+  try {
+    const url = new URL(value, location.href);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    return url.href.slice(0, 2_048);
+  } catch {
+    return null;
+  }
+}
+
+function meaningfulAssistantElement(
+  target: EventTarget | null,
+): Element | null {
+  if (!(target instanceof Element)) return null;
+  const candidate = target.closest(
+    "button, a[href], input:not([type='password']), textarea, select, img, h1, h2, h3, h4, h5, h6, [role='button'], [role='link'], [role='heading'], [role='textbox'], [role='checkbox'], [role='switch'], nav, form, article, main",
+  );
+  if (!candidate || candidate.closest("[data-chromecraft-assistant-selection]"))
+    return null;
+  if (
+    candidate.matches(
+      "input[type='password'], input[type='hidden'], [aria-hidden='true']",
+    )
+  )
+    return null;
+  const rect = candidate.getBoundingClientRect();
+  if (rect.width < 4 || rect.height < 4) return null;
+  return candidate;
+}
+
+function assistantElementSummary(element: Element) {
+  const tag = element.tagName.toLowerCase();
+  const role = assistantText(element.getAttribute("role"), 80);
+  const label = assistantText(
+    element.getAttribute("aria-label") || element.getAttribute("title"),
+    240,
+  );
+  const input =
+    element instanceof HTMLInputElement ||
+    element instanceof HTMLTextAreaElement ||
+    element instanceof HTMLSelectElement
+      ? element
+      : null;
+  const placeholderInput =
+    input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement
+      ? input
+      : null;
+  const type =
+    input instanceof HTMLInputElement ? input.type.slice(0, 80) : null;
+  const text = assistantText(
+    input
+      ? input.labels?.[0]?.textContent || placeholderInput?.placeholder
+      : element.textContent,
+    800,
+  );
+  const href =
+    element instanceof HTMLAnchorElement ? assistantUrl(element.href) : null;
+  const alt =
+    element instanceof HTMLImageElement
+      ? assistantText(element.alt, 240)
+      : null;
+  const placeholder = placeholderInput
+    ? assistantText(placeholderInput.placeholder, 240)
+    : null;
+  const attributes = [
+    role ? ` role="${role.replaceAll('"', "")}"` : "",
+    label ? ` aria-label="${label.replaceAll('"', "")}"` : "",
+    href ? ` href="${href.replaceAll('"', "")}"` : "",
+    alt ? ` alt="${alt.replaceAll('"', "")}"` : "",
+    type ? ` type="${type.replaceAll('"', "")}"` : "",
+  ].join("");
+  const markup = `<${tag}${attributes}>${(text ?? "").replaceAll("<", "&lt;").replaceAll(">", "&gt;").slice(0, 480)}</${tag}>`;
+  return { tag, role, label, text, href, alt, placeholder, type, markup };
+}
+
+function clearAssistantSelection() {
+  const current = assistantSelection;
+  if (!current) return;
+  assistantSelection = null;
+  current.cleanup();
+}
+
+function startAssistantSelection(kind: AssistantSelectionKind) {
+  clearAssistantSelection();
+  const overlay = document.createElement("div");
+  const selection = document.createElement("div");
+  const tooltip = document.createElement("div");
+  overlay.dataset.chromecraftAssistantSelection = kind;
+  overlay.setAttribute("data-chromecraft-assistant-selection", "");
+  selection.setAttribute("data-chromecraft-assistant-selection", "");
+  tooltip.setAttribute("data-chromecraft-assistant-selection", "");
+  Object.assign(overlay.style, {
+    position: "fixed",
+    inset: "0",
+    zIndex: "2147483646",
+    cursor: "crosshair",
+    background: kind === "screenshot" ? "rgba(12, 20, 38, .18)" : "transparent",
+  });
+  Object.assign(selection.style, {
+    position: "fixed",
+    display: "none",
+    zIndex: "2147483647",
+    pointerEvents: "none",
+    border: "2px solid #2557d6",
+    borderRadius: "6px",
+    background: "rgba(65, 111, 235, .12)",
+    boxShadow: "0 0 0 9999px rgba(10, 16, 30, .2)",
+  });
+  Object.assign(tooltip.style, {
+    position: "fixed",
+    display: "none",
+    zIndex: "2147483647",
+    maxWidth: "260px",
+    padding: "5px 8px",
+    borderRadius: "8px",
+    color: "#fff",
+    background: "#1e2741",
+    boxShadow: "0 6px 16px rgba(0,0,0,.24)",
+    font: "12px system-ui, sans-serif",
+    pointerEvents: "none",
+  });
+  document.documentElement.append(overlay, selection, tooltip);
+  const previousCursor = document.documentElement.style.cursor;
+  document.documentElement.style.cursor = "crosshair";
+  const requestId = `selection-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const current = {
+    kind,
+    requestId,
+    overlay,
+    selection,
+    tooltip,
+    start: null as { x: number; y: number } | null,
+    cleanup: () => {
+      document.documentElement.style.cursor = previousCursor;
+      overlay.remove();
+      selection.remove();
+      tooltip.remove();
+      removeEventListener("keydown", onKey, true);
+      removeEventListener("pointermove", onMove, true);
+      removeEventListener("pointerup", onUp, true);
+      overlay.removeEventListener("pointerdown", onDown, true);
+      document.removeEventListener("click", onElementClick, true);
+    },
+  };
+  const showRectangle = (
+    left: number,
+    top: number,
+    width: number,
+    height: number,
+  ) => {
+    Object.assign(selection.style, {
+      display: "block",
+      left: `${left}px`,
+      top: `${top}px`,
+      width: `${width}px`,
+      height: `${height}px`,
+    });
+  };
+  const onKey = (event: KeyboardEvent) => {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    event.stopPropagation();
+    clearAssistantSelection();
+  };
+  const onDown = (event: PointerEvent) => {
+    if (kind !== "screenshot" || event.button !== 0) return;
+    event.preventDefault();
+    current.start = { x: event.clientX, y: event.clientY };
+    overlay.setPointerCapture?.(event.pointerId);
+    showRectangle(event.clientX, event.clientY, 1, 1);
+  };
+  const onMove = (event: PointerEvent) => {
+    if (kind === "screenshot" && current.start) {
+      const left = Math.min(current.start.x, event.clientX);
+      const top = Math.min(current.start.y, event.clientY);
+      showRectangle(
+        left,
+        top,
+        Math.abs(event.clientX - current.start.x),
+        Math.abs(event.clientY - current.start.y),
+      );
+      return;
+    }
+    if (kind !== "element") return;
+    const element = meaningfulAssistantElement(
+      document.elementFromPoint(event.clientX, event.clientY),
+    );
+    if (!element) {
+      selection.style.display = "none";
+      tooltip.style.display = "none";
+      return;
+    }
+    const rect = element.getBoundingClientRect();
+    showRectangle(rect.left, rect.top, rect.width, rect.height);
+    tooltip.textContent = `${element.tagName.toLowerCase()}${assistantText(element.getAttribute("aria-label") || element.textContent, 50) ? ` · ${assistantText(element.getAttribute("aria-label") || element.textContent, 50)}` : ""}`;
+    Object.assign(tooltip.style, {
+      display: "block",
+      left: `${Math.min(innerWidth - 270, Math.max(8, rect.left))}px`,
+      top: `${Math.max(8, rect.top - 32)}px`,
+    });
+  };
+  const onUp = (event: PointerEvent) => {
+    if (kind !== "screenshot" || !current.start) return;
+    const left = Math.max(0, Math.min(current.start.x, event.clientX));
+    const top = Math.max(0, Math.min(current.start.y, event.clientY));
+    const width = Math.abs(event.clientX - current.start.x);
+    const height = Math.abs(event.clientY - current.start.y);
+    if (width >= 8 && height >= 8) {
+      ipcRenderer.send(channels.assistantSelectionResult, {
+        requestId,
+        kind,
+        rectangle: { x: left, y: top, width, height },
+        viewport: { width: innerWidth, height: innerHeight },
+      });
+    }
+    clearAssistantSelection();
+  };
+  const onElementClick = (event: MouseEvent) => {
+    if (kind !== "element" || !event.isTrusted) return;
+    const element = meaningfulAssistantElement(event.target);
+    if (!element) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    ipcRenderer.send(channels.assistantSelectionResult, {
+      requestId,
+      kind,
+      element: assistantElementSummary(element),
+    });
+    clearAssistantSelection();
+  };
+  assistantSelection = current;
+  addEventListener("keydown", onKey, true);
+  addEventListener("pointermove", onMove, true);
+  addEventListener("pointerup", onUp, true);
+  if (kind === "screenshot")
+    overlay.addEventListener("pointerdown", onDown, true);
+  else {
+    overlay.style.pointerEvents = "none";
+    document.addEventListener("click", onElementClick, true);
+  }
+}
+
 function initialize(): void {
   addEventListener(
     "pointermove",
@@ -414,6 +678,17 @@ ipcRenderer.on(channels.hyperdriveCancelDocument, (_event, id: unknown) => {
   if (!link) return;
   link.remove();
   speculativeLinks.delete(id);
+});
+
+ipcRenderer.on(channels.assistantStartSelection, (_event, value: unknown) => {
+  if (!value || typeof value !== "object") return;
+  const kind = (value as Record<string, unknown>).kind;
+  if (kind === "screenshot" || kind === "element")
+    startAssistantSelection(kind);
+});
+
+ipcRenderer.on(channels.assistantCancelSelection, () => {
+  clearAssistantSelection();
 });
 
 if (document.readyState === "loading") {

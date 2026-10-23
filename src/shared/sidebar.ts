@@ -3,6 +3,7 @@ export const SIDEBAR_RAIL_WIDTH = 54;
 export const SIDEBAR_PANEL_WIDTH = 286;
 
 export type SidebarTool =
+  | "assistant"
   | "bookmarks"
   | "history"
   | "downloads"

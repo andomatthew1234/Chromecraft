@@ -225,12 +225,16 @@ describe("tab organization", () => {
       order: ["a", "b", "c"],
       tabGroups: new Map(),
       selectedTabIds: new Set(["a"]),
+      aiTabOrganizationMutationInProgress: false,
+      tabTopologyMutationOperations: 0,
       selectionAnchorId: "a",
       activeTabId: "a",
       browserData: {
         searchRecentlyClosedTabs: () => [],
         listSavedTabGroups: () => [],
       },
+      preferences: { snapshot: { restoreSession: false } },
+      sessionTimer: null,
       onBrowserDataChanged() {},
       emitSnapshot() {},
       scheduleSessionSave() {},
@@ -334,6 +338,184 @@ describe("tab organization", () => {
         tabId: null,
       }),
     ]);
+  });
+
+  it("sanitises AI context and applies and undoes a validated plan atomically", async () => {
+    const { manager, tabs } = organizedManager();
+    const first = tabs.get("a");
+    if (!first) throw new Error("Missing test tab.");
+    first.title = "  Account\u0000 overview  ";
+    first.url =
+      "https://person:secret@a.example/private/path?token=hidden#fragment";
+    const protectedTab = tabs.get("c");
+    if (!protectedTab) throw new Error("Missing test tab.");
+    protectedTab.pinned = true;
+
+    const context = manager.getAiTabOrganizationContext();
+
+    expect(context.candidates).toEqual([
+      {
+        id: "a",
+        title: "Account overview",
+        hostname: "a.example",
+        pathHint: "/private/path",
+      },
+      expect.objectContaining({ id: "b", hostname: "b.example" }),
+    ]);
+    expect(JSON.stringify(context)).not.toContain("secret");
+    expect(JSON.stringify(context)).not.toContain("hidden");
+    expect(JSON.stringify(context)).not.toContain("fragment");
+    expect(context.preservedTabIds).toEqual(["c"]);
+
+    const applied = await manager.applyAiTabOrganization({
+      revision: context.revision,
+      groups: [{ name: "Accounts", color: "blue", tabIds: ["a", "b"] }],
+      ungroupedTabIds: [],
+    });
+    const groupId = tabs.get("a")?.groupId;
+    expect(groupId).toBeTruthy();
+    expect(tabs.get("b")?.groupId).toBe(groupId);
+    expect(tabs.get("c")?.groupId).toBeNull();
+
+    await manager.undoAiTabOrganization(applied.undoToken);
+    expect(tabs.get("a")?.groupId).toBeNull();
+    expect(tabs.get("b")?.groupId).toBeNull();
+  });
+
+  it("rejects a stale AI plan without changing the tab layout", async () => {
+    const { manager, tabs } = organizedManager();
+    const context = manager.getAiTabOrganizationContext();
+    const changed = tabs.get("a");
+    if (!changed) throw new Error("Missing test tab.");
+    changed.title = "Changed while thinking";
+
+    await expect(
+      manager.applyAiTabOrganization({
+        revision: context.revision,
+        groups: [{ name: "Work", color: "green", tabIds: ["a", "b"] }],
+        ungroupedTabIds: ["c"],
+      }),
+    ).rejects.toThrow("changed while Ollama was thinking");
+    expect([...tabs.values()].map((tab) => tab.groupId)).toEqual([
+      null,
+      null,
+      null,
+    ]);
+  });
+
+  it("keeps AI-created group members contiguous around protected tabs", async () => {
+    const { manager, tabs } = organizedManager();
+    const protectedTab = tabs.get("b");
+    if (!protectedTab) throw new Error("Missing test tab.");
+    protectedTab.url = "chromecraft://gallery/";
+    const context = manager.getAiTabOrganizationContext();
+
+    await manager.applyAiTabOrganization({
+      revision: context.revision,
+      groups: [{ name: "Work", color: "green", tabIds: ["a", "c"] }],
+      ungroupedTabIds: [],
+    });
+
+    expect((manager as unknown as { order: string[] }).order).toEqual([
+      "a",
+      "c",
+      "b",
+    ]);
+    expect(tabs.get("a")?.groupId).toBe(tabs.get("c")?.groupId);
+    expect(tabs.get("b")?.groupId).toBeNull();
+  });
+
+  it("locks concurrent topology mutations until an AI apply is persisted", async () => {
+    const { manager, tabs } = organizedManager();
+    let release!: () => void;
+    const persistence = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    Object.assign(manager as unknown as Record<string, unknown>, {
+      flushSession: () => persistence,
+    });
+    const context = manager.getAiTabOrganizationContext();
+    const applying = manager.applyAiTabOrganization({
+      revision: context.revision,
+      groups: [{ name: "Work", color: "blue", tabIds: ["a", "b"] }],
+      ungroupedTabIds: ["c"],
+    });
+
+    expect(() => manager.setTabsPinned(["a"], true)).toThrow(
+      "Tabs are being organised",
+    );
+    expect(() => manager.moveTabs(["c"], 0)).toThrow(
+      "Tabs are being organised",
+    );
+    await expect(manager.reopenClosedTab()).rejects.toThrow(
+      "Tabs are being organised",
+    );
+    release();
+    await applying;
+    expect(tabs.get("a")?.pinned).toBe(false);
+  });
+
+  it("rolls back the complete AI topology when persistence fails", async () => {
+    const { manager, tabs } = organizedManager();
+    let fail!: (error: Error) => void;
+    const persistence = new Promise<void>((_resolve, reject) => {
+      fail = reject;
+    });
+    Object.assign(manager as unknown as Record<string, unknown>, {
+      flushSession: () => persistence,
+    });
+    const context = manager.getAiTabOrganizationContext();
+    const applying = manager.applyAiTabOrganization({
+      revision: context.revision,
+      groups: [{ name: "Work", color: "blue", tabIds: ["a", "b"] }],
+      ungroupedTabIds: ["c"],
+    });
+    const rejected = expect(applying).rejects.toThrow("disk full");
+
+    expect(() => manager.closeTab("c")).toThrow("Tabs are being organised");
+    fail(new Error("disk full"));
+    await rejected;
+    expect((manager as unknown as { order: string[] }).order).toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
+    expect([...tabs.values()].map((tab) => tab.groupId)).toEqual([
+      null,
+      null,
+      null,
+    ]);
+    expect([...tabs.values()].map((tab) => tab.pinned)).toEqual([
+      false,
+      false,
+      false,
+    ]);
+  });
+
+  it("does not let AI start while a destructive restore lookup is in flight", async () => {
+    const { manager } = organizedManager();
+    let finishLookup!: () => void;
+    const lookup = new Promise<null>((resolve) => {
+      finishLookup = () => resolve(null);
+    });
+    Object.assign(manager as unknown as Record<string, unknown>, {
+      browserData: {
+        takeRecentlyClosedTab: () => lookup,
+        listSavedTabGroups: () => [],
+      },
+    });
+    const restoring = manager.reopenClosedTab();
+    const context = manager.getAiTabOrganizationContext();
+
+    await expect(
+      manager.applyAiTabOrganization({
+        revision: context.revision,
+        groups: [{ name: "Work", color: "blue", tabIds: ["a", "b"] }],
+        ungroupedTabIds: ["c"],
+      }),
+    ).rejects.toThrow("Tabs are changing");
+    finishLookup();
+    await expect(restoring).resolves.toBeNull();
   });
 });
 

@@ -418,7 +418,9 @@ input::placeholder {
   top: 42px;
   left: 0;
   width: min(360px, calc(100vw - 16px));
-  overflow: hidden;
+  max-height: calc(100vh - 52px);
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: var(--space-2);
   border: 1px solid color-mix(in srgb, var(--md-outline) 32%, transparent);
   border-radius: 22px;
@@ -531,6 +533,17 @@ input::placeholder {
   border-radius: 13px;
   color: var(--md-on-secondary-container);
   background: var(--md-secondary-container);
+}
+
+.brand-menu-ai-icon {
+  color: var(--md-on-primary-container);
+  background:
+    radial-gradient(circle at 72% 24%, white 0 4%, transparent 5%),
+    linear-gradient(
+      145deg,
+      var(--md-primary-container),
+      var(--md-tertiary-container)
+    );
 }
 
 .brand-menu-item-copy {

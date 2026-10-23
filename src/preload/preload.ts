@@ -27,6 +27,16 @@ import type {
   OfflinePagesSnapshot,
 } from "../shared/offline-pages";
 import type { UpdateSnapshot } from "../shared/updates";
+import type {
+  AiToolApplyResult,
+  AiToolId,
+  AiToolProposal,
+  AiToolsSnapshot,
+} from "../shared/ai-tools";
+import type {
+  AssistantContextCaptured,
+  AssistantPageContext,
+} from "../shared/ai-assistant";
 
 const api: ChromecraftApi = {
   getSnapshot: () =>
@@ -499,6 +509,35 @@ const api: ChromecraftApi = {
     ipcRenderer.invoke(channels.checkForUpdates) as Promise<UpdateSnapshot>,
   restartToUpdate: () =>
     ipcRenderer.invoke(channels.restartToUpdate) as Promise<void>,
+  getAiTools: () =>
+    ipcRenderer.invoke(channels.getAiTools) as Promise<AiToolsSnapshot>,
+  refreshAiModels: () =>
+    ipcRenderer.invoke(channels.refreshAiModels) as Promise<AiToolsSnapshot>,
+  setAiModel: (model) =>
+    ipcRenderer.invoke(channels.setAiModel, model) as Promise<AiToolsSnapshot>,
+  previewAiTool: (toolId) =>
+    ipcRenderer.invoke(
+      channels.previewAiTool,
+      toolId as AiToolId,
+    ) as Promise<AiToolProposal>,
+  applyAiTool: (proposalId) =>
+    ipcRenderer.invoke(
+      channels.applyAiTool,
+      proposalId,
+    ) as Promise<AiToolApplyResult>,
+  cancelAiTool: () =>
+    ipcRenderer.invoke(channels.cancelAiTool) as Promise<void>,
+  undoAiTool: () =>
+    ipcRenderer.invoke(channels.undoAiTool) as Promise<AiToolApplyResult>,
+  getAssistantPageContext: (tabId) =>
+    ipcRenderer.invoke(
+      channels.getAssistantPageContext,
+      tabId,
+    ) as Promise<AssistantPageContext>,
+  startAssistantSelection: (kind) =>
+    ipcRenderer.invoke(channels.startAssistantSelection, kind) as Promise<void>,
+  cancelAssistantSelection: () =>
+    ipcRenderer.invoke(channels.cancelAssistantSelection) as Promise<void>,
   onSnapshot: (listener) => {
     const handler = (
       _event: Electron.IpcRendererEvent,
@@ -623,6 +662,23 @@ const api: ChromecraftApi = {
     ) => listener(snapshot);
     ipcRenderer.on(channels.updatesChanged, handler);
     return () => ipcRenderer.removeListener(channels.updatesChanged, handler);
+  },
+  onAiTools: (listener) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      snapshot: AiToolsSnapshot,
+    ) => listener(snapshot);
+    ipcRenderer.on(channels.aiToolsChanged, handler);
+    return () => ipcRenderer.removeListener(channels.aiToolsChanged, handler);
+  },
+  onAssistantContextCaptured: (listener) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      context: AssistantContextCaptured,
+    ) => listener(context);
+    ipcRenderer.on(channels.assistantContextCaptured, handler);
+    return () =>
+      ipcRenderer.removeListener(channels.assistantContextCaptured, handler);
   },
 };
 

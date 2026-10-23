@@ -8,6 +8,7 @@ import {
 
 describe("sidebar interaction model", () => {
   it("opens and illuminates a tool that is not active", () => {
+    expect(selectSidebarTool(null, "assistant")).toBe("assistant");
     expect(selectSidebarTool(null, "bookmarks")).toBe("bookmarks");
     expect(selectSidebarTool("bookmarks", "history")).toBe("history");
   });

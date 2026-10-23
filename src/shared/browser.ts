@@ -3,6 +3,16 @@ import type {
   OfflinePageEntrySnapshot,
   OfflinePagesSnapshot,
 } from "./offline-pages";
+import type {
+  AiToolApplyResult,
+  AiToolId,
+  AiToolProposal,
+  AiToolsSnapshot,
+} from "./ai-tools";
+import type {
+  AssistantContextCaptured,
+  AssistantPageContext,
+} from "./ai-assistant";
 
 export type TabId = string;
 
@@ -866,6 +876,16 @@ export interface ChromecraftApi {
   getUpdateSnapshot(): Promise<UpdateSnapshot>;
   checkForUpdates(): Promise<UpdateSnapshot>;
   restartToUpdate(): Promise<void>;
+  getAiTools(): Promise<AiToolsSnapshot>;
+  refreshAiModels(): Promise<AiToolsSnapshot>;
+  setAiModel(model: string): Promise<AiToolsSnapshot>;
+  previewAiTool(toolId: AiToolId): Promise<AiToolProposal>;
+  applyAiTool(proposalId: string): Promise<AiToolApplyResult>;
+  cancelAiTool(): Promise<void>;
+  undoAiTool(): Promise<AiToolApplyResult>;
+  getAssistantPageContext(tabId: TabId): Promise<AssistantPageContext>;
+  startAssistantSelection(kind: "screenshot" | "element"): Promise<void>;
+  cancelAssistantSelection(): Promise<void>;
   onSnapshot(listener: (snapshot: BrowserSnapshot) => void): () => void;
   onBrowserData(listener: (snapshot: BrowserDataSnapshot) => void): () => void;
   onDownloads(listener: (snapshot: DownloadSnapshot) => void): () => void;
@@ -892,4 +912,8 @@ export interface ChromecraftApi {
   ): () => void;
   onExtensions(listener: (snapshot: ExtensionsSnapshot) => void): () => void;
   onUpdateSnapshot(listener: (snapshot: UpdateSnapshot) => void): () => void;
+  onAiTools(listener: (snapshot: AiToolsSnapshot) => void): () => void;
+  onAssistantContextCaptured(
+    listener: (context: AssistantContextCaptured) => void,
+  ): () => void;
 }

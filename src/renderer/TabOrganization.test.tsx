@@ -7,6 +7,7 @@ import type {
   BrowserSnapshot,
   BrowserTabSnapshot,
 } from "../shared/browser";
+import type { AiToolsSnapshot } from "../shared/ai-tools";
 import {
   getSelectedTabIds,
   getTabGroups,
@@ -194,6 +195,24 @@ const data: BrowserDataSnapshot = {
   ],
 };
 
+const aiTools: AiToolsSnapshot = {
+  provider: "ollama",
+  endpoint: "http://127.0.0.1:11434",
+  connection: "unknown",
+  models: [],
+  selectedModel: null,
+  error: null,
+  run: {
+    operationId: null,
+    toolId: null,
+    stage: "idle",
+    label: "Ready",
+    error: null,
+    proposalId: null,
+    undoAvailable: false,
+  },
+};
+
 describe("tab organisation renderer", () => {
   it("moves an ungrouped tab into a group when it is dropped on the group", async () => {
     const current = snapshot();
@@ -220,6 +239,8 @@ describe("tab organisation renderer", () => {
         onToggleBrandMenu={vi.fn()}
         onSetSidebarAttached={vi.fn()}
         onOpenUpdates={vi.fn()}
+        aiTools={aiTools}
+        onOpenOrganiseTabs={vi.fn()}
         onHoverCardOpenChange={vi.fn()}
       />,
     );
@@ -247,10 +268,12 @@ describe("tab organisation renderer", () => {
         data={data}
         settingsTabId={null}
         onMenu={vi.fn()}
-        brandMenuOpen={false}
+        brandMenuOpen={true}
         onToggleBrandMenu={vi.fn()}
         onSetSidebarAttached={vi.fn()}
         onOpenUpdates={vi.fn()}
+        aiTools={aiTools}
+        onOpenOrganiseTabs={vi.fn()}
         onHoverCardOpenChange={vi.fn()}
       />,
     );
@@ -261,6 +284,8 @@ describe("tab organisation renderer", () => {
     expect(markup).toContain("group-purple");
     expect(markup).toContain('aria-label="Move selected tabs left"');
     expect(markup).toContain('aria-label="Pin selected tabs"');
+    expect(markup).toContain("AI tools");
+    expect(markup).toContain("Organise tabs");
   });
 
   it("shows open tabs, saved groups, recently closed tabs and closed windows", () => {

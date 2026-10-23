@@ -44,6 +44,7 @@ import {
 import { parseChromeWebStoreListingUrl } from "../shared/web-store-listing";
 import type { UpdateSnapshot } from "../shared/updates";
 import type { OfflinePagesSnapshot } from "../shared/offline-pages";
+import type { AiToolsSnapshot, OrganiseTabsProposal } from "../shared/ai-tools";
 import {
   ExtensionInstallBanner,
   type ExtensionInstallBannerState,
@@ -54,6 +55,8 @@ import { YouTubeDownloadProgress } from "./YouTubeDownloadProgress";
 import { GalleryPage } from "./GalleryPage";
 import { OfflinePagesPage } from "./OfflinePagesPage";
 import { PageActionsPanel } from "./PageActionsPanel";
+import { AiAssistantPanel } from "./AiAssistantPanel";
+import { OrganiseTabsPanel } from "./OrganiseTabsPanel";
 import { SmartDownloadsPage } from "./SmartDownloadsPage";
 import { WebsitePermissionsDashboard } from "./SiteControlsPanel";
 import {
@@ -176,9 +179,27 @@ const emptyExtensions: ExtensionsSnapshot = {
   progress: null,
   items: [],
 };
+const emptyAiTools: AiToolsSnapshot = {
+  provider: "ollama",
+  endpoint: "http://127.0.0.1:11434",
+  connection: "unknown",
+  models: [],
+  selectedModel: null,
+  error: null,
+  run: {
+    operationId: null,
+    toolId: null,
+    stage: "idle",
+    label: "Ready",
+    error: null,
+    proposalId: null,
+    undoAvailable: false,
+  },
+};
 
 type IconName =
   | "add"
+  | "autoAwesome"
   | "back"
   | "bookmark"
   | "bookmarkFilled"
@@ -218,6 +239,7 @@ type IconName =
 
 const iconSymbols: Record<IconName, string> = {
   add: "add",
+  autoAwesome: "auto_awesome",
   back: "arrow_back",
   bookmark: "bookmark",
   bookmarkFilled: "bookmark",
@@ -1336,6 +1358,8 @@ export function TabStrip({
   onToggleBrandMenu,
   onSetSidebarAttached,
   onOpenUpdates,
+  aiTools,
+  onOpenOrganiseTabs,
   onHoverCardOpenChange,
 }: {
   snapshot: BrowserSnapshot;
@@ -1346,6 +1370,8 @@ export function TabStrip({
   onToggleBrandMenu: () => void;
   onSetSidebarAttached: (attached: boolean) => void;
   onOpenUpdates: () => void;
+  aiTools: AiToolsSnapshot;
+  onOpenOrganiseTabs: () => void;
   onHoverCardOpenChange: (open: boolean) => void;
 }) {
   const sidebarAttached = snapshot.preferences.sidebarAttached;
@@ -1659,6 +1685,31 @@ export function TabStrip({
               <span className="brand-menu-item-copy">
                 <strong>Updates and versions</strong>
                 <small>Update ChromeCraft, Electron, and dependencies</small>
+              </span>
+              <Icon name="chevronRight" />
+            </button>
+            <div className="brand-menu-section-label">AI tools</div>
+            <button
+              type="button"
+              className="brand-menu-item"
+              role="menuitem"
+              onClick={onOpenOrganiseTabs}
+            >
+              <span
+                className="brand-menu-item-icon brand-menu-ai-icon"
+                aria-hidden="true"
+              >
+                <Icon name="autoAwesome" />
+              </span>
+              <span className="brand-menu-item-copy">
+                <strong>Organise tabs</strong>
+                <small>
+                  {["checking", "thinking", "applying"].includes(
+                    aiTools.run.stage,
+                  )
+                    ? aiTools.run.label
+                    : "Sort open tabs into useful groups with Ollama"}
+                </small>
               </span>
               <Icon name="chevronRight" />
             </button>
@@ -4769,6 +4820,9 @@ function Sidebar({
   openExtensionsPage,
   openFullSettings,
   requestClearHistory,
+  activeTab,
+  aiTools,
+  openOrganiseTabs,
 }: {
   snapshot: BrowserSnapshot;
   data: BrowserDataSnapshot;
@@ -4781,6 +4835,9 @@ function Sidebar({
   openExtensionsPage: () => void;
   openFullSettings: () => void;
   requestClearHistory: (range: "hour" | "day" | "all") => void;
+  activeTab: BrowserTabSnapshot;
+  aiTools: AiToolsSnapshot;
+  openOrganiseTabs: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [downloadJustCompleted, setDownloadJustCompleted] = useState(false);
@@ -4810,6 +4867,7 @@ function Sidebar({
     `${item.title} ${item.url}`.toLowerCase().includes(needle),
   );
   const tools = [
+    ["assistant", "autoAwesome", "Chromecraft AI"],
     ["bookmarks", "bookmark", "Bookmarks"],
     ["history", "history", "History"],
     ["downloads", "download", "Downloads"],
@@ -4966,13 +5024,26 @@ function Sidebar({
           id="sidebar-panel"
           aria-labelledby="sidebar-panel-title"
         >
-          <header className="panel-header">
-            <h2 id="sidebar-panel-title">
-              {tool === "settings"
-                ? "Quick settings"
-                : tool[0].toUpperCase() + tool.slice(1)}
-            </h2>
-          </header>
+          {tool !== "assistant" && (
+            <header className="panel-header">
+              <h2 id="sidebar-panel-title">
+                {tool === "settings"
+                  ? "Quick settings"
+                  : tool[0].toUpperCase() + tool.slice(1)}
+              </h2>
+            </header>
+          )}
+          {tool === "assistant" && (
+            <AiAssistantPanel
+              activeTab={activeTab}
+              aiTools={aiTools}
+              close={() => {
+                setTool(null);
+                void window.chromecraft.setSidebarOpen(false);
+              }}
+              onOrganiseTabs={openOrganiseTabs}
+            />
+          )}
           {(tool === "bookmarks" || tool === "history") && (
             <label className="panel-search-field">
               <Icon name="search" />
@@ -6321,6 +6392,11 @@ export function App() {
     useState(0);
   const [extensions, setExtensions] = useState(emptyExtensions);
   const [updates, setUpdates] = useState<UpdateSnapshot | null>(null);
+  const [aiTools, setAiTools] = useState<AiToolsSnapshot>(emptyAiTools);
+  const [aiPanelOpen, setAiPanelOpen] = useState(false);
+  const [aiProposal, setAiProposal] = useState<OrganiseTabsProposal | null>(
+    null,
+  );
   const [tool, setTool] = useState<SidebarTool | null>(null);
   const [fullSettingsTabId, setFullSettingsTabId] = useState<string | null>(
     null,
@@ -6362,6 +6438,7 @@ export function App() {
       window.chromecraft.getGallery(),
       window.chromecraft.getOfflinePages(),
       window.chromecraft.getSmartDownloads(),
+      window.chromecraft.getAiTools(),
     ]).then(
       ([
         nextSnapshot,
@@ -6374,6 +6451,7 @@ export function App() {
         nextGallery,
         nextOfflinePages,
         nextSmartDownloads,
+        nextAiTools,
       ]) => {
         if (mounted) {
           latestSnapshot.current = nextSnapshot;
@@ -6388,6 +6466,7 @@ export function App() {
           setGallery(nextGallery);
           setOfflinePages(nextOfflinePages);
           setSmartDownloads(nextSmartDownloads);
+          setAiTools(nextAiTools);
         }
       },
     );
@@ -6409,6 +6488,7 @@ export function App() {
       window.chromecraft.onOfflinePages(setOfflinePages),
       window.chromecraft.onSmartDownloads(setSmartDownloads),
       window.chromecraft.onWebsiteControls(setWebsiteControls),
+      window.chromecraft.onAiTools(setAiTools),
       window.chromecraft.onShowSmartDownloadsSettings(() => {
         void (async () => {
           const currentSettingsId = latestFullSettingsTabId.current;
@@ -6487,6 +6567,7 @@ export function App() {
       youtubeProgressExpanded ||
       brandMenuOpen ||
       updatesOpen ||
+      aiPanelOpen ||
       extensionsPageOpen ||
       extensionsMenuOpen ||
       tabHoverCardOpen ||
@@ -6500,6 +6581,7 @@ export function App() {
     };
   }, [
     brandMenuOpen,
+    aiPanelOpen,
     dialog,
     extensionsPageOpen,
     extensionsMenuOpen,
@@ -6533,6 +6615,7 @@ export function App() {
         setExtensionsPageOpen(false);
         setExtensionsMenuOpen(false);
         setUpdatesOpen(false);
+        setAiPanelOpen(false);
         setPaletteOpen(false);
         setSiteControlsOpen(false);
         setTabMenu(null);
@@ -6676,6 +6759,37 @@ export function App() {
       await window.chromecraft.setSidebarOpen(false);
     })();
   };
+  const requestAiTabPlan = async (
+    current: AiToolsSnapshot = aiTools,
+    forceModelRefresh = false,
+  ) => {
+    setAiProposal(null);
+    try {
+      let next = current;
+      if (
+        forceModelRefresh ||
+        next.connection !== "connected" ||
+        next.models.length === 0 ||
+        !next.selectedModel ||
+        !next.models.some((model) => model.name === next.selectedModel)
+      ) {
+        next = await window.chromecraft.refreshAiModels();
+        setAiTools(next);
+      }
+      if (
+        next.connection !== "connected" ||
+        next.models.length === 0 ||
+        !next.selectedModel ||
+        !next.models.some((model) => model.name === next.selectedModel)
+      ) {
+        return;
+      }
+      const proposal = await window.chromecraft.previewAiTool("organise-tabs");
+      setAiProposal(proposal);
+    } catch {
+      // The controller publishes a specific failure state for the panel.
+    }
+  };
   return (
     <div
       className={`app-shell ${!snapshot.preferences.sidebarAttached ? "sidebar-detached" : tool ? "sidebar-panel-open" : "sidebar-rail-only"} ${snapshot.preferences.hyperdriveMonitorOpen ? "hyperdrive-monitor-open" : ""}`}
@@ -6701,6 +6815,7 @@ export function App() {
           snapshot={snapshot}
           data={data}
           settingsTabId={fullSettingsTabId}
+          aiTools={aiTools}
           brandMenuOpen={brandMenuOpen}
           onToggleBrandMenu={() => {
             setExtensionsMenuOpen(false);
@@ -6712,9 +6827,26 @@ export function App() {
             setBrandMenuOpen(false);
           }}
           onOpenUpdates={() => {
+            setAiPanelOpen(false);
             setExtensionsPageOpen(false);
             setUpdatesOpen(true);
             setBrandMenuOpen(false);
+          }}
+          onOpenOrganiseTabs={() => {
+            setUpdatesOpen(false);
+            setExtensionsPageOpen(false);
+            setAiPanelOpen(true);
+            setBrandMenuOpen(false);
+            const hasCurrentPlan =
+              aiTools.run.stage === "ready" &&
+              aiProposal?.id === aiTools.run.proposalId;
+            if (
+              !hasCurrentPlan &&
+              aiTools.run.stage !== "complete" &&
+              !["checking", "thinking", "applying"].includes(aiTools.run.stage)
+            ) {
+              void requestAiTabPlan(aiTools, true);
+            }
           }}
           onMenu={(event, tab) => {
             event.preventDefault();
@@ -6902,6 +7034,23 @@ export function App() {
           setExtensionsPageOpen(true);
         }}
         openFullSettings={openFullSettings}
+        activeTab={activeTab}
+        aiTools={aiTools}
+        openOrganiseTabs={() => {
+          setUpdatesOpen(false);
+          setExtensionsPageOpen(false);
+          setAiPanelOpen(true);
+          const hasCurrentPlan =
+            aiTools.run.stage === "ready" &&
+            aiProposal?.id === aiTools.run.proposalId;
+          if (
+            !hasCurrentPlan &&
+            aiTools.run.stage !== "complete" &&
+            !["checking", "thinking", "applying"].includes(aiTools.run.stage)
+          ) {
+            void requestAiTabPlan(aiTools, true);
+          }
+        }}
         requestClearHistory={(range) => {
           if (range === "all") {
             setDialog({ kind: "clear-history" });
@@ -6940,6 +7089,44 @@ export function App() {
       )}
       {updatesOpen && (
         <UpdatesPage snapshot={updates} close={() => setUpdatesOpen(false)} />
+      )}
+      {aiPanelOpen && (
+        <OrganiseTabsPanel
+          snapshot={aiTools}
+          proposal={aiProposal}
+          close={() => setAiPanelOpen(false)}
+          retry={() => {
+            if (
+              !["checking", "thinking", "applying"].includes(aiTools.run.stage)
+            ) {
+              void requestAiTabPlan(aiTools, true);
+            }
+          }}
+          refreshModels={() => {
+            void window.chromecraft
+              .refreshAiModels()
+              .then(setAiTools)
+              .catch(() => undefined);
+          }}
+          selectModel={(model) => {
+            void window.chromecraft
+              .setAiModel(model)
+              .then((next) => {
+                setAiTools(next);
+                return requestAiTabPlan(next);
+              })
+              .catch(() => undefined);
+          }}
+          apply={(proposalId) => {
+            void window.chromecraft
+              .applyAiTool(proposalId)
+              .catch(() => undefined);
+          }}
+          cancel={() => window.chromecraft.cancelAiTool()}
+          undo={() => {
+            void window.chromecraft.undoAiTool().catch(() => undefined);
+          }}
+        />
       )}
       {extensionsPageOpen && (
         <ExtensionsPage
