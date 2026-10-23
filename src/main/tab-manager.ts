@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 
 import {
+  app,
   BaseWindow,
   BrowserWindow,
   clipboard,
@@ -22,7 +23,12 @@ import type {
   HyperdriveOmniboxSignal,
   HyperdriveSnapshot,
   NewTabTheme,
+  TabGroupColor,
+  TabGroupSnapshot,
+  TabGroupUpdate,
   TabId,
+  TabSearchResult,
+  TabSelectionMode,
   WebStoreListingSnapshot,
   YouTubeWatchSnapshot,
 } from "../shared/browser";
@@ -35,7 +41,7 @@ import {
 import { parseChromeWebStoreListingUrl } from "../shared/web-store-listing";
 import { parseYouTubeWatchUrl } from "../shared/youtube-watch";
 import { sidebarWidth } from "../shared/sidebar";
-import { BrowserDataStore } from "./browser-data";
+import { BrowserDataStore, type SessionTabInput } from "./browser-data";
 import { ChromeWebStoreExtensionService } from "./chrome-web-store-extension-service";
 import { ExtensionPopupController } from "./extension-popup-controller";
 import { FullscreenHintController } from "./fullscreen-hint-controller";
@@ -46,6 +52,7 @@ import {
 } from "./page-context-menu";
 import { PreferencesStore } from "./preferences";
 import { UblockService } from "./ublock-service";
+import type { OfflinePageCaptureSource } from "./offline-page-store";
 import type { ActiveWebsitePermissionContext } from "./website-permission-controller";
 
 export const SHELL_HEIGHT = 104;
@@ -81,6 +88,7 @@ interface TabRecord {
   error: string | null;
   isMuted: boolean;
   zoomFactor: number;
+  pinned: boolean;
   view: WebContentsView | null;
   lastHistoryUrl: string;
   lastFindText: string;
@@ -91,6 +99,8 @@ interface TabRecord {
   dismissedYouTubeVideoId: string | null;
   webStoreListingTitle: string | null;
   webStoreListingDescription: string | null;
+  groupId: string | null;
+  thumbnailDataUrl: string | null;
 }
 
 export type ExtensionTabStatus = "loading" | "complete";
@@ -265,6 +275,11 @@ export class TabManager {
   private youtubeDownloadIndicatorVisible = false;
   private readonly tabs = new Map<TabId, TabRecord>();
   private readonly order: TabId[] = [];
+  private readonly tabGroups = new Map<string, TabGroupSnapshot>();
+  private readonly selectedTabIds = new Set<TabId>();
+  private selectionAnchorId: TabId | null = null;
+  private rendererMemoryCache = new Map<number, number>();
+  private rendererMemoryCacheAt = 0;
   private readonly extensionTabs = new ExtensionTabLifecycle();
   private activeTabId = "";
   private disposed = false;
@@ -307,6 +322,7 @@ export class TabManager {
       playbackSeconds: number;
       occurredAt: number;
     }) => void,
+    private readonly shouldAllowWebsitePopup?: (openerUrl: string) => boolean,
   ) {
     this.extensionPopup = extensions
       ? new ExtensionPopupController(window, browserSession, extensions, {
@@ -346,12 +362,17 @@ export class TabManager {
       return;
     }
 
-    for (const saved of session.tabs.slice(0, 50)) {
+    for (const group of session.tabGroups) {
+      this.tabGroups.set(group.id, { ...group });
+    }
+    for (const saved of session.tabs.slice(0, 500)) {
       const tab = this.makeTab(
         saved.id,
         saved.title,
         saved.url,
         saved.isNewTab,
+        saved.groupId,
+        saved.pinned,
       );
       this.tabs.set(tab.id, tab);
       this.order.push(tab.id);
@@ -359,11 +380,17 @@ export class TabManager {
     this.activeTabId = this.tabs.has(session.activeTabId ?? "")
       ? (session.activeTabId as string)
       : this.order[0];
+    this.selectionAnchorId = this.activeTabId;
     this.extensionTabs.activate(this.activeTabId);
     this.hyperdrive.setActiveTab(this.activeTabId);
     const active = this.requireTab(this.activeTabId);
-    if (!active.isNewTab && active.url && !isGalleryUrl(active.url)) {
-      void this.navigateToUrl(active, active.url, false, true);
+    if (!active.isNewTab && active.url && !isShellInternalUrl(active.url)) {
+      void this.navigateToUrl(
+        active,
+        active.url,
+        this.isAllowedInternalUrl(active.url),
+        true,
+      );
     } else {
       this.layoutActiveView();
       this.emitSnapshot();
@@ -371,8 +398,13 @@ export class TabManager {
   }
 
   get snapshot(): BrowserSnapshot {
+    const memoryByProcessId = this.rendererMemoryByProcessId();
     return {
-      tabs: this.order.map((id) => this.toSnapshot(this.requireTab(id))),
+      tabs: this.order.map((id) =>
+        this.toSnapshot(this.requireTab(id), memoryByProcessId),
+      ),
+      tabGroups: [...this.tabGroups.values()].map((group) => ({ ...group })),
+      selectedTabIds: this.order.filter((id) => this.selectedTabIds.has(id)),
       activeTabId: this.activeTabId,
       ublock: this.ublock.snapshot,
       preferences: {
@@ -544,6 +576,58 @@ export class TabManager {
     return (await tab.view.webContents.capturePage()).toPNG();
   }
 
+  createOfflinePageCapture(tabId: TabId): OfflinePageCaptureSource {
+    if (tabId !== this.activeTabId) {
+      throw new Error("The selected page is no longer active.");
+    }
+    const tab = this.requireTab(tabId);
+    const contents = tab.view?.webContents;
+    if (
+      !contents ||
+      contents.isDestroyed() ||
+      tab.isLoading ||
+      !isAllowedWebUrl(tab.url)
+    ) {
+      throw new Error(
+        "Wait for a web page to finish loading before saving it.",
+      );
+    }
+    const expectedUrl = tab.url;
+    const expectedEpoch = tab.documentEpoch;
+    const assertUnchanged = () => {
+      const current = this.tabs.get(tabId);
+      if (
+        this.activeTabId !== tabId ||
+        current !== tab ||
+        current.url !== expectedUrl ||
+        current.documentEpoch !== expectedEpoch ||
+        contents.isDestroyed()
+      ) {
+        throw new Error(
+          "The page changed while it was being saved. Try again.",
+        );
+      }
+    };
+    return {
+      tabId,
+      title: tab.title,
+      sourceUrl: expectedUrl,
+      assertUnchanged,
+      saveCompletePage: async (destinationHtml) => {
+        assertUnchanged();
+        await contents.savePage(destinationHtml, "HTMLComplete");
+        assertUnchanged();
+      },
+      capturePreview: async () => {
+        assertUnchanged();
+        const image = await contents.capturePage();
+        assertUnchanged();
+        if (image.isEmpty()) return null;
+        return image.resize({ width: 960, quality: "good" }).toPNG();
+      },
+    };
+  }
+
   async captureShell(): Promise<Buffer> {
     try {
       const shellImage = await Promise.race<NativeImage>([
@@ -660,12 +744,64 @@ export class TabManager {
     return id;
   }
 
+  openOfflinePages(entryId?: string, forceNew = false): TabId {
+    if (entryId && !/^[a-z0-9_-]{1,128}$/u.test(entryId)) {
+      throw new TypeError("Invalid offline page id.");
+    }
+    const suffix = entryId ? `?page=${encodeURIComponent(entryId)}` : "";
+    const url = `chromecraft://offline-pages/${suffix}`;
+    const active = this.tabs.get(this.activeTabId);
+    const existing = forceNew
+      ? undefined
+      : isOfflinePagesUrl(active?.url ?? "")
+        ? active
+        : [...this.tabs.values()].find((tab) => isOfflinePagesUrl(tab.url));
+    if (existing) {
+      this.destroyView(existing);
+      existing.url = url;
+      existing.requestedUrl = url;
+      existing.title = "Offline Pages";
+      existing.isNewTab = false;
+      existing.isLoading = false;
+      existing.error = null;
+      this.activateTab(existing.id);
+      this.emitSnapshot();
+      this.scheduleSessionSave();
+      return existing.id;
+    }
+    const id = randomUUID();
+    const tab = this.makeTab(id, "Offline Pages", url, false);
+    this.tabs.set(id, tab);
+    this.order.push(id);
+    this.activateTab(id);
+    this.scheduleSessionSave();
+    return id;
+  }
+
+  openOfflinePage(entryId: string): TabId {
+    if (!/^[a-z0-9_-]{1,128}$/u.test(entryId)) {
+      throw new TypeError("Invalid offline page id.");
+    }
+    const tabId = this.createTab(undefined, false);
+    const tab = this.requireTab(tabId);
+    void this.navigateToUrl(
+      tab,
+      `chromecraft-offline://${entryId}/index.html`,
+      true,
+      true,
+    );
+    return tabId;
+  }
+
   activateTab(tabId: TabId): void {
     const next = this.requireTab(tabId);
     const previous = this.tabs.get(this.activeTabId);
     if (previous?.id === next.id) {
+      this.selectedTabIds.clear();
+      this.selectionAnchorId = tabId;
       this.hyperdrive.setActiveTab(tabId);
       this.layoutActiveView();
+      this.emitSnapshot();
       return;
     }
     if (previous && this.htmlFullscreenTabId === previous.id)
@@ -675,12 +811,20 @@ export class TabManager {
     if (previous) this.releaseWebsiteInputCapture(previous);
     if (previous?.view && !previous.view.webContents.isDestroyed())
       this.onWebsiteDocumentInvalidated?.(previous.view.webContents);
+    if (previous) void this.captureTabThumbnail(previous);
     this.extensionPopup?.close();
     previous?.view?.setVisible(false);
     this.activeTabId = tabId;
+    this.selectedTabIds.clear();
+    this.selectionAnchorId = tabId;
     this.extensionTabs.activate(tabId);
     this.hyperdrive.setActiveTab(tabId);
-    if (!next.isNewTab && next.url && !next.view && !isGalleryUrl(next.url)) {
+    if (
+      !next.isNewTab &&
+      next.url &&
+      !next.view &&
+      !isShellInternalUrl(next.url)
+    ) {
       void this.navigateToUrl(
         next,
         next.url,
@@ -696,6 +840,7 @@ export class TabManager {
 
   closeTab(tabId: TabId): void {
     const tab = this.requireTab(tabId);
+    const group = tab.groupId ? this.tabGroups.get(tab.groupId) : null;
     if (this.htmlFullscreenTabId === tab.id) this.exitWebsiteFullscreen(tab);
     if (this.pendingHtmlFullscreen?.tabId === tab.id)
       this.pendingHtmlFullscreen = null;
@@ -705,6 +850,8 @@ export class TabManager {
     const closingIndex = this.order.indexOf(tabId);
     this.tabs.delete(tabId);
     this.order.splice(closingIndex, 1);
+    this.selectedTabIds.delete(tabId);
+    if (this.selectionAnchorId === tabId) this.selectionAnchorId = null;
     this.extensionTabs.remove(tabId);
     this.destroyView(tab);
     if (isAllowedWebUrl(tab.url)) {
@@ -712,12 +859,22 @@ export class TabManager {
         .addRecentlyClosedTab({
           title: tab.title || hostFromUrl(tab.url),
           url: tab.url,
+          pinned: tab.pinned,
+          groupId: group?.id ?? null,
+          groupName: group?.name ?? null,
+          groupColor: group?.color ?? null,
         })
         .then(this.onBrowserDataChanged)
         .catch((error) =>
           console.warn("Could not save the closed tab.", error),
         );
     }
+    if (group?.saved) {
+      void this.syncSavedTabGroup(group).catch((error) =>
+        console.warn("Could not update the saved tab group.", error),
+      );
+    }
+    this.removeEmptyGroup(tab.groupId);
     if (this.order.length === 0) {
       this.createTab();
       return;
@@ -739,6 +896,10 @@ export class TabManager {
         new URL(source.url).searchParams.get("video") ?? undefined;
       return this.openGallery(videoId);
     }
+    if (isOfflinePagesUrl(source.url)) {
+      const entryId = new URL(source.url).searchParams.get("page") ?? undefined;
+      return this.openOfflinePages(entryId, true);
+    }
     const duplicateId = this.createTab(undefined, false);
     const currentIndex = this.order.indexOf(duplicateId);
     this.order.splice(currentIndex, 1);
@@ -746,6 +907,8 @@ export class TabManager {
     const duplicate = this.requireTab(duplicateId);
     duplicate.isMuted = source.isMuted;
     duplicate.zoomFactor = source.zoomFactor;
+    duplicate.groupId = source.groupId;
+    duplicate.pinned = source.pinned;
     if (source.url) {
       await this.navigateToUrl(
         duplicate,
@@ -759,14 +922,335 @@ export class TabManager {
     return duplicateId;
   }
 
-  async reopenClosedTab(): Promise<TabId | null> {
-    const closed = await this.browserData.takeRecentlyClosedTab();
+  async reopenClosedTab(id?: string): Promise<TabId | null> {
+    const closed = await this.browserData.takeRecentlyClosedTab(id);
     if (!closed) return null;
     this.onBrowserDataChanged();
     const active = this.tabs.get(this.activeTabId);
     if (this.order.length === 1 && active?.isNewTab)
       this.closeTabWithoutHistory(active.id);
-    return this.createTab(closed.url);
+    const idOfTab = this.createTab(closed.url);
+    this.requireTab(idOfTab).pinned = closed.pinned;
+    if (closed.pinned) this.setTabsPinned([idOfTab], true);
+    if (closed.groupId && closed.groupName && closed.groupColor) {
+      const existing = this.tabGroups.get(closed.groupId);
+      if (!existing) {
+        this.tabGroups.set(closed.groupId, {
+          id: closed.groupId,
+          name: closed.groupName,
+          color: closed.groupColor,
+          collapsed: false,
+          saved: this.browserData
+            .listSavedTabGroups()
+            .some((group) => group.id === closed.groupId),
+          createdAt: Date.now(),
+        });
+      }
+      this.requireTab(idOfTab).groupId = closed.groupId;
+      this.emitSnapshot();
+      this.scheduleSessionSave();
+    }
+    return idOfTab;
+  }
+
+  createTabGroup(
+    requestedTabIds: TabId[],
+    name = "New group",
+    color: TabGroupColor = "grey",
+  ): string {
+    const tabIds = this.requireTabIds(requestedTabIds);
+    if (tabIds.length === 0) {
+      throw new RangeError("A tab group must contain at least one tab.");
+    }
+    const group: TabGroupSnapshot = {
+      id: randomUUID(),
+      name: requireTabGroupName(name),
+      color: requireTabGroupColor(color),
+      collapsed: false,
+      saved: false,
+      createdAt: Date.now(),
+    };
+    this.tabGroups.set(group.id, group);
+    for (const tabId of tabIds) {
+      const tab = this.requireTab(tabId);
+      tab.pinned = false;
+      tab.groupId = group.id;
+    }
+    this.sortPinnedTabsFirst();
+    this.emitSnapshot();
+    this.scheduleSessionSave();
+    return group.id;
+  }
+
+  async updateTabGroup(groupId: string, update: TabGroupUpdate): Promise<void> {
+    const group = this.requireTabGroup(groupId);
+    if (update.name !== undefined)
+      group.name = requireTabGroupName(update.name);
+    if (update.color !== undefined)
+      group.color = requireTabGroupColor(update.color);
+    if (update.collapsed !== undefined) group.collapsed = update.collapsed;
+    if (update.saved !== undefined) group.saved = update.saved;
+    if (group.saved) await this.syncSavedTabGroup(group);
+    else if (update.saved === false) {
+      await this.browserData.removeSavedTabGroup(group.id);
+      this.onBrowserDataChanged();
+    }
+    this.emitSnapshot();
+    this.scheduleSessionSave();
+  }
+
+  async deleteTabGroup(groupId: string, closeTabs = false): Promise<void> {
+    const group = this.requireTabGroup(groupId);
+    const tabIds = this.order.filter(
+      (tabId) => this.requireTab(tabId).groupId === group.id,
+    );
+    if (closeTabs && group.saved) await this.syncSavedTabGroup(group);
+    this.tabGroups.delete(group.id);
+    if (closeTabs) {
+      this.closeTabs(tabIds);
+      return;
+    }
+    for (const tabId of tabIds) this.requireTab(tabId).groupId = null;
+    this.emitSnapshot();
+    this.scheduleSessionSave();
+    if (group.saved) {
+      await this.browserData.removeSavedTabGroup(group.id);
+      this.onBrowserDataChanged();
+    }
+  }
+
+  async restoreSavedTabGroup(groupId: string): Promise<TabId[]> {
+    const saved = this.browserData
+      .listSavedTabGroups()
+      .find((group) => group.id === groupId);
+    if (!saved) throw new Error(`Unknown saved tab group: ${groupId}`);
+    const alreadyOpen = this.order.filter(
+      (tabId) => this.requireTab(tabId).groupId === groupId,
+    );
+    if (alreadyOpen.length > 0) {
+      this.activateTab(alreadyOpen[0]);
+      return alreadyOpen;
+    }
+    const active = this.tabs.get(this.activeTabId);
+    if (this.order.length === 1 && active?.isNewTab)
+      this.closeTabWithoutHistory(active.id);
+    this.tabGroups.set(groupId, {
+      id: groupId,
+      name: saved.name,
+      color: saved.color,
+      collapsed: false,
+      saved: true,
+      createdAt: saved.createdAt,
+    });
+    const created = saved.tabs.map((savedTab) => {
+      const tabId = this.createTab(savedTab.url, false);
+      this.requireTab(tabId).groupId = groupId;
+      return tabId;
+    });
+    if (created[0]) this.activateTab(created[0]);
+    else {
+      this.tabGroups.delete(groupId);
+      this.createTab();
+    }
+    this.emitSnapshot();
+    this.scheduleSessionSave();
+    return created;
+  }
+
+  async removeSavedTabGroup(groupId: string): Promise<void> {
+    await this.browserData.removeSavedTabGroup(groupId);
+    const group = this.tabGroups.get(groupId);
+    if (group) group.saved = false;
+    this.onBrowserDataChanged();
+    this.emitSnapshot();
+    this.scheduleSessionSave();
+  }
+
+  selectTabs(requestedTabIds: TabId[], mode: TabSelectionMode): void {
+    const tabIds = this.requireTabIds(requestedTabIds);
+    if (mode === "replace") {
+      this.selectedTabIds.clear();
+      for (const tabId of tabIds) this.selectedTabIds.add(tabId);
+    } else if (mode === "add") {
+      for (const tabId of tabIds) this.selectedTabIds.add(tabId);
+    } else if (mode === "toggle") {
+      for (const tabId of tabIds) {
+        if (!this.selectedTabIds.delete(tabId)) this.selectedTabIds.add(tabId);
+      }
+    } else if (mode === "range") {
+      const target = tabIds.at(-1);
+      if (target) {
+        const anchor =
+          this.selectionAnchorId && this.tabs.has(this.selectionAnchorId)
+            ? this.selectionAnchorId
+            : this.activeTabId;
+        const firstIndex = this.order.indexOf(anchor);
+        const lastIndex = this.order.indexOf(target);
+        this.selectedTabIds.clear();
+        const from = Math.min(firstIndex, lastIndex);
+        const to = Math.max(firstIndex, lastIndex);
+        for (const tabId of this.order.slice(from, to + 1))
+          this.selectedTabIds.add(tabId);
+      }
+    } else {
+      throw new TypeError("Unknown tab selection mode.");
+    }
+    if (tabIds.at(-1)) this.selectionAnchorId = tabIds.at(-1) ?? null;
+    this.emitSnapshot();
+  }
+
+  moveTabs(
+    requestedTabIds: TabId[],
+    targetIndex: number,
+    groupId?: string | null,
+  ): void {
+    if (!Number.isSafeInteger(targetIndex))
+      throw new TypeError("Tab target index must be an integer.");
+    const moving = this.requireTabIds(requestedTabIds).sort(
+      (left, right) => this.order.indexOf(left) - this.order.indexOf(right),
+    );
+    if (moving.length === 0) return;
+    if (groupId !== undefined && groupId !== null)
+      this.requireTabGroup(groupId);
+    const remaining = this.order.filter((tabId) => !moving.includes(tabId));
+    const insertion = Math.max(0, Math.min(targetIndex, remaining.length));
+    remaining.splice(insertion, 0, ...moving);
+    this.order.splice(0, this.order.length, ...remaining);
+    if (groupId !== undefined) {
+      for (const tabId of moving) {
+        const tab = this.requireTab(tabId);
+        if (groupId) tab.pinned = false;
+        tab.groupId = groupId;
+      }
+    }
+    this.sortPinnedTabsFirst();
+    this.removeUnreferencedGroups();
+    this.emitSnapshot();
+    this.scheduleSessionSave();
+  }
+
+  closeTabs(requestedTabIds: TabId[]): void {
+    const tabIds = this.requireTabIds(requestedTabIds);
+    const active = tabIds.includes(this.activeTabId) ? this.activeTabId : null;
+    for (const tabId of tabIds) {
+      if (tabId !== active && this.tabs.has(tabId)) this.closeTab(tabId);
+    }
+    if (active && this.tabs.has(active)) this.closeTab(active);
+  }
+
+  setTabsPinned(requestedTabIds: TabId[], pinned: boolean): void {
+    const tabIds = this.requireTabIds(requestedTabIds);
+    const affectedGroups = new Set<string>();
+    for (const tabId of tabIds) {
+      const tab = this.requireTab(tabId);
+      tab.pinned = pinned;
+      if (pinned && tab.groupId) {
+        affectedGroups.add(tab.groupId);
+        tab.groupId = null;
+      }
+    }
+    for (const groupId of affectedGroups) {
+      const group = this.tabGroups.get(groupId);
+      if (group?.saved) {
+        void this.syncSavedTabGroup(group).catch((error) =>
+          console.warn("Could not update the saved tab group.", error),
+        );
+      }
+      this.removeEmptyGroup(groupId);
+    }
+    this.sortPinnedTabsFirst();
+    this.emitSnapshot();
+    this.scheduleSessionSave();
+  }
+
+  searchTabs(query: string): TabSearchResult[] {
+    const needle = query.trim().toLocaleLowerCase();
+    const memoryByProcessId = this.rendererMemoryByProcessId();
+    const score = (title: string, url: string): number => {
+      if (!needle) return 1;
+      const lowerTitle = title.toLocaleLowerCase();
+      const lowerUrl = url.toLocaleLowerCase();
+      if (lowerTitle === needle || lowerUrl === needle) return 5;
+      if (lowerTitle.startsWith(needle)) return 4;
+      if (lowerUrl.startsWith(needle)) return 3;
+      return lowerTitle.includes(needle) || lowerUrl.includes(needle) ? 2 : 0;
+    };
+    const open = this.order
+      .map((tabId, index) => {
+        const tab = this.requireTab(tabId);
+        return { tab, index, score: score(tab.title, tab.url) };
+      })
+      .filter((candidate) => candidate.score > 0)
+      .sort(
+        (left, right) =>
+          right.score - left.score ||
+          Number(right.tab.id === this.activeTabId) -
+            Number(left.tab.id === this.activeTabId) ||
+          left.index - right.index,
+      )
+      .map(
+        ({ tab }): TabSearchResult => ({
+          kind: "open",
+          id: tab.id,
+          tabId: tab.id,
+          title: tab.title,
+          url: tab.url,
+          groupId: tab.groupId,
+          isActive: tab.id === this.activeTabId,
+          isAudible: this.isTabAudible(tab),
+          memoryBytes: this.tabMemoryBytes(tab, memoryByProcessId),
+          closedAt: null,
+        }),
+      );
+    const closed = this.browserData.searchRecentlyClosedTabs(query).map(
+      (tab): TabSearchResult => ({
+        kind: "recently-closed",
+        id: tab.id,
+        tabId: null,
+        title: tab.title,
+        url: tab.url,
+        groupId: tab.groupId,
+        isActive: false,
+        isAudible: false,
+        memoryBytes: null,
+        closedAt: tab.closedAt,
+      }),
+    );
+    return [...open, ...closed].slice(0, 100);
+  }
+
+  async reopenClosedWindow(id?: string): Promise<TabId[]> {
+    const closed = await this.browserData.takeRecentlyClosedWindow(id);
+    if (!closed) return [];
+    const active = this.tabs.get(this.activeTabId);
+    if (this.order.length === 1 && active?.isNewTab)
+      this.closeTabWithoutHistory(active.id);
+    const groupIdMap = new Map<string, string>();
+    for (const group of closed.tabGroups) {
+      const nextId = this.tabGroups.has(group.id) ? randomUUID() : group.id;
+      groupIdMap.set(group.id, nextId);
+      this.tabGroups.set(nextId, { ...group, id: nextId, collapsed: false });
+    }
+    const created: TabId[] = [];
+    let activeId: TabId | null = null;
+    for (const savedTab of closed.tabs) {
+      const tabId = this.createTab(savedTab.url || undefined, false);
+      const tab = this.requireTab(tabId);
+      tab.title = savedTab.title;
+      tab.pinned = savedTab.pinned;
+      tab.groupId = savedTab.groupId
+        ? (groupIdMap.get(savedTab.groupId) ?? null)
+        : null;
+      created.push(tabId);
+      if (savedTab.id === closed.activeTabId) activeId = tabId;
+    }
+    this.sortPinnedTabsFirst();
+    if (created.length === 0) this.createTab();
+    else this.activateTab(activeId ?? created[0]);
+    this.onBrowserDataChanged();
+    this.emitSnapshot();
+    this.scheduleSessionSave();
+    return created;
   }
 
   async navigate(tabId: TabId, input: string, typed = false): Promise<void> {
@@ -779,6 +1263,24 @@ export class TabManager {
       tab.url = `chromecraft://gallery/${entryId ? `?video=${encodeURIComponent(entryId)}` : ""}`;
       tab.requestedUrl = tab.url;
       tab.title = "My Gallery";
+      tab.isNewTab = false;
+      tab.isLoading = false;
+      tab.error = null;
+      this.activateTab(tab.id);
+      this.emitSnapshot();
+      this.scheduleSessionSave();
+      return;
+    }
+    if (isOfflinePagesUrl(input.trim())) {
+      const tab = this.requireTab(tabId);
+      this.destroyView(tab);
+      const requested = new URL(input.trim());
+      const entryId = requested.searchParams.get("page");
+      tab.url = `chromecraft://offline-pages/${
+        entryId ? `?page=${encodeURIComponent(entryId)}` : ""
+      }`;
+      tab.requestedUrl = tab.url;
+      tab.title = "Offline Pages";
       tab.isNewTab = false;
       tab.isLoading = false;
       tab.error = null;
@@ -1116,25 +1618,14 @@ export class TabManager {
   async flushSession(): Promise<void> {
     if (this.sessionTimer) clearTimeout(this.sessionTimer);
     this.sessionTimer = null;
+    await Promise.all(
+      [...this.tabGroups.values()]
+        .filter((group) => group.saved)
+        .map((group) => this.syncSavedTabGroup(group)),
+    );
     if (!this.preferences.snapshot.restoreSession || this.order.length === 0)
       return;
-    const tabs = this.order
-      .map((id) => {
-        const tab = this.requireTab(id);
-        if (
-          !tab.isNewTab &&
-          !isAllowedWebUrl(tab.url) &&
-          !isGalleryUrl(tab.url)
-        )
-          return null;
-        return {
-          id: tab.id,
-          title: tab.title || "New Tab",
-          url: tab.isNewTab ? "" : tab.url,
-          isNewTab: tab.isNewTab,
-        };
-      })
-      .filter((tab): tab is NonNullable<typeof tab> => tab !== null);
+    const tabs = this.serializableTabs();
     if (tabs.length === 0) {
       await this.browserData.clearSession();
       return;
@@ -1142,7 +1633,28 @@ export class TabManager {
     const activeId = tabs.some((tab) => tab.id === this.activeTabId)
       ? this.activeTabId
       : tabs[0].id;
-    await this.browserData.saveSession(tabs, activeId);
+    await this.browserData.saveSession(
+      tabs,
+      activeId,
+      this.serializableTabGroups(tabs),
+    );
+  }
+
+  async flushWindowStateForClose(): Promise<void> {
+    if (this.preferences.snapshot.restoreSession) {
+      await this.flushSession();
+      return;
+    }
+    const tabs = this.serializableTabs();
+    if (tabs.length === 0) return;
+    await this.browserData.addRecentlyClosedWindow({
+      tabs,
+      tabGroups: this.serializableTabGroups(tabs),
+      activeTabId: tabs.some((tab) => tab.id === this.activeTabId)
+        ? this.activeTabId
+        : tabs[0].id,
+    });
+    this.onBrowserDataChanged();
   }
 
   dispose(): void {
@@ -1178,6 +1690,8 @@ export class TabManager {
     title: string,
     url: string,
     isNewTab: boolean,
+    groupId: string | null = null,
+    pinned = false,
   ): TabRecord {
     const tab: TabRecord = {
       id,
@@ -1192,6 +1706,7 @@ export class TabManager {
       error: null,
       isMuted: false,
       zoomFactor: 1,
+      pinned,
       view: null,
       lastHistoryUrl: "",
       lastFindText: "",
@@ -1202,6 +1717,8 @@ export class TabManager {
       dismissedYouTubeVideoId: null,
       webStoreListingTitle: null,
       webStoreListingDescription: null,
+      groupId,
+      thumbnailDataUrl: null,
     };
     return tab;
   }
@@ -1428,6 +1945,8 @@ export class TabManager {
     contents.setZoomMode("isolated");
     contents.setZoomFactor(tab.zoomFactor);
     contents.setAudioMuted(tab.isMuted);
+    contents.on("media-started-playing", () => this.scheduleSnapshot());
+    contents.on("media-paused", () => this.scheduleSnapshot());
 
     const updateNavigationState = () => {
       if (!this.tabs.has(tab.id) || contents.isDestroyed()) return;
@@ -1656,7 +2175,10 @@ export class TabManager {
           },
         };
       }
-      if (isAllowedWebUrl(details.url))
+      if (
+        isAllowedWebUrl(details.url) &&
+        (this.shouldAllowWebsitePopup?.(contents.getURL()) ?? true)
+      )
         queueMicrotask(() =>
           this.createTab(details.url, details.disposition !== "background-tab"),
         );
@@ -2107,8 +2629,11 @@ export class TabManager {
     const tab = this.requireTab(tabId);
     this.tabs.delete(tabId);
     this.order.splice(this.order.indexOf(tabId), 1);
+    this.selectedTabIds.delete(tabId);
+    if (this.selectionAnchorId === tabId) this.selectionAnchorId = null;
     this.extensionTabs.remove(tabId);
     this.destroyView(tab);
+    this.removeEmptyGroup(tab.groupId);
     this.activeTabId = "";
   }
 
@@ -2125,7 +2650,10 @@ export class TabManager {
     if (!view.webContents.isDestroyed()) view.webContents.close();
   }
 
-  private toSnapshot(tab: TabRecord): BrowserTabSnapshot {
+  private toSnapshot(
+    tab: TabRecord,
+    memoryByProcessId: ReadonlyMap<number, number>,
+  ): BrowserTabSnapshot {
     return {
       id: tab.id,
       title: tab.title,
@@ -2138,13 +2666,218 @@ export class TabManager {
       error: tab.error,
       isMuted: tab.isMuted,
       zoomFactor: tab.zoomFactor,
+      pinned: tab.pinned,
+      groupId: tab.groupId,
+      isSelected: this.selectedTabIds.has(tab.id),
+      isAudible: this.isTabAudible(tab),
+      memoryBytes: this.tabMemoryBytes(tab, memoryByProcessId),
+      thumbnailDataUrl: tab.thumbnailDataUrl,
     };
+  }
+
+  private rendererMemoryByProcessId(): Map<number, number> {
+    const now = Date.now();
+    if (now - this.rendererMemoryCacheAt < 1_000)
+      return this.rendererMemoryCache;
+    try {
+      this.rendererMemoryCache = new Map(
+        app
+          .getAppMetrics()
+          .filter((metric) => metric.type === "Tab")
+          .map((metric) => [
+            metric.pid,
+            Math.max(
+              0,
+              (metric.memory.privateBytes ?? metric.memory.workingSetSize) *
+                1_024,
+            ),
+          ]),
+      );
+      this.rendererMemoryCacheAt = now;
+      return this.rendererMemoryCache;
+    } catch {
+      return this.rendererMemoryCache;
+    }
+  }
+
+  private tabMemoryBytes(
+    tab: TabRecord,
+    memoryByProcessId: ReadonlyMap<number, number>,
+  ): number | null {
+    const contents = tab.view?.webContents;
+    if (!contents || contents.isDestroyed()) return null;
+    try {
+      return memoryByProcessId.get(contents.getOSProcessId()) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  private isTabAudible(tab: TabRecord): boolean {
+    const contents = tab.view?.webContents;
+    if (!contents || contents.isDestroyed()) return false;
+    try {
+      return contents.isCurrentlyAudible();
+    } catch {
+      return false;
+    }
+  }
+
+  private async captureTabThumbnail(tab: TabRecord): Promise<void> {
+    const contents = tab.view?.webContents;
+    if (
+      !contents ||
+      contents.isDestroyed() ||
+      tab.isNewTab ||
+      tab.isLoading ||
+      tab.crashed
+    )
+      return;
+    try {
+      const image = await contents.capturePage();
+      if (image.isEmpty() || !this.tabs.has(tab.id)) return;
+      const size = image.getSize();
+      if (size.width < 1 || size.height < 1) return;
+      const width = Math.min(240, size.width);
+      const height = Math.max(
+        1,
+        Math.round((size.height / size.width) * width),
+      );
+      tab.thumbnailDataUrl = `data:image/jpeg;base64,${image
+        .resize({ width, height })
+        .toJPEG(55)
+        .toString("base64")}`;
+      this.scheduleSnapshot();
+    } catch {
+      // The renderer can disappear between deactivation and capture.
+    }
+  }
+
+  private requireTabIds(requested: readonly TabId[]): TabId[] {
+    if (!Array.isArray(requested) || requested.length > 500)
+      throw new RangeError("A tab operation is limited to 500 tabs.");
+    const seen = new Set<TabId>();
+    const result: TabId[] = [];
+    for (const tabId of requested) {
+      if (typeof tabId !== "string")
+        throw new TypeError("Tab identifiers must be strings.");
+      this.requireTab(tabId);
+      if (!seen.has(tabId)) {
+        seen.add(tabId);
+        result.push(tabId);
+      }
+    }
+    return result;
+  }
+
+  private requireTabGroup(groupId: string): TabGroupSnapshot {
+    const group = this.tabGroups.get(groupId);
+    if (!group) throw new Error(`Unknown tab group: ${groupId}`);
+    return group;
+  }
+
+  private removeEmptyGroup(groupId: string | null): void {
+    if (
+      groupId &&
+      ![...this.tabs.values()].some((tab) => tab.groupId === groupId)
+    ) {
+      this.tabGroups.delete(groupId);
+    }
+  }
+
+  private removeUnreferencedGroups(): void {
+    const referenced = new Set(
+      [...this.tabs.values()]
+        .map((tab) => tab.groupId)
+        .filter((id): id is string => id !== null),
+    );
+    for (const groupId of this.tabGroups.keys()) {
+      if (!referenced.has(groupId)) this.tabGroups.delete(groupId);
+    }
+  }
+
+  private sortPinnedTabsFirst(): void {
+    const originalIndex = new Map(
+      this.order.map((tabId, index) => [tabId, index] as const),
+    );
+    this.order.sort(
+      (left, right) =>
+        Number(this.requireTab(right).pinned) -
+          Number(this.requireTab(left).pinned) ||
+        (originalIndex.get(left) ?? 0) - (originalIndex.get(right) ?? 0),
+    );
+  }
+
+  private serializableTabs(): SessionTabInput[] {
+    return this.order
+      .map((id): SessionTabInput | null => {
+        const tab = this.requireTab(id);
+        if (
+          !tab.isNewTab &&
+          !isAllowedWebUrl(tab.url) &&
+          !isShellInternalUrl(tab.url) &&
+          !isOfflineArchiveUrl(tab.url)
+        )
+          return null;
+        return {
+          id: tab.id,
+          title: tab.title || "New Tab",
+          url: tab.isNewTab ? "" : tab.url,
+          isNewTab: tab.isNewTab,
+          pinned: tab.pinned,
+          groupId: tab.groupId,
+        };
+      })
+      .filter((tab): tab is SessionTabInput => tab !== null);
+  }
+
+  private serializableTabGroups(
+    tabs: readonly SessionTabInput[],
+  ): TabGroupSnapshot[] {
+    const referenced = new Set(
+      tabs
+        .map((tab) => tab.groupId)
+        .filter((id): id is string => typeof id === "string"),
+    );
+    return [...this.tabGroups.values()]
+      .filter((group) => referenced.has(group.id))
+      .map((group) => ({ ...group }));
+  }
+
+  private async syncSavedTabGroup(group: TabGroupSnapshot): Promise<void> {
+    if (!group.saved) return;
+    const tabs = this.order
+      .map((tabId) => this.requireTab(tabId))
+      .filter((tab) => tab.groupId === group.id && isAllowedWebUrl(tab.url))
+      .map((tab) => ({
+        title: tab.title || hostFromUrl(tab.url),
+        url: tab.url,
+      }));
+    const existing = this.browserData
+      .listSavedTabGroups()
+      .find((candidate) => candidate.id === group.id);
+    if (
+      existing &&
+      existing.name === group.name &&
+      existing.color === group.color &&
+      JSON.stringify(existing.tabs) === JSON.stringify(tabs)
+    )
+      return;
+    await this.browserData.upsertSavedTabGroup({
+      id: group.id,
+      name: group.name,
+      color: group.color,
+      createdAt: group.createdAt,
+      tabs,
+    });
+    this.onBrowserDataChanged();
   }
 
   private isAllowedInternalUrl(url: string): boolean {
     const origin = this.ublock.extensionOrigin;
     return Boolean(
-      isGalleryUrl(url) ||
+      isShellInternalUrl(url) ||
+      isOfflineArchiveUrl(url) ||
       (origin && url.startsWith(`${origin}/`)) ||
       this.extensions?.isAllowedExtensionUrl(url),
     );
@@ -2177,7 +2910,12 @@ export class TabManager {
   }
 
   private scheduleSessionSave(): void {
-    if (!this.preferences.snapshot.restoreSession || this.disposed) return;
+    if (
+      this.disposed ||
+      (!this.preferences.snapshot.restoreSession &&
+        ![...this.tabGroups.values()].some((group) => group.saved))
+    )
+      return;
     if (this.sessionTimer) clearTimeout(this.sessionTimer);
     this.sessionTimer = setTimeout(() => {
       this.sessionTimer = null;
@@ -2192,6 +2930,31 @@ function isGalleryUrl(value: string): boolean {
   try {
     const url = new URL(value);
     return url.protocol === "chromecraft:" && url.hostname === "gallery";
+  } catch {
+    return false;
+  }
+}
+
+function isOfflinePagesUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "chromecraft:" && url.hostname === "offline-pages";
+  } catch {
+    return false;
+  }
+}
+
+function isShellInternalUrl(value: string): boolean {
+  return isGalleryUrl(value) || isOfflinePagesUrl(value);
+}
+
+function isOfflineArchiveUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (
+      url.protocol === "chromecraft-offline:" &&
+      /^[a-z0-9_-]{1,128}$/u.test(url.hostname)
+    );
   } catch {
     return false;
   }
@@ -2213,4 +2976,36 @@ function cleanListingText(
   const text = value.replace(/\s+/gu, " ").trim();
   if (!text) return null;
   return text.slice(0, maximumLength);
+}
+
+const TAB_GROUP_COLORS = new Set<TabGroupColor>([
+  "grey",
+  "blue",
+  "red",
+  "yellow",
+  "green",
+  "pink",
+  "purple",
+  "cyan",
+  "orange",
+]);
+
+function requireTabGroupName(value: unknown): string {
+  if (typeof value !== "string")
+    throw new TypeError("Tab group names must be strings.");
+  const name = value.replace(/\s+/gu, " ").trim();
+  if (!name || name.length > 128)
+    throw new TypeError(
+      "Tab group names must be between 1 and 128 characters.",
+    );
+  return name;
+}
+
+function requireTabGroupColor(value: unknown): TabGroupColor {
+  if (
+    typeof value !== "string" ||
+    !TAB_GROUP_COLORS.has(value as TabGroupColor)
+  )
+    throw new TypeError("Unknown tab group color.");
+  return value as TabGroupColor;
 }

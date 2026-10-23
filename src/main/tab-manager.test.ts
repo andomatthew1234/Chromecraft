@@ -137,6 +137,178 @@ describe("Gallery tabs", () => {
   });
 });
 
+describe("Offline Pages tabs", () => {
+  it("creates a dedicated library tab and reuses it for library selection", () => {
+    const first = {
+      id: "new-tab",
+      title: "New Tab",
+      url: "",
+      requestedUrl: "",
+      isNewTab: true,
+      view: null,
+    };
+    const tabs = new Map([[first.id, first]]);
+    const manager = Object.create(TabManager.prototype) as TabManager;
+    Object.assign(manager as unknown as Record<string, unknown>, {
+      tabs,
+      order: [first.id],
+      activeTabId: first.id,
+      activateTab(tabId: string) {
+        Object.assign(manager as unknown as Record<string, unknown>, {
+          activeTabId: tabId,
+        });
+      },
+      emitSnapshot() {},
+      scheduleSessionSave() {},
+    });
+
+    const libraryId = manager.openOfflinePages("archive-1", true);
+    expect(libraryId).not.toBe(first.id);
+    expect(tabs.get(libraryId)?.url).toBe(
+      "chromecraft://offline-pages/?page=archive-1",
+    );
+
+    expect(manager.openOfflinePages("archive-2")).toBe(libraryId);
+    expect(tabs).toHaveLength(2);
+    expect(tabs.get(libraryId)?.url).toBe(
+      "chromecraft://offline-pages/?page=archive-2",
+    );
+  });
+});
+
+describe("tab organization", () => {
+  function organizedManager() {
+    const tabs = new Map(
+      ["a", "b", "c"].map((id) => [
+        id,
+        {
+          id,
+          title: `Tab ${id.toUpperCase()}`,
+          url: `https://${id}.example/`,
+          groupId: null,
+          pinned: false,
+          view: null,
+        },
+      ]),
+    );
+    const manager = Object.create(TabManager.prototype) as TabManager;
+    Object.assign(manager as unknown as Record<string, unknown>, {
+      tabs,
+      order: ["a", "b", "c"],
+      tabGroups: new Map(),
+      selectedTabIds: new Set(["a"]),
+      selectionAnchorId: "a",
+      activeTabId: "a",
+      browserData: {
+        searchRecentlyClosedTabs: () => [],
+        listSavedTabGroups: () => [],
+      },
+      onBrowserDataChanged() {},
+      emitSnapshot() {},
+      scheduleSessionSave() {},
+    });
+    return { manager, tabs };
+  }
+
+  it("groups, range-selects, moves, and ungroups tabs deterministically", () => {
+    const { manager, tabs } = organizedManager();
+    const groupId = manager.createTabGroup(["b", "c"], "Research", "blue");
+
+    expect(tabs.get("b")?.groupId).toBe(groupId);
+    manager.selectTabs(["c"], "range");
+    expect(
+      (manager as unknown as { selectedTabIds: Set<string> }).selectedTabIds,
+    ).toEqual(new Set(["a", "b", "c"]));
+
+    manager.moveTabs(["b", "c"], 0, null);
+    expect((manager as unknown as { order: string[] }).order).toEqual([
+      "b",
+      "c",
+      "a",
+    ]);
+    expect(tabs.get("b")?.groupId).toBeNull();
+    expect(
+      (manager as unknown as { tabGroups: Map<string, unknown> }).tabGroups,
+    ).toHaveLength(0);
+    manager.selectTabs([], "replace");
+    expect(
+      (manager as unknown as { selectedTabIds: Set<string> }).selectedTabIds,
+    ).toEqual(new Set());
+  });
+
+  it("pins selected tabs first while preserving their relative order", () => {
+    const { manager, tabs } = organizedManager();
+    manager.setTabsPinned(["c", "b"], true);
+
+    expect((manager as unknown as { order: string[] }).order).toEqual([
+      "b",
+      "c",
+      "a",
+    ]);
+    expect(tabs.get("b")?.pinned).toBe(true);
+    expect(tabs.get("c")?.pinned).toBe(true);
+  });
+
+  it("keeps a saved group restorable when its live tabs are closed", async () => {
+    const { manager } = organizedManager();
+    const saved: Array<Record<string, unknown>> = [];
+    let removed = false;
+    let closed: string[] = [];
+    Object.assign(manager as unknown as Record<string, unknown>, {
+      browserData: {
+        listSavedTabGroups: () => structuredClone(saved),
+        upsertSavedTabGroup: async (entry: Record<string, unknown>) => {
+          saved.splice(0, saved.length, { ...entry });
+          return entry;
+        },
+        removeSavedTabGroup: async () => {
+          removed = true;
+          return true;
+        },
+      },
+      closeTabs(tabIds: string[]) {
+        closed = [...tabIds];
+      },
+    });
+    const groupId = manager.createTabGroup(["b", "c"], "Saved", "green");
+    await manager.updateTabGroup(groupId, { saved: true });
+    await manager.deleteTabGroup(groupId, true);
+
+    expect(closed).toEqual(["b", "c"]);
+    expect(saved).toHaveLength(1);
+    expect(removed).toBe(false);
+  });
+
+  it("searches open tabs and recently closed entries together", () => {
+    const { manager } = organizedManager();
+    Object.assign(manager as unknown as Record<string, unknown>, {
+      browserData: {
+        searchRecentlyClosedTabs: () => [
+          {
+            id: "closed-1",
+            title: "Closed docs",
+            url: "https://closed.example/",
+            closedAt: 10,
+            pinned: false,
+            groupId: null,
+            groupName: null,
+            groupColor: null,
+          },
+        ],
+      },
+    });
+
+    const results = manager.searchTabs("closed");
+    expect(results).toEqual([
+      expect.objectContaining({
+        kind: "recently-closed",
+        id: "closed-1",
+        tabId: null,
+      }),
+    ]);
+  });
+});
+
 describe("ExtensionTabLifecycle", () => {
   it("uses stable Electron WebContents identifiers", () => {
     const lifecycle = new ExtensionTabLifecycle();

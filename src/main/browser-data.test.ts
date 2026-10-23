@@ -26,6 +26,7 @@ describe("BrowserDataStore", () => {
       maxHistoryEntries?: number;
       maxRecentlyClosedTabs?: number;
       maxQuickLinks?: number;
+      maxRecentlyClosedWindows?: number;
     } = {},
   ): BrowserDataStore {
     return new BrowserDataStore(filePath, {
@@ -158,6 +159,7 @@ describe("BrowserDataStore", () => {
           url: "https://example.com",
           isNewTab: false,
           pinned: true,
+          groupId: "group-1",
         },
         {
           id: "tab-3",
@@ -165,14 +167,53 @@ describe("BrowserDataStore", () => {
           url: "chromecraft://gallery/?video=gallery-entry",
           isNewTab: false,
         },
+        {
+          id: "tab-4",
+          title: "Offline Pages",
+          url: "chromecraft://offline-pages/?page=archive-1",
+          isNewTab: false,
+        },
+        {
+          id: "tab-5",
+          title: "Saved article",
+          url: "chromecraft-offline://archive-1/index.html",
+          isNewTab: false,
+        },
       ],
       "tab-2",
+      [
+        {
+          id: "group-1",
+          name: "Research",
+          color: "blue",
+          collapsed: true,
+          saved: true,
+          createdAt: 1_760_486_400_000,
+        },
+      ],
     );
 
     expect(saved.activeTabId).toBe("tab-2");
     expect(saved.tabs[1]!.pinned).toBe(true);
+    expect(saved.tabs[1]!.groupId).toBe("group-1");
+    expect(saved.tabGroups).toEqual([
+      {
+        id: "group-1",
+        name: "Research",
+        color: "blue",
+        collapsed: true,
+        saved: true,
+        createdAt: 1_760_486_400_000,
+      },
+    ]);
     expect(saved.tabs[2]!.url).toBe(
       "chromecraft://gallery/?video=gallery-entry",
+    );
+    expect(saved.tabs[3]!.url).toBe(
+      "chromecraft://offline-pages/?page=archive-1",
+    );
+    expect(saved.tabs[4]!.url).toBe(
+      "chromecraft-offline://archive-1/index.html",
     );
     saved.tabs[0]!.title = "changed";
     expect(store.loadSession()?.tabs[0]?.title).toBe("New tab");
@@ -204,6 +245,67 @@ describe("BrowserDataStore", () => {
     expect(store.listRecentlyClosedTabs().map((tab) => tab.title)).toEqual([
       "Two",
     ]);
+  });
+
+  it("persists saved groups and closed-window recovery snapshots", async () => {
+    const store = createStore({ maxRecentlyClosedWindows: 2 });
+    await store.load();
+    await store.upsertSavedTabGroup({
+      id: "saved-group",
+      name: "Project",
+      color: "green",
+      createdAt: 1_760_486_400_000,
+      tabs: [
+        { title: "Docs", url: "https://example.com/docs" },
+        { title: "Board", url: "https://example.com/board" },
+      ],
+    });
+    const closed = await store.addRecentlyClosedWindow({
+      tabs: [
+        {
+          id: "tab-a",
+          title: "Docs",
+          url: "https://example.com/docs",
+          isNewTab: false,
+          groupId: "saved-group",
+        },
+      ],
+      tabGroups: [
+        {
+          id: "saved-group",
+          name: "Project",
+          color: "green",
+          collapsed: false,
+          saved: true,
+          createdAt: 1_760_486_400_000,
+        },
+      ],
+      activeTabId: "tab-a",
+    });
+
+    expect(store.snapshot.savedTabGroups[0]?.tabs).toHaveLength(2);
+    expect(store.snapshot.recentlyClosedWindows[0]?.activeTabId).toBe("tab-a");
+    const reloaded = createStore();
+    await reloaded.load();
+    expect(reloaded.listSavedTabGroups()[0]?.name).toBe("Project");
+    expect(await reloaded.takeRecentlyClosedWindow(closed.id)).toEqual(closed);
+    expect(reloaded.listRecentlyClosedWindows()).toEqual([]);
+    expect(await reloaded.removeSavedTabGroup("saved-group")).toBe(true);
+  });
+
+  it("searches group-aware recently closed tabs", async () => {
+    const store = createStore();
+    await store.load();
+    await store.addRecentlyClosedTab({
+      title: "Electron docs",
+      url: "https://electronjs.org/docs",
+      groupId: "group-a",
+      groupName: "Browser research",
+      groupColor: "purple",
+    });
+
+    expect(store.searchRecentlyClosedTabs("research")).toHaveLength(1);
+    expect(store.searchRecentlyClosedTabs("missing")).toEqual([]);
   });
 
   it("upserts pinned shortcuts by URL and enforces their limit", async () => {

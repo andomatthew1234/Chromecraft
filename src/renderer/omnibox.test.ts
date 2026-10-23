@@ -63,6 +63,8 @@ const data: BrowserDataSnapshot = {
   ],
   recentlyClosed: [],
   quickLinks: [],
+  savedTabGroups: [],
+  recentlyClosedWindows: [],
 };
 
 describe("local Omnibox ranking", () => {
@@ -95,6 +97,8 @@ describe("local Omnibox ranking", () => {
       ],
       recentlyClosed: [],
       quickLinks: [],
+      savedTabGroups: [],
+      recentlyClosedWindows: [],
     };
 
     expect(

@@ -51,6 +51,8 @@ export interface DownloadManagerOptions {
   /** Maximum number of retained records. Active downloads are never discarded. */
   maxHistory?: number;
   onChange?: (downloads: readonly DownloadSnapshot[]) => void;
+  /** Called before a website-initiated download is accepted. */
+  shouldAllowDownload?: (initiatorOrigin: string, url: string) => boolean;
 }
 
 interface PersistedDownloadHistory {
@@ -127,6 +129,7 @@ export class DownloadManager {
   private readonly historyFilePath: string;
   private readonly maxHistory: number;
   private readonly onChange?: DownloadManagerOptions["onChange"];
+  private readonly shouldAllowDownload?: DownloadManagerOptions["shouldAllowDownload"];
   private readonly active = new Map<string, ActiveDownload>();
   private readonly claimedPaths = new Set<string>();
 
@@ -156,6 +159,7 @@ export class DownloadManager {
     );
     this.maxHistory = requestedLimit;
     this.onChange = options.onChange;
+    this.shouldAllowDownload = options.shouldAllowDownload;
   }
 
   get snapshot(): readonly DownloadSnapshot[] {
@@ -342,9 +346,18 @@ export class DownloadManager {
   }
 
   private readonly handleWillDownload = (
-    _event: ElectronEvent,
+    event: ElectronEvent,
     item: DownloadItem,
   ): void => {
+    const initiatorOrigin = item.getInitiatorOrigin();
+    if (
+      initiatorOrigin &&
+      this.shouldAllowDownload &&
+      !this.shouldAllowDownload(initiatorOrigin, item.getURL())
+    ) {
+      event.preventDefault();
+      return;
+    }
     const id = randomUUID();
     const filename = sanitizeFilename(item.getFilename());
     const savePath = this.nextAvailablePath(filename);

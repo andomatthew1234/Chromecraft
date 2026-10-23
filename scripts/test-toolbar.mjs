@@ -126,22 +126,20 @@ const child = spawn(
 
 let cdp;
 try {
+  const isShellTarget = (entry) =>
+    entry.type === "page" &&
+    entry.webSocketDebuggerUrl &&
+    entry.title === "Chromecraft" &&
+    (entry.url.startsWith("file:") || entry.url.startsWith("http://localhost"));
   const target = await poll(
     async () => {
       const response = await fetch(`http://127.0.0.1:${port}/json/list`);
       return response.json();
     },
-    (targets) =>
-      targets.some(
-        (entry) => entry.type === "page" && entry.webSocketDebuggerUrl,
-      ),
+    (targets) => targets.some(isShellTarget),
     "the Chromecraft shell target",
     20_000,
-  ).then((targets) =>
-    targets.find(
-      (entry) => entry.type === "page" && entry.webSocketDebuggerUrl,
-    ),
-  );
+  ).then((targets) => targets.find(isShellTarget));
   cdp = await CdpClient.connect(target.webSocketDebuggerUrl);
   await poll(
     () => cdp.evaluate("Boolean(window.chromecraft)"),

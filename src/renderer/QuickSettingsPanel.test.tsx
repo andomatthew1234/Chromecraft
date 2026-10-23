@@ -6,6 +6,8 @@ import { QuickSettingsPanel } from "./App";
 
 const snapshot: BrowserSnapshot = {
   tabs: [],
+  tabGroups: [],
+  selectedTabIds: [],
   activeTabId: "tab-1",
   baseChromeHeight: 104,
   chromeHeight: 104,

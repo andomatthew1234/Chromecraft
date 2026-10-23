@@ -38,9 +38,17 @@ import type {
   SmartDownloadInitialMode,
   SmartDownloadQuality,
   SmartDownloadsSnapshot,
+  TabGroupColor,
+  TabGroupUpdate,
+  TabSelectionMode,
+  SecureDnsMode,
+  SitePermissionDecision,
+  SitePermissionKey,
+  WebsiteControlsSnapshot,
   YouTubeDownloadsSnapshot,
   GallerySnapshot,
 } from "../shared/browser";
+import type { OfflinePagesSnapshot } from "../shared/offline-pages";
 import { isAllowedWebUrl } from "../shared/navigation";
 import { BrowserDataStore } from "./browser-data";
 import {
@@ -60,6 +68,8 @@ import { registerInternalProtocol } from "./internal-protocol";
 import { GalleryStore } from "./gallery-store";
 import { registerGalleryMediaProtocol } from "./gallery-media-protocol";
 import { GalleryMediaRepairService } from "./gallery-media-repair";
+import { OfflinePageStore } from "./offline-page-store";
+import { registerOfflinePageProtocol } from "./offline-page-protocol";
 import { HyperdriveController } from "./hyperdrive/controller";
 import { PreferencesStore } from "./preferences";
 import { SearchSuggestionService } from "./search-suggestions";
@@ -77,6 +87,14 @@ import {
   type WebsitePermissionPrompt,
 } from "./website-permission-controller";
 import { SmartDownloadsService } from "./smart-downloads/service";
+import {
+  canonicalWebOrigin,
+  isSecureDnsMode,
+  isSitePermissionDecision,
+  isSitePermissionKey,
+  WebsiteControlsService,
+  type WebsitePermissionPromptRequest as ManagedWebsitePermissionPrompt,
+} from "./website-controls";
 
 const startedAt = performance.now();
 const profilePartition = "persist:chromecraft-default";
@@ -98,6 +116,16 @@ protocol.registerSchemesAsPrivileged([
       secure: true,
       supportFetchAPI: true,
       corsEnabled: true,
+      stream: true,
+    },
+  },
+  {
+    scheme: "chromecraft-offline",
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: false,
+      corsEnabled: false,
       stream: true,
     },
   },
@@ -150,8 +178,10 @@ let updateShutdownPromise: Promise<void> | null = null;
 let ipcRegistered = false;
 let updateManager: UpdateManager | null = null;
 let websitePermissionController: WebsitePermissionController | null = null;
+let websiteControls: WebsiteControlsService | null = null;
 let youtubeDownloadService: YouTubeDownloadService | null = null;
 let galleryStore: GalleryStore | null = null;
+let offlinePageStore: OfflinePageStore | null = null;
 let galleryMediaRepairService: GalleryMediaRepairService | null = null;
 let smartDownloadsService: SmartDownloadsService | null = null;
 let smartDownloadsTray: Tray | null = null;
@@ -196,6 +226,86 @@ async function promptForWebsitePermission(
     noLink: true,
   });
   return answer.response === 1;
+}
+
+async function promptForManagedWebsitePermission(
+  request: ManagedWebsitePermissionPrompt,
+): Promise<"allow-once" | "allow" | "block"> {
+  if (
+    smokeUserData &&
+    process.argv.includes("--chromecraft-smoke-allow-site-permissions")
+  ) {
+    return "allow-once";
+  }
+  const hostname = new URL(request.origin).hostname;
+  const names: Record<SitePermissionKey, string> = {
+    camera: "camera",
+    microphone: "microphone",
+    location: "location",
+    notifications: "notifications",
+    popups: "pop-ups",
+    clipboard: "clipboard",
+    autoplay: "autoplay",
+    downloads: "automatic downloads",
+    network: "network access",
+    javascript: "JavaScript",
+    hyperdrive: "Hyperdrive",
+  };
+  const requested = request.permissions.map((key) => names[key]).join(" and ");
+  const answer = await dialog.showMessageBox({
+    type: "question",
+    title: "Website permission",
+    message: `${hostname} wants to use your ${requested}`,
+    detail:
+      "Allow once lasts while this page stays active and ends when you switch away, navigate, or close it. You can change saved access from the site controls beside the address bar.",
+    buttons: ["Block", "Allow once", "Always allow"],
+    defaultId: 1,
+    cancelId: 0,
+    noLink: true,
+  });
+  return answer.response === 2
+    ? "allow"
+    : answer.response === 1
+      ? "allow-once"
+      : "block";
+}
+
+function sendWebsiteControls(snapshot: WebsiteControlsSnapshot): void {
+  if (!shellView || shellView.webContents.isDestroyed()) return;
+  shellView.webContents.send(channels.websiteControlsChanged, snapshot);
+}
+
+function requireWebsiteControls(
+  event: Pick<IpcMainInvokeEvent, "sender">,
+): WebsiteControlsService {
+  requireTrusted(event);
+  if (!websiteControls) throw new Error("Website controls are unavailable.");
+  return websiteControls;
+}
+
+function applySecureDns(mode: SecureDnsMode, providerUrl: string | null): void {
+  app.configureHostResolver({
+    secureDnsMode:
+      mode === "system" ? "off" : mode === "secure" ? "secure" : "automatic",
+    ...(providerUrl ? { secureDnsServers: [providerUrl] } : {}),
+  });
+}
+
+async function syncHyperdriveSiteDecision(
+  origin: string,
+  decision: SitePermissionDecision,
+): Promise<void> {
+  const manager = tabManager;
+  if (!manager) return;
+  const hostname = new URL(origin).hostname.toLowerCase();
+  const excluded = new Set(
+    manager.snapshot.preferences.hyperdriveExcludedHosts.map((host) =>
+      host.toLowerCase(),
+    ),
+  );
+  if (decision === "block") excluded.add(hostname);
+  else excluded.delete(hostname);
+  await manager.setHyperdriveExcludedHosts([...excluded]);
 }
 
 function sendUpdateSnapshot(snapshot = updateManager?.snapshot): void {
@@ -487,6 +597,12 @@ function requireGallery(event: IpcMainInvokeEvent): GalleryStore {
   return galleryStore;
 }
 
+function requireOfflinePages(event: IpcMainInvokeEvent): OfflinePageStore {
+  requireTrusted(event);
+  if (!offlinePageStore) throw new Error("Offline Pages is not ready.");
+  return offlinePageStore;
+}
+
 function requireGalleryMediaRepair(
   event: IpcMainInvokeEvent,
 ): GalleryMediaRepairService {
@@ -508,6 +624,11 @@ function requireSmartDownloads(
 function sendGallerySnapshot(snapshot: GallerySnapshot): void {
   if (!shellView || shellView.webContents.isDestroyed()) return;
   shellView.webContents.send(channels.galleryChanged, snapshot);
+}
+
+function sendOfflinePagesSnapshot(snapshot: OfflinePagesSnapshot): void {
+  if (!shellView || shellView.webContents.isDestroyed()) return;
+  shellView.webContents.send(channels.offlinePagesChanged, snapshot);
 }
 
 function sendSmartDownloadsSnapshot(snapshot: SmartDownloadsSnapshot): void {
@@ -611,6 +732,45 @@ function requireString(value: unknown, name: string, maximum = 8_192): string {
     );
   }
   return value;
+}
+
+function requireTabIds(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length > 500)
+    throw new TypeError("tabIds must be an array of at most 500 entries.");
+  return value.map((entry) => requireString(entry, "tabId", 128));
+}
+
+function requireTabGroupColor(value: unknown): TabGroupColor {
+  const colors: TabGroupColor[] = [
+    "grey",
+    "blue",
+    "red",
+    "yellow",
+    "green",
+    "pink",
+    "purple",
+    "cyan",
+    "orange",
+  ];
+  if (!colors.includes(value as TabGroupColor))
+    throw new TypeError("Unknown tab group color.");
+  return value as TabGroupColor;
+}
+
+function requireTabGroupUpdate(value: unknown): TabGroupUpdate {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new TypeError("Tab group update is invalid.");
+  const requested = value as Record<string, unknown>;
+  const update: TabGroupUpdate = {};
+  if (requested.name !== undefined)
+    update.name = requireString(requested.name, "name", 128);
+  if (requested.color !== undefined)
+    update.color = requireTabGroupColor(requested.color);
+  if (requested.collapsed !== undefined)
+    update.collapsed = requireBoolean(requested.collapsed, "collapsed");
+  if (requested.saved !== undefined)
+    update.saved = requireBoolean(requested.saved, "saved");
+  return update;
 }
 
 function requireBookmarkInput(value: unknown): BookmarkInput {
@@ -775,8 +935,93 @@ function registerIpc(): void {
   ipcMain.handle(channels.duplicateTab, async (event, tabId: unknown) =>
     requireManager(event).duplicateTab(requireString(tabId, "tabId", 128)),
   );
-  ipcMain.handle(channels.reopenClosedTab, (event) =>
-    requireManager(event).reopenClosedTab(),
+  ipcMain.handle(channels.reopenClosedTab, (event, id: unknown) =>
+    requireManager(event).reopenClosedTab(
+      id === undefined ? undefined : requireString(id, "id", 128),
+    ),
+  );
+  ipcMain.handle(
+    channels.createTabGroup,
+    (event, tabIds: unknown, name: unknown, color: unknown) =>
+      requireManager(event).createTabGroup(
+        requireTabIds(tabIds),
+        name === undefined ? undefined : requireString(name, "name", 128),
+        color === undefined ? undefined : requireTabGroupColor(color),
+      ),
+  );
+  ipcMain.handle(
+    channels.updateTabGroup,
+    (event, groupId: unknown, update: unknown) =>
+      requireManager(event).updateTabGroup(
+        requireString(groupId, "groupId", 128),
+        requireTabGroupUpdate(update),
+      ),
+  );
+  ipcMain.handle(
+    channels.deleteTabGroup,
+    (event, groupId: unknown, closeTabs: unknown) =>
+      requireManager(event).deleteTabGroup(
+        requireString(groupId, "groupId", 128),
+        closeTabs === undefined
+          ? false
+          : requireBoolean(closeTabs, "closeTabs"),
+      ),
+  );
+  ipcMain.handle(channels.restoreSavedTabGroup, (event, groupId: unknown) =>
+    requireManager(event).restoreSavedTabGroup(
+      requireString(groupId, "groupId", 128),
+    ),
+  );
+  ipcMain.handle(channels.removeSavedTabGroup, (event, groupId: unknown) =>
+    requireManager(event).removeSavedTabGroup(
+      requireString(groupId, "groupId", 128),
+    ),
+  );
+  ipcMain.handle(
+    channels.selectTabs,
+    (event, tabIds: unknown, mode: unknown) => {
+      if (!["replace", "add", "toggle", "range"].includes(String(mode)))
+        throw new TypeError("Unknown tab selection mode.");
+      requireManager(event).selectTabs(
+        requireTabIds(tabIds),
+        mode as TabSelectionMode,
+      );
+    },
+  );
+  ipcMain.handle(
+    channels.moveTabs,
+    (event, tabIds: unknown, targetIndex: unknown, groupId: unknown) => {
+      if (!Number.isSafeInteger(targetIndex))
+        throw new TypeError("targetIndex must be an integer.");
+      requireManager(event).moveTabs(
+        requireTabIds(tabIds),
+        targetIndex as number,
+        groupId === undefined || groupId === null
+          ? (groupId as undefined | null)
+          : requireString(groupId, "groupId", 128),
+      );
+    },
+  );
+  ipcMain.handle(channels.closeTabs, (event, tabIds: unknown) =>
+    requireManager(event).closeTabs(requireTabIds(tabIds)),
+  );
+  ipcMain.handle(
+    channels.setTabsPinned,
+    (event, tabIds: unknown, pinned: unknown) =>
+      requireManager(event).setTabsPinned(
+        requireTabIds(tabIds),
+        requireBoolean(pinned, "pinned"),
+      ),
+  );
+  ipcMain.handle(channels.searchTabs, (event, query: unknown) => {
+    if (typeof query !== "string" || query.length > 2_048)
+      throw new TypeError("query must be a string of at most 2048 characters.");
+    return requireManager(event).searchTabs(query);
+  });
+  ipcMain.handle(channels.reopenClosedWindow, (event, id: unknown) =>
+    requireManager(event).reopenClosedWindow(
+      id === undefined ? undefined : requireString(id, "id", 128),
+    ),
   );
   ipcMain.handle(channels.toggleMute, (event, tabId: unknown) =>
     requireManager(event).toggleMute(requireString(tabId, "tabId", 128)),
@@ -866,6 +1111,72 @@ function registerIpc(): void {
       return requireSearchSuggestions(event).getSuggestions(query);
     },
   );
+  ipcMain.handle(channels.getWebsiteControls, (event) =>
+    requireWebsiteControls(event).snapshot(),
+  );
+  ipcMain.handle(channels.getWebsiteControl, (event, originOrUrl: unknown) =>
+    requireWebsiteControls(event).siteSnapshot(
+      requireString(originOrUrl, "originOrUrl"),
+    ),
+  );
+  ipcMain.handle(
+    channels.setWebsitePermission,
+    async (event, originOrUrl: unknown, key: unknown, decision: unknown) => {
+      if (!isSitePermissionKey(key))
+        throw new TypeError("Unknown website permission.");
+      if (!isSitePermissionDecision(decision))
+        throw new TypeError("Unknown website permission decision.");
+      await requireWebsiteControls(event).setDecision(
+        requireString(originOrUrl, "originOrUrl"),
+        key,
+        decision,
+      );
+    },
+  );
+  ipcMain.handle(
+    channels.resetWebsitePermissions,
+    async (event, originOrUrl: unknown) => {
+      await requireWebsiteControls(event).resetSite(
+        requireString(originOrUrl, "originOrUrl"),
+      );
+    },
+  );
+  ipcMain.handle(
+    channels.clearWebsiteData,
+    async (event, originOrUrl: unknown) => {
+      await requireWebsiteControls(event).clearSiteData(
+        requireString(originOrUrl, "originOrUrl"),
+      );
+    },
+  );
+  ipcMain.handle(
+    channels.setSecureDns,
+    async (event, mode: unknown, providerUrl: unknown) => {
+      if (!isSecureDnsMode(mode))
+        throw new TypeError("Unknown secure DNS mode.");
+      if (providerUrl !== undefined && typeof providerUrl !== "string")
+        throw new TypeError("Secure DNS provider must be a string.");
+      await requireWebsiteControls(event).setSecureDns(mode, providerUrl);
+    },
+  );
+  ipcMain.on(channels.getWebsiteDocumentPolicy, (event) => {
+    const controls = websiteControls;
+    const frameUrl = event.senderFrame?.url;
+    const origin = frameUrl ? canonicalWebOrigin(frameUrl) : null;
+    if (
+      !controls ||
+      !origin ||
+      event.sender.session !== session.fromPartition(profilePartition)
+    ) {
+      event.returnValue = {
+        autoplay: "ask",
+        javascript: "ask",
+        network: "ask",
+      };
+      return;
+    }
+    event.returnValue = controls.documentPolicy(origin);
+  });
   ipcMain.handle(
     channels.getHyperdriveSnapshot,
     (event) => requireManager(event).hyperdriveSnapshot,
@@ -1470,6 +1781,49 @@ function registerIpc(): void {
       return requireManager(event).openGallery(cleanId, forceNew === true);
     },
   );
+  ipcMain.handle(
+    channels.getOfflinePages,
+    (event) => requireOfflinePages(event).snapshot,
+  );
+  ipcMain.handle(channels.savePageForOffline, async (event, tabId: unknown) => {
+    const manager = requireManager(event);
+    const library = requireOfflinePages(event);
+    const capture = manager.createOfflinePageCapture(
+      requireString(tabId, "tabId", 128),
+    );
+    return library.savePage(capture);
+  });
+  ipcMain.handle(
+    channels.openOfflinePages,
+    (event, entryId: unknown, forceNew: unknown) => {
+      requireOfflinePages(event);
+      const cleanId =
+        entryId === undefined || entryId === null
+          ? undefined
+          : requireString(entryId, "entryId", 128);
+      if (forceNew !== undefined && typeof forceNew !== "boolean") {
+        throw new TypeError("forceNew must be a boolean.");
+      }
+      return requireManager(event).openOfflinePages(cleanId, forceNew === true);
+    },
+  );
+  ipcMain.handle(channels.openOfflinePage, (event, id: unknown) => {
+    const cleanId = requireString(id, "id", 128);
+    const item = requireOfflinePages(event).snapshot.items.find(
+      (candidate) => candidate.id === cleanId,
+    );
+    if (!item?.available) throw new Error("The offline page is unavailable.");
+    return requireManager(event).openOfflinePage(cleanId);
+  });
+  ipcMain.handle(channels.deleteOfflinePage, async (event, id: unknown) => {
+    const library = requireOfflinePages(event);
+    const cleanId = requireString(id, "id", 128);
+    const item = library.snapshot.items.find(
+      (candidate) => candidate.id === cleanId,
+    );
+    if (!item) throw new Error("Unknown offline page.");
+    await library.remove(cleanId);
+  });
   ipcMain.handle(channels.openGalleryFile, async (event, id: unknown) => {
     const file = await requireGallery(event).resolveFile(
       requireString(id, "id", 128),
@@ -1671,18 +2025,39 @@ async function createMainWindow(): Promise<void> {
   if (smokeTheme === "light" || smokeTheme === "dark")
     nativeTheme.themeSource = smokeTheme;
   const browserSession = session.fromPartition(profilePartition);
+  const controls = new WebsiteControlsService(browserSession, {
+    filePath: path.join(app.getPath("userData"), "website-controls.json"),
+    prompt: promptForManagedWebsitePermission,
+    applySecureDns,
+    onChanged: sendWebsiteControls,
+    onHyperdriveDecisionChanged: syncHyperdriveSiteDecision,
+  });
+  await controls.initialize();
+  websiteControls = controls;
   browserSession.setPermissionCheckHandler(
-    (contents, permission, requestingOrigin) =>
-      Boolean(
+    (contents, permission, requestingOrigin, details) => {
+      if (permission === "fullscreen") {
+        return Boolean(
+          contents &&
+          tabManager?.canGrantWebsiteFullscreen(contents, permission),
+        );
+      }
+      const managed = controls.checkPermission(
+        contents,
+        permission,
+        requestingOrigin,
+        details,
+      );
+      if (managed !== null) return managed;
+      return Boolean(
         contents &&
-        (permission === "fullscreen"
-          ? tabManager?.canGrantWebsiteFullscreen(contents, permission)
-          : websitePermissionController?.check(
-              contents,
-              permission,
-              requestingOrigin,
-            )),
-      ),
+        websitePermissionController?.check(
+          contents,
+          permission,
+          requestingOrigin,
+        ),
+      );
+    },
   );
   browserSession.setPermissionRequestHandler(
     (contents, permission, callback, details) => {
@@ -1692,14 +2067,23 @@ async function createMainWindow(): Promise<void> {
         );
         return;
       }
-      const controller = websitePermissionController;
-      if (!controller) {
-        callback(false);
-        return;
-      }
-      void controller
-        .request(contents, permission, details.requestingUrl)
-        .then(callback, () => callback(false));
+      void controls.requestPermission(contents, permission, details).then(
+        (managed) => {
+          if (managed !== null) {
+            callback(managed);
+            return;
+          }
+          const controller = websitePermissionController;
+          if (!controller) {
+            callback(false);
+            return;
+          }
+          void controller
+            .request(contents, permission, details.requestingUrl)
+            .then(callback, () => callback(false));
+        },
+        () => callback(false),
+      );
     },
   );
   browserSession.setSpellCheckerEnabled(false);
@@ -1892,6 +2276,13 @@ async function createMainWindow(): Promise<void> {
       if (!view.webContents.isDestroyed())
         view.webContents.send(channels.downloadsChanged, mapDownloads(items));
     },
+    shouldAllowDownload: (initiatorOrigin) => {
+      try {
+        return controls.shouldAllowDownload(initiatorOrigin);
+      } catch {
+        return true;
+      }
+    },
   });
   await downloads.initialize();
   downloadManager = downloads;
@@ -1908,6 +2299,16 @@ async function createMainWindow(): Promise<void> {
     kind === "thumbnail"
       ? gallery.resolveThumbnail(id)
       : gallery.resolveFile(id),
+  );
+
+  const offlinePages = new OfflinePageStore({
+    directory: path.join(app.getPath("userData"), "offline-pages"),
+    onChange: sendOfflinePagesSnapshot,
+  });
+  await offlinePages.initialize();
+  offlinePageStore = offlinePages;
+  registerOfflinePageProtocol(view.webContents.session, (id, relativePath) =>
+    offlinePages.resolveResource(id, relativePath),
   );
 
   const youtubeDownloads = new YouTubeDownloadService({
@@ -2110,7 +2511,10 @@ async function createMainWindow(): Promise<void> {
     sendBrowserData,
     () => void sendExtensionsSnapshot(),
     (input) => actionHost.handleCommandInput(input),
-    (contents) => websitePermissionController?.revoke(contents),
+    (contents) => {
+      websitePermissionController?.revoke(contents);
+      controls.revoke(contents);
+    },
     (signal) => {
       void smartDownloads
         .recordYouTubePlayback(signal)
@@ -2121,6 +2525,13 @@ async function createMainWindow(): Promise<void> {
           ),
         );
     },
+    (openerUrl) => {
+      try {
+        return controls.shouldAllowPopup(openerUrl);
+      } catch {
+        return true;
+      }
+    },
   );
   tabManager = manager;
   websitePermissionController = new WebsitePermissionController({
@@ -2128,9 +2539,14 @@ async function createMainWindow(): Promise<void> {
       manager.getActiveWebsitePermissionContext(contents),
     prompt: (request) => promptForWebsitePermission(request),
   });
+  for (const site of (await controls.snapshot()).sites) {
+    if (site.decisions.hyperdrive === "block") {
+      await syncHyperdriveSiteDecision(site.origin, "block");
+    }
+  }
   actionHost.attachTabs(manager);
-  manager.initialize();
   registerIpc();
+  manager.initialize();
 
   view.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   view.webContents.on("will-navigate", (event, url) => {
@@ -2176,7 +2592,7 @@ async function createMainWindow(): Promise<void> {
     }
     event.preventDefault();
     void Promise.all([
-      manager.flushSession(),
+      manager.flushWindowStateForClose(),
       smartDownloads.dispose(),
       youtubeDownloads.dispose(),
       downloads.dispose(),
@@ -2203,8 +2619,10 @@ async function createMainWindow(): Promise<void> {
       updateManager = null;
       websitePermissionController?.clear();
       websitePermissionController = null;
+      websiteControls = null;
       youtubeDownloadService = null;
       galleryStore = null;
+      offlinePageStore = null;
       smartDownloadsService = null;
       smartDownloadsTray?.destroy();
       smartDownloadsTray = null;

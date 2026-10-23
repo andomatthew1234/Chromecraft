@@ -40,6 +40,47 @@ let observedPlaybackSeconds = 0;
 let observationBucket = 0;
 let observationVideoId: string | null = null;
 
+interface WebsiteDocumentPolicy {
+  autoplay: "ask" | "allow" | "block";
+  javascript: "ask" | "allow" | "block";
+  network: "ask" | "allow" | "block";
+}
+
+function readWebsiteDocumentPolicy(): WebsiteDocumentPolicy {
+  try {
+    const value = ipcRenderer.sendSync(
+      channels.getWebsiteDocumentPolicy,
+    ) as Partial<WebsiteDocumentPolicy> | null;
+    return {
+      autoplay:
+        value?.autoplay === "allow" || value?.autoplay === "block"
+          ? value.autoplay
+          : "ask",
+      javascript:
+        value?.javascript === "allow" || value?.javascript === "block"
+          ? value.javascript
+          : "ask",
+      network:
+        value?.network === "allow" || value?.network === "block"
+          ? value.network
+          : "ask",
+    };
+  } catch {
+    return { autoplay: "ask", javascript: "ask", network: "ask" };
+  }
+}
+
+const websiteDocumentPolicy = readWebsiteDocumentPolicy();
+if (websiteDocumentPolicy.autoplay === "block") {
+  addEventListener(
+    "play",
+    (event) => {
+      if (event.target instanceof HTMLMediaElement) event.target.pause();
+    },
+    { capture: true },
+  );
+}
+
 function cleanHttpUrl(raw: string): string | null {
   try {
     const url = new URL(raw, location.href);

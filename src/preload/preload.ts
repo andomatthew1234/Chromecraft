@@ -13,10 +13,19 @@ import type {
   HyperdriveSnapshot,
   SmartDownloadsSnapshot,
   SmartDownloadsCheckResult,
+  SecureDnsMode,
+  SitePermissionDecision,
+  SitePermissionKey,
   TabId,
+  WebsiteControlSnapshot,
+  WebsiteControlsSnapshot,
   YouTubeDownloadsSnapshot,
 } from "../shared/browser";
 import { channels } from "../shared/channels";
+import type {
+  OfflinePageEntrySnapshot,
+  OfflinePagesSnapshot,
+} from "../shared/offline-pages";
 import type { UpdateSnapshot } from "../shared/updates";
 
 const api: ChromecraftApi = {
@@ -39,8 +48,49 @@ const api: ChromecraftApi = {
   stop: (tabId) => ipcRenderer.invoke(channels.stop, tabId) as Promise<void>,
   duplicateTab: (tabId) =>
     ipcRenderer.invoke(channels.duplicateTab, tabId) as Promise<TabId>,
-  reopenClosedTab: () =>
-    ipcRenderer.invoke(channels.reopenClosedTab) as Promise<TabId | null>,
+  reopenClosedTab: (id) =>
+    ipcRenderer.invoke(channels.reopenClosedTab, id) as Promise<TabId | null>,
+  createTabGroup: (tabIds, name, color) =>
+    ipcRenderer.invoke(
+      channels.createTabGroup,
+      tabIds,
+      name,
+      color,
+    ) as Promise<string>,
+  updateTabGroup: (groupId, update) =>
+    ipcRenderer.invoke(
+      channels.updateTabGroup,
+      groupId,
+      update,
+    ) as Promise<void>,
+  deleteTabGroup: (groupId, closeTabs) =>
+    ipcRenderer.invoke(
+      channels.deleteTabGroup,
+      groupId,
+      closeTabs,
+    ) as Promise<void>,
+  restoreSavedTabGroup: (groupId) =>
+    ipcRenderer.invoke(channels.restoreSavedTabGroup, groupId) as Promise<
+      TabId[]
+    >,
+  removeSavedTabGroup: (groupId) =>
+    ipcRenderer.invoke(channels.removeSavedTabGroup, groupId) as Promise<void>,
+  selectTabs: (tabIds, mode) =>
+    ipcRenderer.invoke(channels.selectTabs, tabIds, mode) as Promise<void>,
+  moveTabs: (tabIds, targetIndex, groupId) =>
+    ipcRenderer.invoke(
+      channels.moveTabs,
+      tabIds,
+      targetIndex,
+      groupId,
+    ) as Promise<void>,
+  closeTabs: (tabIds) =>
+    ipcRenderer.invoke(channels.closeTabs, tabIds) as Promise<void>,
+  setTabsPinned: (tabIds, pinned) =>
+    ipcRenderer.invoke(channels.setTabsPinned, tabIds, pinned) as Promise<void>,
+  searchTabs: (query) => ipcRenderer.invoke(channels.searchTabs, query),
+  reopenClosedWindow: (id) =>
+    ipcRenderer.invoke(channels.reopenClosedWindow, id) as Promise<TabId[]>,
   toggleMute: (tabId) =>
     ipcRenderer.invoke(channels.toggleMute, tabId) as Promise<void>,
   setZoom: (tabId, factor) =>
@@ -78,6 +128,35 @@ const api: ChromecraftApi = {
     ) as Promise<void>,
   getSearchSuggestions: (query) =>
     ipcRenderer.invoke(channels.getSearchSuggestions, query),
+  getWebsiteControls: () =>
+    ipcRenderer.invoke(
+      channels.getWebsiteControls,
+    ) as Promise<WebsiteControlsSnapshot>,
+  getWebsiteControl: (originOrUrl) =>
+    ipcRenderer.invoke(
+      channels.getWebsiteControl,
+      originOrUrl,
+    ) as Promise<WebsiteControlSnapshot>,
+  setWebsitePermission: (originOrUrl, key, decision) =>
+    ipcRenderer.invoke(
+      channels.setWebsitePermission,
+      originOrUrl,
+      key as SitePermissionKey,
+      decision as SitePermissionDecision,
+    ) as Promise<void>,
+  resetWebsitePermissions: (originOrUrl) =>
+    ipcRenderer.invoke(
+      channels.resetWebsitePermissions,
+      originOrUrl,
+    ) as Promise<void>,
+  clearWebsiteData: (originOrUrl) =>
+    ipcRenderer.invoke(channels.clearWebsiteData, originOrUrl) as Promise<void>,
+  setSecureDns: (mode, providerUrl) =>
+    ipcRenderer.invoke(
+      channels.setSecureDns,
+      mode as SecureDnsMode,
+      providerUrl,
+    ) as Promise<void>,
   getHyperdriveSnapshot: () =>
     ipcRenderer.invoke(
       channels.getHyperdriveSnapshot,
@@ -380,6 +459,25 @@ const api: ChromecraftApi = {
     ) as Promise<void>,
   markGalleryItemWatched: (id) =>
     ipcRenderer.invoke(channels.markGalleryItemWatched, id) as Promise<void>,
+  getOfflinePages: () =>
+    ipcRenderer.invoke(
+      channels.getOfflinePages,
+    ) as Promise<OfflinePagesSnapshot>,
+  savePageForOffline: (tabId) =>
+    ipcRenderer.invoke(
+      channels.savePageForOffline,
+      tabId,
+    ) as Promise<OfflinePageEntrySnapshot>,
+  openOfflinePages: (entryId, forceNew) =>
+    ipcRenderer.invoke(
+      channels.openOfflinePages,
+      entryId,
+      forceNew,
+    ) as Promise<TabId>,
+  openOfflinePage: (id) =>
+    ipcRenderer.invoke(channels.openOfflinePage, id) as Promise<TabId>,
+  deleteOfflinePage: (id) =>
+    ipcRenderer.invoke(channels.deleteOfflinePage, id) as Promise<void>,
   setShowDownloadProgressInToolbar: (enabled) =>
     ipcRenderer.invoke(
       channels.setShowDownloadProgressInToolbar,
@@ -458,6 +556,15 @@ const api: ChromecraftApi = {
     ipcRenderer.on(channels.galleryChanged, handler);
     return () => ipcRenderer.removeListener(channels.galleryChanged, handler);
   },
+  onOfflinePages: (listener) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      snapshot: OfflinePagesSnapshot,
+    ) => listener(snapshot);
+    ipcRenderer.on(channels.offlinePagesChanged, handler);
+    return () =>
+      ipcRenderer.removeListener(channels.offlinePagesChanged, handler);
+  },
   onFindResult: (listener) => {
     const handler = (
       _event: Electron.IpcRendererEvent,
@@ -481,6 +588,15 @@ const api: ChromecraftApi = {
     const handler = () => listener();
     ipcRenderer.on(channels.focusOmnibox, handler);
     return () => ipcRenderer.removeListener(channels.focusOmnibox, handler);
+  },
+  onWebsiteControls: (listener) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      snapshot: WebsiteControlsSnapshot,
+    ) => listener(snapshot);
+    ipcRenderer.on(channels.websiteControlsChanged, handler);
+    return () =>
+      ipcRenderer.removeListener(channels.websiteControlsChanged, handler);
   },
   onHyperdriveSnapshot: (listener) => {
     const handler = (

@@ -1,6 +1,52 @@
 import type { UpdateSnapshot } from "./updates";
+import type {
+  OfflinePageEntrySnapshot,
+  OfflinePagesSnapshot,
+} from "./offline-pages";
 
 export type TabId = string;
+
+export type TabGroupColor =
+  | "grey"
+  | "blue"
+  | "red"
+  | "yellow"
+  | "green"
+  | "pink"
+  | "purple"
+  | "cyan"
+  | "orange";
+
+export interface TabGroupSnapshot {
+  id: string;
+  name: string;
+  color: TabGroupColor;
+  collapsed: boolean;
+  saved: boolean;
+  createdAt: number;
+}
+
+export interface TabGroupUpdate {
+  name?: string;
+  color?: TabGroupColor;
+  collapsed?: boolean;
+  saved?: boolean;
+}
+
+export type TabSelectionMode = "replace" | "add" | "toggle" | "range";
+
+export interface TabSearchResult {
+  kind: "open" | "recently-closed";
+  id: string;
+  tabId: TabId | null;
+  title: string;
+  url: string;
+  groupId: string | null;
+  isActive: boolean;
+  isAudible: boolean;
+  memoryBytes: number | null;
+  closedAt: number | null;
+}
 
 export interface BrowserTabSnapshot {
   id: TabId;
@@ -14,6 +60,14 @@ export interface BrowserTabSnapshot {
   error: string | null;
   isMuted: boolean;
   zoomFactor: number;
+  pinned: boolean;
+  groupId: string | null;
+  isSelected: boolean;
+  isAudible: boolean;
+  /** Best-effort renderer process working-set estimate. Shared processes may overlap. */
+  memoryBytes: number | null;
+  /** Ephemeral, low-resolution preview captured while the page was visible. */
+  thumbnailDataUrl: string | null;
 }
 
 export interface WebStoreListingSnapshot {
@@ -478,6 +532,8 @@ export interface ExtensionInstallPreviewSnapshot {
 
 export interface BrowserSnapshot {
   tabs: BrowserTabSnapshot[];
+  tabGroups: TabGroupSnapshot[];
+  selectedTabIds: TabId[];
   activeTabId: TabId;
   ublock: UblockSnapshot;
   preferences: BrowserPreferencesSnapshot;
@@ -485,6 +541,43 @@ export interface BrowserSnapshot {
   chromeHeight: number;
   webStoreListing: WebStoreListingSnapshot | null;
   youtubeWatch: YouTubeWatchSnapshot | null;
+}
+
+export type SitePermissionKey =
+  | "camera"
+  | "microphone"
+  | "location"
+  | "notifications"
+  | "popups"
+  | "clipboard"
+  | "autoplay"
+  | "downloads"
+  | "network"
+  | "javascript"
+  | "hyperdrive";
+
+export type SitePermissionDecision = "ask" | "allow" | "block";
+export type SecureDnsMode = "system" | "automatic" | "secure";
+
+export interface WebsiteControlSnapshot {
+  origin: string;
+  hostname: string;
+  decisions: Record<SitePermissionKey, SitePermissionDecision>;
+  /** True when cookies are present; null means other storage could not be measured. */
+  hasStoredData: boolean | null;
+}
+
+export interface WebsiteControlsSnapshot {
+  secureDns: {
+    mode: SecureDnsMode;
+    providerUrl: string | null;
+  };
+  /** Only origins with at least one non-default decision are included. */
+  sites: WebsiteControlSnapshot[];
+  limitations: {
+    autoplay: string;
+    javascript: string;
+  };
 }
 
 export interface BookmarkEntry {
@@ -514,6 +607,34 @@ export interface ClosedTabEntry {
   title: string;
   url: string;
   closedAt: number;
+  pinned: boolean;
+  groupId: string | null;
+  groupName: string | null;
+  groupColor: TabGroupColor | null;
+}
+
+export interface SavedTabGroupEntry {
+  id: string;
+  name: string;
+  color: TabGroupColor;
+  createdAt: number;
+  updatedAt: number;
+  tabs: Array<{ title: string; url: string }>;
+}
+
+export interface ClosedWindowEntry {
+  id: string;
+  tabs: Array<{
+    id: string;
+    title: string;
+    url: string;
+    isNewTab: boolean;
+    pinned: boolean;
+    groupId: string | null;
+  }>;
+  tabGroups: TabGroupSnapshot[];
+  activeTabId: string | null;
+  closedAt: number;
 }
 
 export interface QuickLinkEntry {
@@ -528,6 +649,8 @@ export interface BrowserDataSnapshot {
   history: HistoryEntry[];
   recentlyClosed: ClosedTabEntry[];
   quickLinks: QuickLinkEntry[];
+  savedTabGroups: SavedTabGroupEntry[];
+  recentlyClosedWindows: ClosedWindowEntry[];
 }
 
 export type DownloadState =
@@ -583,7 +706,26 @@ export interface ChromecraftApi {
   reload(tabId: TabId): Promise<void>;
   stop(tabId: TabId): Promise<void>;
   duplicateTab(tabId: TabId): Promise<TabId>;
-  reopenClosedTab(): Promise<TabId | null>;
+  reopenClosedTab(id?: string): Promise<TabId | null>;
+  createTabGroup(
+    tabIds: TabId[],
+    name?: string,
+    color?: TabGroupColor,
+  ): Promise<string>;
+  updateTabGroup(groupId: string, update: TabGroupUpdate): Promise<void>;
+  deleteTabGroup(groupId: string, closeTabs?: boolean): Promise<void>;
+  restoreSavedTabGroup(groupId: string): Promise<TabId[]>;
+  removeSavedTabGroup(groupId: string): Promise<void>;
+  selectTabs(tabIds: TabId[], mode: TabSelectionMode): Promise<void>;
+  moveTabs(
+    tabIds: TabId[],
+    targetIndex: number,
+    groupId?: string | null,
+  ): Promise<void>;
+  closeTabs(tabIds: TabId[]): Promise<void>;
+  setTabsPinned(tabIds: TabId[], pinned: boolean): Promise<void>;
+  searchTabs(query: string): Promise<TabSearchResult[]>;
+  reopenClosedWindow(id?: string): Promise<TabId[]>;
   toggleMute(tabId: TabId): Promise<void>;
   setZoom(tabId: TabId, factor: number): Promise<void>;
   findInPage(tabId: TabId, text: string, forward: boolean): Promise<void>;
@@ -597,6 +739,16 @@ export interface ChromecraftApi {
   setNewTabTheme(theme: NewTabTheme): Promise<void>;
   setRemoteSearchSuggestionsEnabled(enabled: boolean): Promise<void>;
   getSearchSuggestions(query: string): Promise<SearchSuggestionsSnapshot>;
+  getWebsiteControls(): Promise<WebsiteControlsSnapshot>;
+  getWebsiteControl(originOrUrl: string): Promise<WebsiteControlSnapshot>;
+  setWebsitePermission(
+    originOrUrl: string,
+    key: SitePermissionKey,
+    decision: SitePermissionDecision,
+  ): Promise<void>;
+  resetWebsitePermissions(originOrUrl: string): Promise<void>;
+  clearWebsiteData(originOrUrl: string): Promise<void>;
+  setSecureDns(mode: SecureDnsMode, providerUrl?: string): Promise<void>;
   getHyperdriveSnapshot(): Promise<HyperdriveSnapshot>;
   setHyperdriveMode(mode: HyperdriveMode): Promise<void>;
   setHyperdriveRamBudgetMb(megabytes: number): Promise<void>;
@@ -703,6 +855,11 @@ export interface ChromecraftApi {
   ): Promise<GalleryMediaRepairResult>;
   setSmartDownloadKeepForever(id: string, keepForever: boolean): Promise<void>;
   markGalleryItemWatched(id: string): Promise<void>;
+  getOfflinePages(): Promise<OfflinePagesSnapshot>;
+  savePageForOffline(tabId: TabId): Promise<OfflinePageEntrySnapshot>;
+  openOfflinePages(entryId?: string, forceNew?: boolean): Promise<TabId>;
+  openOfflinePage(id: string): Promise<TabId>;
+  deleteOfflinePage(id: string): Promise<void>;
   setShowDownloadProgressInToolbar(enabled: boolean): Promise<void>;
   setShowDownloadCompletionNotification(enabled: boolean): Promise<void>;
   setAddVideosToGallery(enabled: boolean): Promise<void>;
@@ -720,10 +877,16 @@ export interface ChromecraftApi {
   ): () => void;
   onShowSmartDownloadsSettings(listener: () => void): () => void;
   onGallery(listener: (snapshot: GallerySnapshot) => void): () => void;
+  onOfflinePages(
+    listener: (snapshot: OfflinePagesSnapshot) => void,
+  ): () => void;
   onFindResult(listener: (snapshot: FindResultSnapshot) => void): () => void;
   onShowFind(listener: () => void): () => void;
   onOpenCommandPalette(listener: () => void): () => void;
   onFocusOmnibox(listener: () => void): () => void;
+  onWebsiteControls(
+    listener: (snapshot: WebsiteControlsSnapshot) => void,
+  ): () => void;
   onHyperdriveSnapshot(
     listener: (snapshot: HyperdriveSnapshot) => void,
   ): () => void;

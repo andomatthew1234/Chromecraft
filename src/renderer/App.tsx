@@ -1,9 +1,11 @@
 import {
   memo,
   type CSSProperties,
+  type DragEvent as ReactDragEvent,
   type FormEvent,
   type MouseEvent,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -29,6 +31,8 @@ import type {
   NewTabTheme,
   SmartDownloadsSnapshot,
   UblockSnapshot,
+  WebsiteControlSnapshot,
+  WebsiteControlsSnapshot,
   YouTubeDownloadsSnapshot,
 } from "../shared/browser";
 import { resolveNavigationInput } from "../shared/navigation";
@@ -39,6 +43,7 @@ import {
 } from "../shared/sidebar";
 import { parseChromeWebStoreListingUrl } from "../shared/web-store-listing";
 import type { UpdateSnapshot } from "../shared/updates";
+import type { OfflinePagesSnapshot } from "../shared/offline-pages";
 import {
   ExtensionInstallBanner,
   type ExtensionInstallBannerState,
@@ -47,7 +52,10 @@ import { ExpressiveLoadingIndicator } from "./ExpressiveLoadingIndicator";
 import { YouTubeDownloadBanner } from "./YouTubeDownloadBanner";
 import { YouTubeDownloadProgress } from "./YouTubeDownloadProgress";
 import { GalleryPage } from "./GalleryPage";
+import { OfflinePagesPage } from "./OfflinePagesPage";
+import { PageActionsPanel } from "./PageActionsPanel";
 import { SmartDownloadsPage } from "./SmartDownloadsPage";
+import { WebsitePermissionsDashboard } from "./SiteControlsPanel";
 import {
   deriveDownloadIndicator,
   didAnyDownloadComplete,
@@ -74,14 +82,35 @@ const emptyData: BrowserDataSnapshot = {
   history: [],
   recentlyClosed: [],
   quickLinks: [],
+  savedTabGroups: [],
+  recentlyClosedWindows: [],
 };
 const emptyDownloads: DownloadSnapshot = { items: [] };
+const emptyWebsiteControls: WebsiteControlsSnapshot = {
+  secureDns: { mode: "automatic", providerUrl: null },
+  sites: [],
+  limitations: {
+    autoplay: "Autoplay controls apply on the next document load.",
+    javascript: "JavaScript controls apply after reloading the website.",
+  },
+};
 const emptyYouTubeDownloads: YouTubeDownloadsSnapshot = {
   available: false,
   ytDlpVersion: "",
   items: [],
 };
 const emptyGallery: GallerySnapshot = { items: [] };
+const emptyOfflinePages: OfflinePagesSnapshot = {
+  items: [],
+  save: {
+    stage: "idle",
+    tabId: null,
+    title: null,
+    sourceUrl: null,
+    entryId: null,
+    error: null,
+  },
+};
 const emptySmartDownloads: SmartDownloadsSnapshot = {
   config: {
     enabled: false,
@@ -165,18 +194,25 @@ type IconName =
   | "find"
   | "forward"
   | "history"
+  | "info"
+  | "lock"
   | "memory"
   | "folder"
+  | "group"
+  | "more"
   | "open"
   | "pause"
+  | "pin"
   | "play"
   | "reload"
   | "search"
   | "settings"
   | "shield"
   | "stop"
+  | "tabSearch"
   | "tune"
   | "warning"
+  | "volumeUp"
   | "volumeOff"
   | "videoLibrary";
 
@@ -197,18 +233,25 @@ const iconSymbols: Record<IconName, string> = {
   find: "find_in_page",
   forward: "arrow_forward",
   history: "history",
+  info: "info",
+  lock: "lock",
   memory: "memory",
   folder: "folder",
+  group: "tab_group",
+  more: "more_vert",
   open: "open_in_new",
   pause: "pause",
+  pin: "push_pin",
   play: "play_arrow",
   reload: "refresh",
   search: "search",
   settings: "settings",
   shield: "shield",
   stop: "stop",
+  tabSearch: "tab_search",
   tune: "tune",
   warning: "warning",
+  volumeUp: "volume_up",
   volumeOff: "volume_off",
   videoLibrary: "video_library",
 };
@@ -419,23 +462,246 @@ function hostLabel(url: string): string {
   }
 }
 
+type TabGroupColor =
+  | "grey"
+  | "blue"
+  | "red"
+  | "yellow"
+  | "green"
+  | "pink"
+  | "purple"
+  | "cyan"
+  | "orange";
+
+interface TabGroupSnapshotLike {
+  id: string;
+  name: string;
+  color: TabGroupColor;
+  collapsed: boolean;
+  saved: boolean;
+  createdAt: number;
+}
+
+type OrganisedTabSnapshot = BrowserTabSnapshot & {
+  groupId?: string | null;
+  isSelected?: boolean;
+  isAudible?: boolean;
+  memoryBytes?: number | null;
+  thumbnailDataUrl?: string | null;
+  pinned?: boolean;
+};
+
+type OrganisedBrowserSnapshot = BrowserSnapshot & {
+  tabGroups?: TabGroupSnapshotLike[];
+  selectedTabIds?: string[];
+};
+
+interface TabOrganizationApi {
+  createTabGroup?: (
+    tabIds: string[],
+    name?: string,
+    color?: TabGroupColor,
+  ) => Promise<string>;
+  updateTabGroup?: (
+    groupId: string,
+    patch: Partial<
+      Pick<TabGroupSnapshotLike, "name" | "color" | "collapsed" | "saved">
+    >,
+  ) => Promise<void>;
+  deleteTabGroup?: (groupId: string, closeTabs?: boolean) => Promise<void>;
+  selectTabs?: (
+    tabIds: string[],
+    mode: "replace" | "add" | "toggle" | "range",
+  ) => Promise<void>;
+  moveTabs?: (
+    tabIds: string[],
+    targetIndex: number,
+    groupId?: string | null,
+  ) => Promise<void>;
+  closeTabs?: (tabIds: string[]) => Promise<void>;
+  setTabsPinned?: (tabIds: string[], pinned: boolean) => Promise<void>;
+  reopenClosedTab: (id?: string) => Promise<string | null>;
+  reopenClosedWindow?: (id?: string) => Promise<string[]>;
+  restoreSavedTabGroup?: (id: string) => Promise<string[]>;
+  removeSavedTabGroup?: (id: string) => Promise<void>;
+}
+
+interface RecentlyClosedWindowLike {
+  id: string;
+  title?: string;
+  closedAt: number;
+  tabs: Array<{ id: string; title: string; url: string }>;
+}
+
+function tabOrganizationApi(): TabOrganizationApi {
+  return window.chromecraft as unknown as TabOrganizationApi;
+}
+
+export function getTabGroups(
+  snapshot: BrowserSnapshot,
+): TabGroupSnapshotLike[] {
+  const groups = (snapshot as OrganisedBrowserSnapshot).tabGroups;
+  return Array.isArray(groups) ? groups : [];
+}
+
+export function getSelectedTabIds(snapshot: BrowserSnapshot): string[] {
+  const enhanced = snapshot as OrganisedBrowserSnapshot;
+  if (Array.isArray(enhanced.selectedTabIds)) return enhanced.selectedTabIds;
+  return snapshot.tabs
+    .filter((tab) => (tab as OrganisedTabSnapshot).isSelected)
+    .map((tab) => tab.id);
+}
+
+function getRecentlyClosedWindows(
+  data: BrowserDataSnapshot,
+): RecentlyClosedWindowLike[] {
+  const windows = (
+    data as BrowserDataSnapshot & {
+      recentlyClosedWindows?: RecentlyClosedWindowLike[];
+    }
+  ).recentlyClosedWindows;
+  return Array.isArray(windows) ? windows : [];
+}
+
+function formatTabMemory(bytes: number | null | undefined): string | null {
+  if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes < 0) {
+    return null;
+  }
+  if (bytes < 1024 ** 2) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  if (bytes < 1024 ** 3) return `${Math.round(bytes / 1024 ** 2)} MB`;
+  return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+}
+
+function formatRelativeTime(timestamp: number): string {
+  const minutes = Math.max(1, Math.round((Date.now() - timestamp) / 60_000));
+  const formatter = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+  if (minutes < 60) return formatter.format(-minutes, "minute");
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return formatter.format(-hours, "hour");
+  return formatter.format(-Math.round(hours / 24), "day");
+}
+
+const TAB_GROUP_COLORS: TabGroupColor[] = [
+  "grey",
+  "blue",
+  "red",
+  "yellow",
+  "green",
+  "pink",
+  "purple",
+  "cyan",
+  "orange",
+];
+
+const TAB_DRAG_MIME = "application/x-chromecraft-tab-ids";
+
+function tabDragIds(tabId: string, selectedIds: string[]): string[] {
+  return selectedIds.includes(tabId) ? selectedIds : [tabId];
+}
+
+function writeTabDragPayload(dataTransfer: DataTransfer, tabIds: string[]) {
+  const payload = JSON.stringify(tabIds);
+  dataTransfer.effectAllowed = "move";
+  dataTransfer.setData(TAB_DRAG_MIME, payload);
+  // The fallback keeps same-window drops working on platforms that strip
+  // custom MIME types from native drag payloads.
+  dataTransfer.setData("text/plain", `chromecraft-tabs:${payload}`);
+}
+
+function readTabDragPayload(dataTransfer: DataTransfer): string[] {
+  const custom = dataTransfer.getData(TAB_DRAG_MIME);
+  const fallback = dataTransfer.getData("text/plain");
+  const serialized = custom || fallback.replace(/^chromecraft-tabs:/, "");
+  try {
+    const parsed = JSON.parse(serialized) as unknown;
+    return Array.isArray(parsed)
+      ? parsed.filter((id): id is string => typeof id === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function performTabGroupDrop({
+  draggedTabIds,
+  groupId,
+  tabs,
+  moveTabs,
+}: {
+  draggedTabIds: string[];
+  groupId: string;
+  tabs: BrowserTabSnapshot[];
+  moveTabs: (
+    tabIds: string[],
+    targetIndex: number,
+    groupId: string,
+  ) => Promise<void>;
+}): Promise<boolean> {
+  const knownTabs = new Map(tabs.map((tab) => [tab.id, tab]));
+  const moving = [...new Set(draggedTabIds)].filter((id) => {
+    const tab = knownTabs.get(id) as OrganisedTabSnapshot | undefined;
+    return tab && tab.groupId !== groupId;
+  });
+  if (moving.length === 0) return false;
+
+  const movingIds = new Set(moving);
+  const remaining = tabs.filter((tab) => !movingIds.has(tab.id));
+  let targetIndex = remaining.length;
+  for (let index = remaining.length - 1; index >= 0; index -= 1) {
+    if ((remaining[index] as OrganisedTabSnapshot).groupId === groupId) {
+      targetIndex = index + 1;
+      break;
+    }
+  }
+  await moveTabs(moving, targetIndex, groupId);
+  return true;
+}
+
 const TabButton = memo(function TabButton({
   active,
+  selected,
   tab,
   settings,
+  dragging,
   onMenu,
+  onDragStart,
+  onDragEnd,
   onHoverChange,
 }: {
   active: boolean;
+  selected: boolean;
   tab: BrowserTabSnapshot;
   settings: boolean;
+  dragging: boolean;
   onMenu: (event: MouseEvent, tab: BrowserTabSnapshot) => void;
+  onDragStart: (
+    event: ReactDragEvent<HTMLDivElement>,
+    tab: BrowserTabSnapshot,
+  ) => void;
+  onDragEnd: () => void;
   onHoverChange: (tab: BrowserTabSnapshot | null, anchor?: DOMRect) => void;
 }) {
   const label = settings ? "Settings" : tabLabel(tab);
+  const activate = (event: MouseEvent<HTMLButtonElement>) => {
+    const api = tabOrganizationApi();
+    if ((event.ctrlKey || event.metaKey) && api.selectTabs) {
+      void api.selectTabs([tab.id], "toggle");
+      return;
+    }
+    if (event.shiftKey && api.selectTabs) {
+      void api.selectTabs([tab.id], "range");
+      return;
+    }
+    if (api.selectTabs) void api.selectTabs([tab.id], "replace");
+    void window.chromecraft.activateTab(tab.id);
+  };
   return (
     <div
-      className={`tab ${active ? "active" : ""}`}
+      className={`tab ${active ? "active" : ""} ${selected ? "selected" : ""} ${dragging ? "dragging" : ""} ${(tab as OrganisedTabSnapshot).pinned ? "pinned" : ""}`}
+      data-tab-id={tab.id}
+      draggable
+      onDragStart={(event) => onDragStart(event, tab)}
+      onDragEnd={onDragEnd}
       onContextMenu={(event) => onMenu(event, tab)}
       onPointerEnter={(event) =>
         onHoverChange(tab, event.currentTarget.getBoundingClientRect())
@@ -448,8 +714,9 @@ const TabButton = memo(function TabButton({
         className="tab-target"
         role="tab"
         aria-selected={active}
-        onClick={() => void window.chromecraft.activateTab(tab.id)}
-        tabIndex={active ? 0 : -1}
+        aria-label={`${label}${selected ? ", selected for tab actions" : ""}`}
+        onClick={activate}
+        tabIndex={active || selected ? 0 : -1}
         aria-busy={tab.isLoading}
       >
         {tab.isLoading ? (
@@ -489,8 +756,580 @@ const TabButton = memo(function TabButton({
   );
 });
 
-function TabStrip({
+function TabGroupPill({
+  group,
+  tabCount,
+  active,
+  onMenu,
+}: {
+  group: TabGroupSnapshotLike;
+  tabCount: number;
+  active: boolean;
+  onMenu: (group: TabGroupSnapshotLike, anchor: DOMRect) => void;
+}) {
+  return (
+    <div
+      className={`tab-group-pill group-${group.color} ${active ? "active" : ""}`}
+      data-group-id={group.id}
+    >
+      <button
+        type="button"
+        className="tab-group-toggle"
+        aria-expanded={!group.collapsed}
+        aria-label={`${group.collapsed ? "Expand" : "Collapse"} ${group.name} group, ${tabCount} tabs`}
+        onClick={(event) => {
+          event.stopPropagation();
+          void tabOrganizationApi().updateTabGroup?.(group.id, {
+            collapsed: !group.collapsed,
+          });
+        }}
+      >
+        <span className="tab-group-dot" aria-hidden="true" />
+        <span>{group.name || "Tab group"}</span>
+        {group.collapsed && <small>{tabCount}</small>}
+      </button>
+      <button
+        type="button"
+        className="tab-group-more"
+        aria-label={`Edit ${group.name || "tab group"}`}
+        aria-haspopup="menu"
+        onClick={(event) => {
+          event.stopPropagation();
+          onMenu(group, event.currentTarget.getBoundingClientRect());
+        }}
+      >
+        <Icon name="more" />
+      </button>
+    </div>
+  );
+}
+
+function TabGroupMenu({
+  group,
+  position,
+  close,
+}: {
+  group: TabGroupSnapshotLike;
+  position: { x: number; y: number };
+  close: () => void;
+}) {
+  const [name, setName] = useState(group.name);
+  const saveName = () => {
+    const nextName = name.trim() || "Tab group";
+    if (nextName !== group.name) {
+      void tabOrganizationApi().updateTabGroup?.(group.id, { name: nextName });
+    }
+  };
+  return (
+    <section
+      className="tab-group-menu"
+      role="menu"
+      aria-label={`Edit ${group.name || "tab group"}`}
+      style={{ left: position.x, top: position.y }}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <label className="tab-group-name-field">
+        <span>Group name</span>
+        <input
+          autoFocus
+          value={name}
+          maxLength={48}
+          onChange={(event) => setName(event.target.value)}
+          onBlur={saveName}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              saveName();
+              close();
+            }
+            if (event.key === "Escape") close();
+          }}
+        />
+      </label>
+      <div className="tab-group-colors" aria-label="Group colour">
+        {TAB_GROUP_COLORS.map((color) => (
+          <button
+            type="button"
+            className={`tab-group-color group-${color} ${group.color === color ? "selected" : ""}`}
+            key={color}
+            aria-label={`${color} group colour`}
+            aria-pressed={group.color === color}
+            onClick={() =>
+              void tabOrganizationApi().updateTabGroup?.(group.id, { color })
+            }
+          >
+            {group.color === color && <span aria-hidden="true">✓</span>}
+          </button>
+        ))}
+      </div>
+      <div className="tab-group-menu-divider" />
+      <button
+        type="button"
+        role="menuitemcheckbox"
+        aria-checked={group.saved}
+        onClick={() =>
+          void tabOrganizationApi().updateTabGroup?.(group.id, {
+            saved: !group.saved,
+          })
+        }
+      >
+        <Icon name="bookmark" />
+        {group.saved ? "Remove from saved groups" : "Save group"}
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        onClick={() => {
+          void tabOrganizationApi().deleteTabGroup?.(group.id, false);
+          close();
+        }}
+      >
+        <Icon name="group" />
+        Ungroup tabs
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        className="destructive"
+        onClick={() => {
+          void tabOrganizationApi().deleteTabGroup?.(group.id, true);
+          close();
+        }}
+      >
+        <Icon name="close" />
+        Close group
+      </button>
+    </section>
+  );
+}
+
+function TabSelectionBar({
   snapshot,
+  selectedIds,
+}: {
+  snapshot: BrowserSnapshot;
+  selectedIds: string[];
+}) {
+  const selectedTabs = snapshot.tabs.filter((tab) =>
+    selectedIds.includes(tab.id),
+  );
+  const allPinned = selectedTabs.every(
+    (tab) => (tab as OrganisedTabSnapshot).pinned,
+  );
+  const move = (delta: number) => {
+    const api = tabOrganizationApi();
+    if (!api.moveTabs || selectedTabs.length === 0) return;
+    const indexes = selectedTabs.map((tab) =>
+      snapshot.tabs.findIndex((item) => item.id === tab.id),
+    );
+    const edge = delta < 0 ? Math.min(...indexes) : Math.max(...indexes);
+    const target = Math.max(
+      0,
+      Math.min(snapshot.tabs.length - selectedTabs.length, edge + delta),
+    );
+    void api.moveTabs(selectedIds, target);
+  };
+  const closeTabs = () => {
+    const api = tabOrganizationApi();
+    if (api.closeTabs) void api.closeTabs(selectedIds);
+    else selectedIds.forEach((id) => void window.chromecraft.closeTab(id));
+  };
+  return (
+    <div
+      className="tab-selection-bar"
+      role="toolbar"
+      aria-label="Selected tabs"
+    >
+      <strong>{selectedIds.length} selected</strong>
+      <button
+        type="button"
+        onClick={() =>
+          void tabOrganizationApi().createTabGroup?.(
+            selectedIds,
+            `Group ${getTabGroups(snapshot).length + 1}`,
+            "blue",
+          )
+        }
+      >
+        <Icon name="group" />
+        <span>Group</span>
+      </button>
+      <button
+        type="button"
+        onClick={() =>
+          void tabOrganizationApi().setTabsPinned?.(selectedIds, !allPinned)
+        }
+        aria-label={`${allPinned ? "Unpin" : "Pin"} selected tabs`}
+      >
+        <Icon name="pin" />
+        <span>{allPinned ? "Unpin" : "Pin"}</span>
+      </button>
+      <button
+        type="button"
+        onClick={() => move(-1)}
+        aria-label="Move selected tabs left"
+      >
+        <Icon name="chevronLeft" />
+      </button>
+      <button
+        type="button"
+        onClick={() => move(1)}
+        aria-label="Move selected tabs right"
+      >
+        <Icon name="chevronRight" />
+      </button>
+      <button
+        type="button"
+        onClick={closeTabs}
+        aria-label="Close selected tabs"
+      >
+        <Icon name="close" />
+      </button>
+      <button
+        type="button"
+        onClick={() => void tabOrganizationApi().selectTabs?.([], "replace")}
+        aria-label="Clear tab selection"
+      >
+        Done
+      </button>
+    </div>
+  );
+}
+
+export function TabOverview({
+  snapshot,
+  data,
+  close,
+}: {
+  snapshot: BrowserSnapshot;
+  data: BrowserDataSnapshot;
+  close: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [focusedIndex, setFocusedIndex] = useState(0);
+  const resultsRef = useRef<HTMLDivElement>(null);
+  const needle = query.trim().toLocaleLowerCase();
+  const groups = getTabGroups(snapshot);
+  const openTabs = snapshot.tabs.filter((tab) =>
+    `${tabLabel(tab)} ${tab.url}`.toLocaleLowerCase().includes(needle),
+  );
+  const closedTabs = data.recentlyClosed
+    .filter((tab) =>
+      `${tab.title} ${tab.url}`.toLocaleLowerCase().includes(needle),
+    )
+    .slice(0, needle ? 30 : 8);
+  const closedWindows = getRecentlyClosedWindows(data).filter((item) =>
+    `${item.title ?? ""} ${item.tabs.map((tab) => `${tab.title} ${tab.url}`).join(" ")}`
+      .toLocaleLowerCase()
+      .includes(needle),
+  );
+  const savedGroups = data.savedTabGroups.filter((group) =>
+    `${group.name} ${group.tabs.map((tab) => `${tab.title} ${tab.url}`).join(" ")}`
+      .toLocaleLowerCase()
+      .includes(needle),
+  );
+  const resultCount =
+    openTabs.length +
+    closedTabs.length +
+    closedWindows.length +
+    savedGroups.length;
+  useEffect(() => {
+    resultsRef.current
+      ?.querySelector(`[data-overview-index="${focusedIndex}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+  }, [focusedIndex]);
+  const runAtIndex = (index: number) => {
+    const actions: Array<() => void> = [
+      ...openTabs.map((tab) => () => {
+        void window.chromecraft.activateTab(tab.id);
+        close();
+      }),
+      ...savedGroups.map((group) => () => {
+        const openGroup = groups.find((item) => item.id === group.id);
+        if (openGroup) {
+          void tabOrganizationApi().updateTabGroup?.(group.id, {
+            collapsed: false,
+          });
+          const tab = snapshot.tabs.find(
+            (item) => (item as OrganisedTabSnapshot).groupId === group.id,
+          );
+          if (tab) void window.chromecraft.activateTab(tab.id);
+        } else {
+          void tabOrganizationApi().restoreSavedTabGroup?.(group.id);
+        }
+        close();
+      }),
+      ...closedTabs.map((tab) => () => {
+        void tabOrganizationApi().reopenClosedTab(tab.id);
+        close();
+      }),
+      ...closedWindows.map((item) => () => {
+        void tabOrganizationApi().reopenClosedWindow?.(item.id);
+        close();
+      }),
+    ];
+    actions[index]?.();
+  };
+  let rowIndex = -1;
+  const nextRowIndex = () => ++rowIndex;
+  return (
+    <section
+      className="tab-overview"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="tab-overview-title"
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") close();
+      }}
+    >
+      <header className="tab-overview-header">
+        <div>
+          <span className="tab-overview-icon">
+            <Icon name="tabSearch" />
+          </span>
+          <span>
+            <strong id="tab-overview-title">Tabs</strong>
+            <small>Find, restore and organise</small>
+          </span>
+        </div>
+        <button type="button" onClick={close} aria-label="Close tab search">
+          <Icon name="close" />
+        </button>
+      </header>
+      <label className="tab-overview-search">
+        <Icon name="search" />
+        <input
+          autoFocus
+          value={query}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            setFocusedIndex(0);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "ArrowDown") {
+              event.preventDefault();
+              setFocusedIndex((value) => Math.min(resultCount - 1, value + 1));
+            }
+            if (event.key === "ArrowUp") {
+              event.preventDefault();
+              setFocusedIndex((value) => Math.max(0, value - 1));
+            }
+            if (event.key === "Enter") {
+              event.preventDefault();
+              runAtIndex(focusedIndex);
+            }
+          }}
+          placeholder="Search open and recently closed tabs"
+          aria-label="Search tabs"
+          role="combobox"
+          aria-expanded="true"
+          aria-autocomplete="list"
+          aria-controls="tab-overview-results"
+          aria-activedescendant={
+            resultCount > 0 ? `tab-overview-result-${focusedIndex}` : undefined
+          }
+        />
+        {query && (
+          <button
+            type="button"
+            onClick={() => setQuery("")}
+            aria-label="Clear tab search"
+          >
+            <Icon name="close" />
+          </button>
+        )}
+      </label>
+      <div
+        id="tab-overview-results"
+        ref={resultsRef}
+        className="tab-overview-results"
+        role="listbox"
+        aria-label="Tab search results"
+      >
+        {openTabs.length > 0 && (
+          <section className="tab-overview-section">
+            <h3>
+              Open tabs <span>{openTabs.length}</span>
+            </h3>
+            {openTabs.map((tab) => {
+              const enhanced = tab as OrganisedTabSnapshot;
+              const group = groups.find((item) => item.id === enhanced.groupId);
+              const index = nextRowIndex();
+              return (
+                <button
+                  type="button"
+                  role="option"
+                  id={`tab-overview-result-${index}`}
+                  data-overview-index={index}
+                  aria-selected={focusedIndex === index}
+                  className={focusedIndex === index ? "keyboard-focused" : ""}
+                  key={tab.id}
+                  onMouseEnter={() => setFocusedIndex(index)}
+                  onClick={() => runAtIndex(index)}
+                >
+                  <span className="tab-overview-favicon">
+                    {hostLabel(tab.url).slice(0, 1).toUpperCase() || "C"}
+                  </span>
+                  <span className="tab-overview-copy">
+                    <strong>{tabLabel(tab)}</strong>
+                    <small>
+                      {group ? `${group.name} · ` : ""}
+                      {hostLabel(tab.url)}
+                    </small>
+                  </span>
+                  {enhanced.isAudible && (
+                    <span className="tab-overview-status">
+                      <Icon name="volumeUp" />
+                    </span>
+                  )}
+                  {formatTabMemory(enhanced.memoryBytes) && (
+                    <span className="tab-overview-memory">
+                      {formatTabMemory(enhanced.memoryBytes)}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </section>
+        )}
+        {savedGroups.length > 0 && (
+          <section className="tab-overview-section saved-groups-section">
+            <h3>
+              Saved groups <span>{savedGroups.length}</span>
+            </h3>
+            {savedGroups.map((group) => {
+              const index = nextRowIndex();
+              const count = group.tabs.length;
+              return (
+                <button
+                  type="button"
+                  role="option"
+                  id={`tab-overview-result-${index}`}
+                  data-overview-index={index}
+                  aria-selected={focusedIndex === index}
+                  className={focusedIndex === index ? "keyboard-focused" : ""}
+                  key={group.id}
+                  onMouseEnter={() => setFocusedIndex(index)}
+                  onClick={() => runAtIndex(index)}
+                >
+                  <span
+                    className={`tab-overview-group-icon group-${group.color}`}
+                  >
+                    <Icon name="group" />
+                  </span>
+                  <span className="tab-overview-copy">
+                    <strong>{group.name}</strong>
+                    <small>
+                      {count} open {count === 1 ? "tab" : "tabs"}
+                    </small>
+                  </span>
+                  <Icon name="chevronRight" />
+                </button>
+              );
+            })}
+          </section>
+        )}
+        {closedTabs.length > 0 && (
+          <section className="tab-overview-section">
+            <h3>
+              Recently closed <span>{closedTabs.length}</span>
+            </h3>
+            {closedTabs.map((tab) => {
+              const index = nextRowIndex();
+              return (
+                <button
+                  type="button"
+                  role="option"
+                  id={`tab-overview-result-${index}`}
+                  data-overview-index={index}
+                  aria-selected={focusedIndex === index}
+                  className={focusedIndex === index ? "keyboard-focused" : ""}
+                  key={tab.id}
+                  onMouseEnter={() => setFocusedIndex(index)}
+                  onClick={() => runAtIndex(index)}
+                >
+                  <span className="tab-overview-favicon muted">
+                    {hostLabel(tab.url).slice(0, 1).toUpperCase() || "C"}
+                  </span>
+                  <span className="tab-overview-copy">
+                    <strong>{tab.title || hostLabel(tab.url)}</strong>
+                    <small>
+                      {tab.groupName ? `${tab.groupName} · ` : ""}
+                      {hostLabel(tab.url)}
+                    </small>
+                  </span>
+                  <span className="tab-overview-time">
+                    {formatRelativeTime(tab.closedAt)}
+                  </span>
+                </button>
+              );
+            })}
+          </section>
+        )}
+        {closedWindows.length > 0 && (
+          <section className="tab-overview-section">
+            <h3>
+              Closed windows <span>{closedWindows.length}</span>
+            </h3>
+            {closedWindows.map((item) => {
+              const index = nextRowIndex();
+              return (
+                <button
+                  type="button"
+                  role="option"
+                  id={`tab-overview-result-${index}`}
+                  data-overview-index={index}
+                  aria-selected={focusedIndex === index}
+                  className={focusedIndex === index ? "keyboard-focused" : ""}
+                  key={item.id}
+                  onMouseEnter={() => setFocusedIndex(index)}
+                  onClick={() => runAtIndex(index)}
+                >
+                  <span className="tab-overview-group-icon">
+                    <Icon name="open" />
+                  </span>
+                  <span className="tab-overview-copy">
+                    <strong>{item.title || "Closed window"}</strong>
+                    <small>
+                      {item.tabs.length}{" "}
+                      {item.tabs.length === 1 ? "tab" : "tabs"}
+                    </small>
+                  </span>
+                  <span className="tab-overview-restore">Restore</span>
+                </button>
+              );
+            })}
+          </section>
+        )}
+        {resultCount === 0 && (
+          <div className="tab-overview-empty">
+            <span>
+              <Icon name="search" />
+            </span>
+            <strong>No matching tabs</strong>
+            <small>Try another title or website address.</small>
+          </div>
+        )}
+      </div>
+      <footer className="tab-overview-footer">
+        <span>
+          <kbd>↑</kbd>
+          <kbd>↓</kbd> to move
+        </span>
+        <span>
+          <kbd>Enter</kbd> to open
+        </span>
+        <span>
+          <kbd>Esc</kbd> to close
+        </span>
+      </footer>
+    </section>
+  );
+}
+
+export function TabStrip({
+  snapshot,
+  data,
   settingsTabId,
   onMenu,
   brandMenuOpen,
@@ -500,6 +1339,7 @@ function TabStrip({
   onHoverCardOpenChange,
 }: {
   snapshot: BrowserSnapshot;
+  data: BrowserDataSnapshot;
   settingsTabId: string | null;
   onMenu: (event: MouseEvent, tab: BrowserTabSnapshot) => void;
   brandMenuOpen: boolean;
@@ -510,11 +1350,21 @@ function TabStrip({
 }) {
   const sidebarAttached = snapshot.preferences.sidebarAttached;
   const sidebarAction = sidebarMenuActionLabel(sidebarAttached);
+  const groups = getTabGroups(snapshot);
+  const selectedIds = getSelectedTabIds(snapshot);
   const [hoverPreview, setHoverPreview] = useState<{
     tab: BrowserTabSnapshot;
     x: number;
     y: number;
   } | null>(null);
+  const [overviewOpen, setOverviewOpen] = useState(false);
+  const [groupMenu, setGroupMenu] = useState<{
+    group: TabGroupSnapshotLike;
+    position: { x: number; y: number };
+  } | null>(null);
+  const [draggedTabIds, setDraggedTabIds] = useState<string[]>([]);
+  const draggedTabIdsRef = useRef<string[]>([]);
+  const [dragOverGroupId, setDragOverGroupId] = useState<string | null>(null);
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const updateHoverPreview = (
     tab: BrowserTabSnapshot | null,
@@ -523,7 +1373,6 @@ function TabStrip({
     if (hoverTimer.current) clearTimeout(hoverTimer.current);
     if (!tab || !anchor) {
       setHoverPreview(null);
-      onHoverCardOpenChange(false);
       return;
     }
     hoverTimer.current = setTimeout(() => {
@@ -533,7 +1382,6 @@ function TabStrip({
         x: Math.max(8, Math.min(anchor.left, window.innerWidth - width - 8)),
         y: anchor.bottom + 8,
       });
-      onHoverCardOpenChange(true);
     }, 320);
   };
   useEffect(
@@ -542,8 +1390,209 @@ function TabStrip({
     },
     [],
   );
+  useEffect(() => {
+    onHoverCardOpenChange(
+      Boolean(hoverPreview || overviewOpen || groupMenu || selectedIds.length),
+    );
+  }, [
+    groupMenu,
+    hoverPreview,
+    onHoverCardOpenChange,
+    overviewOpen,
+    selectedIds.length,
+  ]);
+  useEffect(() => {
+    if (!overviewOpen && !groupMenu) return;
+    const dismiss = (event: globalThis.PointerEvent) => {
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest(
+          ".tab-overview, .tab-search-button, .tab-group-menu, .tab-group-pill",
+        )
+      ) {
+        return;
+      }
+      setOverviewOpen(false);
+      setGroupMenu(null);
+    };
+    addEventListener("pointerdown", dismiss, { capture: true });
+    return () => removeEventListener("pointerdown", dismiss, { capture: true });
+  }, [groupMenu, overviewOpen]);
+  useEffect(() => {
+    const shortcut = (event: KeyboardEvent) => {
+      if (
+        (event.ctrlKey || event.metaKey) &&
+        event.shiftKey &&
+        event.key.toLowerCase() === "a"
+      ) {
+        event.preventDefault();
+        setOverviewOpen((open) => !open);
+      }
+    };
+    addEventListener("keydown", shortcut);
+    return () => removeEventListener("keydown", shortcut);
+  }, []);
+  const renderedGroups = new Set<string>();
+  const tabNodes: ReactNode[] = [];
+  const visibleGroupMenu = groupMenu
+    ? {
+        ...groupMenu,
+        group:
+          groups.find((group) => group.id === groupMenu.group.id) ??
+          groupMenu.group,
+      }
+    : null;
+  const startTabDrag = (
+    event: ReactDragEvent<HTMLDivElement>,
+    tab: BrowserTabSnapshot,
+  ) => {
+    const ids = tabDragIds(tab.id, selectedIds);
+    draggedTabIdsRef.current = ids;
+    setDraggedTabIds(ids);
+    setHoverPreview(null);
+    writeTabDragPayload(event.dataTransfer, ids);
+  };
+  const finishTabDrag = () => {
+    draggedTabIdsRef.current = [];
+    setDraggedTabIds([]);
+    setDragOverGroupId(null);
+  };
+  for (const tab of snapshot.tabs) {
+    const organisedTab = tab as OrganisedTabSnapshot;
+    const group = groups.find((item) => item.id === organisedTab.groupId);
+    if (!group) {
+      tabNodes.push(
+        <TabButton
+          active={tab.id === snapshot.activeTabId}
+          selected={selectedIds.includes(tab.id)}
+          key={tab.id}
+          tab={tab}
+          settings={tab.id === settingsTabId}
+          dragging={draggedTabIds.includes(tab.id)}
+          onMenu={onMenu}
+          onDragStart={startTabDrag}
+          onDragEnd={finishTabDrag}
+          onHoverChange={updateHoverPreview}
+        />,
+      );
+      continue;
+    }
+    if (renderedGroups.has(group.id)) continue;
+    renderedGroups.add(group.id);
+    const groupTabs = snapshot.tabs.filter(
+      (item) => (item as OrganisedTabSnapshot).groupId === group.id,
+    );
+    tabNodes.push(
+      <div
+        className={`tab-group group-${group.color} ${group.collapsed ? "collapsed" : ""} ${dragOverGroupId === group.id ? "drop-target" : ""}`}
+        role="group"
+        aria-label={`${group.name}, ${groupTabs.length} tabs`}
+        data-drop-label={`Drop tabs into ${group.name || "Tab group"}`}
+        key={`group-${group.id}`}
+        onDragEnter={(event) => {
+          if (draggedTabIdsRef.current.length === 0) return;
+          event.preventDefault();
+          setDragOverGroupId(group.id);
+        }}
+        onDragOver={(event) => {
+          if (draggedTabIdsRef.current.length === 0) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "move";
+          if (dragOverGroupId !== group.id) setDragOverGroupId(group.id);
+        }}
+        onDragLeave={(event) => {
+          const nextTarget = event.relatedTarget;
+          if (
+            nextTarget instanceof Node &&
+            event.currentTarget.contains(nextTarget)
+          ) {
+            return;
+          }
+          if (dragOverGroupId === group.id) setDragOverGroupId(null);
+        }}
+        onDrop={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          const ids =
+            draggedTabIdsRef.current.length > 0
+              ? draggedTabIdsRef.current
+              : readTabDragPayload(event.dataTransfer);
+          finishTabDrag();
+          const moveTabs = tabOrganizationApi().moveTabs;
+          if (!moveTabs || ids.length === 0) return;
+          void performTabGroupDrop({
+            draggedTabIds: ids,
+            groupId: group.id,
+            tabs: snapshot.tabs,
+            moveTabs,
+          });
+        }}
+      >
+        <TabGroupPill
+          group={group}
+          tabCount={groupTabs.length}
+          active={groupTabs.some((item) => item.id === snapshot.activeTabId)}
+          onMenu={(nextGroup, anchor) => {
+            setOverviewOpen(false);
+            setGroupMenu({
+              group: nextGroup,
+              position: {
+                x: Math.max(8, Math.min(anchor.left, innerWidth - 304)),
+                y: anchor.bottom + 6,
+              },
+            });
+          }}
+        />
+        {!group.collapsed &&
+          groupTabs.map((item) => (
+            <TabButton
+              active={item.id === snapshot.activeTabId}
+              selected={selectedIds.includes(item.id)}
+              key={item.id}
+              tab={item}
+              settings={item.id === settingsTabId}
+              dragging={draggedTabIds.includes(item.id)}
+              onMenu={onMenu}
+              onDragStart={startTabDrag}
+              onDragEnd={finishTabDrag}
+              onHoverChange={updateHoverPreview}
+            />
+          ))}
+      </div>,
+    );
+  }
   return (
-    <div className="tab-strip">
+    <div
+      className="tab-strip"
+      onKeyDown={(event) => {
+        if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key))
+          return;
+        const target = event.target;
+        if (!(target instanceof Element) || !target.closest(".tab-target"))
+          return;
+        const tabs = Array.from(
+          event.currentTarget.querySelectorAll<HTMLButtonElement>(
+            ".tab-target",
+          ),
+        );
+        const current = tabs.indexOf(
+          target.closest(".tab-target") as HTMLButtonElement,
+        );
+        if (current < 0) return;
+        event.preventDefault();
+        const next =
+          event.key === "Home"
+            ? 0
+            : event.key === "End"
+              ? tabs.length - 1
+              : (current +
+                  (event.key === "ArrowRight" ? 1 : -1) +
+                  tabs.length) %
+                tabs.length;
+        tabs[next]?.focus();
+      }}
+    >
       <div className="brand-menu-anchor">
         <button
           type="button"
@@ -617,16 +1666,7 @@ function TabStrip({
         )}
       </div>
       <div className="tab-scroller" role="tablist" aria-label="Open tabs">
-        {snapshot.tabs.map((tab) => (
-          <TabButton
-            active={tab.id === snapshot.activeTabId}
-            key={tab.id}
-            tab={tab}
-            settings={tab.id === settingsTabId}
-            onMenu={onMenu}
-            onHoverChange={updateHoverPreview}
-          />
-        ))}
+        {tabNodes}
         <button
           type="button"
           className="new-tab-button"
@@ -637,6 +1677,24 @@ function TabStrip({
           <Icon name="add" />
         </button>
       </div>
+      <button
+        type="button"
+        className={`tab-search-button ${overviewOpen ? "selected" : ""}`}
+        aria-label="Search tabs"
+        aria-haspopup="dialog"
+        aria-expanded={overviewOpen}
+        title="Search tabs (Ctrl+Shift+A)"
+        onClick={(event) => {
+          event.stopPropagation();
+          setGroupMenu(null);
+          setOverviewOpen((open) => !open);
+        }}
+      >
+        <Icon name="tabSearch" />
+      </button>
+      {selectedIds.length > 0 && (
+        <TabSelectionBar snapshot={snapshot} selectedIds={selectedIds} />
+      )}
       <span className="window-drag-region" aria-hidden="true" />
       {hoverPreview && (
         <aside
@@ -644,14 +1702,61 @@ function TabStrip({
           role="tooltip"
           style={{ left: hoverPreview.x, top: hoverPreview.y }}
         >
-          <span className="tab-hover-card-preview" aria-hidden="true">
-            {hostLabel(hoverPreview.tab.url).slice(0, 1).toUpperCase() || "C"}
-          </span>
+          {(hoverPreview.tab as OrganisedTabSnapshot).thumbnailDataUrl ? (
+            <img
+              className="tab-hover-card-thumbnail"
+              src={
+                (hoverPreview.tab as OrganisedTabSnapshot).thumbnailDataUrl ??
+                ""
+              }
+              alt=""
+            />
+          ) : (
+            <span className="tab-hover-card-preview" aria-hidden="true">
+              {hostLabel(hoverPreview.tab.url).slice(0, 1).toUpperCase() || "C"}
+            </span>
+          )}
           <span className="tab-hover-card-copy">
             <strong>{tabHoverCardContent(hoverPreview.tab).title}</strong>
             <small>{tabHoverCardContent(hoverPreview.tab).host}</small>
+            <span className="tab-hover-card-meta">
+              {(hoverPreview.tab as OrganisedTabSnapshot).isAudible && (
+                <span>
+                  <Icon name="volumeUp" /> Playing audio
+                </span>
+              )}
+              {(hoverPreview.tab as OrganisedTabSnapshot).isMuted && (
+                <span>
+                  <Icon name="volumeOff" /> Muted
+                </span>
+              )}
+              {formatTabMemory(
+                (hoverPreview.tab as OrganisedTabSnapshot).memoryBytes,
+              ) && (
+                <span>
+                  <Icon name="memory" />{" "}
+                  {formatTabMemory(
+                    (hoverPreview.tab as OrganisedTabSnapshot).memoryBytes,
+                  )}
+                </span>
+              )}
+            </span>
           </span>
         </aside>
+      )}
+      {overviewOpen && (
+        <TabOverview
+          snapshot={snapshot}
+          data={data}
+          close={() => setOverviewOpen(false)}
+        />
+      )}
+      {visibleGroupMenu && (
+        <TabGroupMenu
+          group={visibleGroupMenu.group}
+          position={visibleGroupMenu.position}
+          close={() => setGroupMenu(null)}
+        />
       )}
     </div>
   );
@@ -716,12 +1821,20 @@ const Omnibox = memo(function Omnibox({
   data,
   remoteSuggestionsEnabled,
   hyperdriveMode,
+  siteControl,
+  siteControlsOpen,
+  onToggleSiteControls,
+  onManageSiteSettings,
   onExpandedChange,
 }: {
   tab: BrowserTabSnapshot;
   data: BrowserDataSnapshot;
   remoteSuggestionsEnabled: boolean;
   hyperdriveMode: HyperdriveMode;
+  siteControl: WebsiteControlSnapshot | null;
+  siteControlsOpen: boolean;
+  onToggleSiteControls: () => void;
+  onManageSiteSettings: () => void;
   onExpandedChange: (expanded: boolean) => void;
 }) {
   const [value, setValue] = useState(tab.url);
@@ -861,9 +1974,29 @@ const Omnibox = memo(function Omnibox({
         else commit(value);
       }}
     >
-      <span className="omnibox-leading">
-        <Icon name="search" />
-      </span>
+      {siteControl ? (
+        <button
+          type="button"
+          className="omnibox-site-button"
+          data-open={siteControlsOpen}
+          aria-label={`Open page actions for ${siteControl.hostname}`}
+          aria-haspopup="dialog"
+          aria-expanded={siteControlsOpen}
+          title="Page information and actions"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={(event) => {
+            event.stopPropagation();
+            setDismissed(true);
+            onToggleSiteControls();
+          }}
+        >
+          <Icon name="info" />
+        </button>
+      ) : (
+        <span className="omnibox-leading">
+          <Icon name="search" />
+        </span>
+      )}
       <input
         ref={inputRef}
         className="omnibox"
@@ -948,6 +2081,16 @@ const Omnibox = memo(function Omnibox({
         placeholder="Search or enter an address"
         spellCheck={false}
       />
+      {siteControlsOpen && siteControl && (
+        <PageActionsPanel
+          tabId={tab.id}
+          pageTitle={tab.title}
+          pageUrl={tab.url}
+          site={siteControl}
+          close={onToggleSiteControls}
+          manageSecurity={onManageSiteSettings}
+        />
+      )}
       {expanded && (
         <div
           className="omnibox-suggestions"
@@ -1030,6 +2173,10 @@ function Toolbar({
   onToggleExtensionsMenu,
   onManageExtensions,
   onToggleExtensionPopup,
+  siteControl,
+  siteControlsOpen,
+  onToggleSiteControls,
+  onManageSiteSettings,
   onOmniboxExpandedChange,
 }: {
   tab: BrowserTabSnapshot;
@@ -1046,6 +2193,10 @@ function Toolbar({
     extension: BrowserExtensionSnapshot,
     anchor: DOMRect,
   ) => void;
+  siteControl: WebsiteControlSnapshot | null;
+  siteControlsOpen: boolean;
+  onToggleSiteControls: () => void;
+  onManageSiteSettings: () => void;
   onOmniboxExpandedChange: (expanded: boolean) => void;
 }) {
   const canBookmark = /^https?:\/\//.test(tab.url);
@@ -1094,6 +2245,10 @@ function Toolbar({
           snapshot.preferences.remoteSearchSuggestionsEnabled
         }
         hyperdriveMode={snapshot.preferences.hyperdriveMode}
+        siteControl={siteControl}
+        siteControlsOpen={siteControlsOpen}
+        onToggleSiteControls={onToggleSiteControls}
+        onManageSiteSettings={onManageSiteSettings}
         onExpandedChange={onOmniboxExpandedChange}
       />
       <div className="toolbar-actions">
@@ -1615,6 +2770,21 @@ export const fullSettingsSearchItems: FullSettingsSearchItem[] = [
     title: "Live search suggestions",
     description: "Share typed search text with DuckDuckGo for suggestions.",
     keywords: "duckduckgo remote suggestions autocomplete privacy search",
+  },
+  {
+    id: "secure-dns",
+    category: "privacy",
+    title: "Secure DNS",
+    description: "Choose the DNS resolver Chromecraft uses for websites.",
+    keywords: "dns doh resolver cloudflare google quad9 network privacy",
+  },
+  {
+    id: "website-permissions",
+    category: "privacy",
+    title: "Website permissions",
+    description: "Review camera, microphone, network and content exceptions.",
+    keywords:
+      "sites permissions camera microphone location notifications popups clipboard autoplay downloads network javascript exceptions",
   },
   {
     id: "new-tab-theme",
@@ -2292,14 +3462,18 @@ export function QuickSettingsPanel({
 export function FullSettingsPage({
   snapshot,
   hyperdrive,
+  websiteControls = emptyWebsiteControls,
   smartDownloads = emptySmartDownloads,
   openSmartDownloadsRequest = 0,
+  openSitePermissionsRequest = 0,
   openExtensionsPage,
 }: {
   snapshot: BrowserSnapshot;
   hyperdrive: HyperdriveSnapshot;
+  websiteControls?: WebsiteControlsSnapshot;
   smartDownloads?: SmartDownloadsSnapshot;
   openSmartDownloadsRequest?: number;
+  openSitePermissionsRequest?: number;
   openExtensionsPage: () => void;
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
@@ -2325,6 +3499,12 @@ export function FullSettingsPage({
     setSelectedCategory("downloads");
     setSmartDownloadsOpen(true);
   }, [openSmartDownloadsRequest]);
+  useEffect(() => {
+    if (openSitePermissionsRequest <= 0) return;
+    setSelectedCategory("privacy");
+    setSmartDownloadsOpen(false);
+    setHighlightedSettingId("website-permissions");
+  }, [openSitePermissionsRequest]);
   useLayoutEffect(() => {
     if (!highlightedSettingId) return;
     const target = document.getElementById(`setting-${highlightedSettingId}`);
@@ -2473,76 +3653,102 @@ export function FullSettingsPage({
     );
   } else if (selectedCategory === "privacy") {
     categoryContent = (
-      <section
-        className="settings-card"
-        aria-labelledby="privacy-controls-title"
-      >
-        <header className="settings-card-header">
-          <span className="settings-card-icon">
-            <Icon name="shield" />
-          </span>
-          <span>
-            <h3 id="privacy-controls-title">Protection &amp; suggestions</h3>
-            <p>
-              Control content blocking and when typed text leaves this device.
-            </p>
-          </span>
-        </header>
-        <label
-          id="setting-ublock-origin"
-          data-setting-id="ublock-origin"
-          className={settingTargetClass("ublock-origin", highlightedSettingId)}
+      <>
+        <section
+          className="settings-card"
+          aria-labelledby="privacy-controls-title"
         >
-          <span className="setting-copy">
-            <span className="setting-title">uBlock Origin</span>
-            <small className="setting-description">
-              {ublockLabel(snapshot.ublock)}
-              {snapshot.ublock.version
-                ? ` · Version ${snapshot.ublock.version}`
-                : " · Preinstalled content blocking"}
-            </small>
-          </span>
-          <input
-            type="checkbox"
-            role="switch"
-            className="switch-input"
-            aria-label="uBlock Origin"
-            checked={snapshot.ublock.enabled}
-            disabled={snapshot.ublock.initializing}
-            onChange={(event) =>
-              void window.chromecraft.setUblockEnabled(event.target.checked)
-            }
-          />
-        </label>
-        <label
-          id="setting-live-search-suggestions"
-          data-setting-id="live-search-suggestions"
+          <header className="settings-card-header">
+            <span className="settings-card-icon">
+              <Icon name="shield" />
+            </span>
+            <span>
+              <h3 id="privacy-controls-title">Protection &amp; suggestions</h3>
+              <p>
+                Control content blocking and when typed text leaves this device.
+              </p>
+            </span>
+          </header>
+          <label
+            id="setting-ublock-origin"
+            data-setting-id="ublock-origin"
+            className={settingTargetClass(
+              "ublock-origin",
+              highlightedSettingId,
+            )}
+          >
+            <span className="setting-copy">
+              <span className="setting-title">uBlock Origin</span>
+              <small className="setting-description">
+                {ublockLabel(snapshot.ublock)}
+                {snapshot.ublock.version
+                  ? ` · Version ${snapshot.ublock.version}`
+                  : " · Preinstalled content blocking"}
+              </small>
+            </span>
+            <input
+              type="checkbox"
+              role="switch"
+              className="switch-input"
+              aria-label="uBlock Origin"
+              checked={snapshot.ublock.enabled}
+              disabled={snapshot.ublock.initializing}
+              onChange={(event) =>
+                void window.chromecraft.setUblockEnabled(event.target.checked)
+              }
+            />
+          </label>
+          <label
+            id="setting-live-search-suggestions"
+            data-setting-id="live-search-suggestions"
+            className={settingTargetClass(
+              "live-search-suggestions",
+              highlightedSettingId,
+            )}
+          >
+            <span className="setting-copy">
+              <span className="setting-title">Live search suggestions</span>
+              <small className="setting-description">
+                Share typed search text with DuckDuckGo for live suggestions.
+                Local history and bookmark autocomplete stays available.
+              </small>
+            </span>
+            <input
+              type="checkbox"
+              role="switch"
+              className="switch-input"
+              aria-label="Live search suggestions"
+              checked={snapshot.preferences.remoteSearchSuggestionsEnabled}
+              onChange={(event) =>
+                void window.chromecraft.setRemoteSearchSuggestionsEnabled(
+                  event.target.checked,
+                )
+              }
+            />
+          </label>
+        </section>
+        <div
+          id="setting-secure-dns"
+          data-setting-id="secure-dns"
           className={settingTargetClass(
-            "live-search-suggestions",
+            "secure-dns",
             highlightedSettingId,
+            "website-permissions-dashboard-wrap",
           )}
         >
-          <span className="setting-copy">
-            <span className="setting-title">Live search suggestions</span>
-            <small className="setting-description">
-              Share typed search text with DuckDuckGo for live suggestions.
-              Local history and bookmark autocomplete stays available.
-            </small>
-          </span>
-          <input
-            type="checkbox"
-            role="switch"
-            className="switch-input"
-            aria-label="Live search suggestions"
-            checked={snapshot.preferences.remoteSearchSuggestionsEnabled}
-            onChange={(event) =>
-              void window.chromecraft.setRemoteSearchSuggestionsEnabled(
-                event.target.checked,
-              )
-            }
-          />
-        </label>
-      </section>
+          <div
+            id="setting-website-permissions"
+            data-setting-id="website-permissions"
+            className={settingTargetClass(
+              "website-permissions",
+              highlightedSettingId,
+              "website-permissions-dashboard-wrap",
+            )}
+          >
+            <WebsitePermissionsDashboard snapshot={websiteControls} />
+          </div>
+        </div>
+      </>
     );
   } else if (selectedCategory === "appearance") {
     categoryContent = (
@@ -4991,6 +6197,14 @@ function NewTabSurface({
           ))}
         </div>
       </section>
+      <button
+        type="button"
+        className="new-tab-offline-pages"
+        onClick={() => void window.chromecraft.openOfflinePages()}
+      >
+        <Icon name="download" />
+        Offline Pages
+      </button>
     </main>
   );
 }
@@ -5096,8 +6310,15 @@ export function App() {
     emptyYouTubeDownloads,
   );
   const [gallery, setGallery] = useState(emptyGallery);
+  const [offlinePages, setOfflinePages] = useState(emptyOfflinePages);
   const [smartDownloads, setSmartDownloads] = useState(emptySmartDownloads);
+  const [websiteControls, setWebsiteControls] = useState(emptyWebsiteControls);
+  const [activeSiteControl, setActiveSiteControl] =
+    useState<WebsiteControlSnapshot | null>(null);
+  const [siteControlsOpen, setSiteControlsOpen] = useState(false);
   const [openSmartDownloadsRequest, setOpenSmartDownloadsRequest] = useState(0);
+  const [openSitePermissionsRequest, setOpenSitePermissionsRequest] =
+    useState(0);
   const [extensions, setExtensions] = useState(emptyExtensions);
   const [updates, setUpdates] = useState<UpdateSnapshot | null>(null);
   const [tool, setTool] = useState<SidebarTool | null>(null);
@@ -5124,6 +6345,12 @@ export function App() {
   } | null>(null);
   useEffect(() => {
     let mounted = true;
+    void window.chromecraft
+      .getWebsiteControls()
+      .then((controls) => {
+        if (mounted) setWebsiteControls(controls);
+      })
+      .catch(() => undefined);
     void Promise.all([
       window.chromecraft.getSnapshot(),
       window.chromecraft.getBrowserData(),
@@ -5133,6 +6360,7 @@ export function App() {
       window.chromecraft.getUpdateSnapshot(),
       window.chromecraft.getYouTubeDownloads(),
       window.chromecraft.getGallery(),
+      window.chromecraft.getOfflinePages(),
       window.chromecraft.getSmartDownloads(),
     ]).then(
       ([
@@ -5144,6 +6372,7 @@ export function App() {
         nextUpdates,
         nextYouTubeDownloads,
         nextGallery,
+        nextOfflinePages,
         nextSmartDownloads,
       ]) => {
         if (mounted) {
@@ -5157,6 +6386,7 @@ export function App() {
           setUpdates(nextUpdates);
           setYouTubeDownloads(nextYouTubeDownloads);
           setGallery(nextGallery);
+          setOfflinePages(nextOfflinePages);
           setSmartDownloads(nextSmartDownloads);
         }
       },
@@ -5176,7 +6406,9 @@ export function App() {
       window.chromecraft.onUpdateSnapshot(setUpdates),
       window.chromecraft.onYouTubeDownloads(setYouTubeDownloads),
       window.chromecraft.onGallery(setGallery),
+      window.chromecraft.onOfflinePages(setOfflinePages),
       window.chromecraft.onSmartDownloads(setSmartDownloads),
+      window.chromecraft.onWebsiteControls(setWebsiteControls),
       window.chromecraft.onShowSmartDownloadsSettings(() => {
         void (async () => {
           const currentSettingsId = latestFullSettingsTabId.current;
@@ -5209,6 +6441,27 @@ export function App() {
     [snapshot],
   );
   useEffect(() => {
+    let current = true;
+    setSiteControlsOpen(false);
+    if (!activeTab || !/^https?:\/\//u.test(activeTab.url)) {
+      setActiveSiteControl(null);
+      return () => {
+        current = false;
+      };
+    }
+    void window.chromecraft
+      .getWebsiteControl(activeTab.url)
+      .then((site) => {
+        if (current) setActiveSiteControl(site);
+      })
+      .catch(() => {
+        if (current) setActiveSiteControl(null);
+      });
+    return () => {
+      current = false;
+    };
+  }, [activeTab?.id, activeTab?.url, websiteControls]);
+  useEffect(() => {
     latestSnapshot.current = snapshot;
   }, [snapshot]);
   useEffect(() => {
@@ -5235,6 +6488,7 @@ export function App() {
       extensionsPageOpen ||
       extensionsMenuOpen ||
       tabHoverCardOpen ||
+      siteControlsOpen ||
       tabMenu ||
       dialog,
     );
@@ -5252,6 +6506,7 @@ export function App() {
     paletteOpen,
     youtubeProgressExpanded,
     tabHoverCardOpen,
+    siteControlsOpen,
     tabMenu,
     tool,
     updatesOpen,
@@ -5277,6 +6532,7 @@ export function App() {
         setExtensionsMenuOpen(false);
         setUpdatesOpen(false);
         setPaletteOpen(false);
+        setSiteControlsOpen(false);
         setTabMenu(null);
       }
     };
@@ -5400,6 +6656,24 @@ export function App() {
       await window.chromecraft.setSidebarOpen(false);
     })();
   };
+  const openWebsitePermissions = () => {
+    setSiteControlsOpen(false);
+    void (async () => {
+      const existingTab = fullSettingsTabId
+        ? snapshot.tabs.find((tab) => tab.id === fullSettingsTabId)
+        : null;
+      if (existingTab) {
+        await window.chromecraft.activateTab(existingTab.id);
+      } else {
+        const created = await window.chromecraft.createTab();
+        latestFullSettingsTabId.current = created;
+        setFullSettingsTabId(created);
+      }
+      setOpenSitePermissionsRequest((value) => value + 1);
+      setTool(null);
+      await window.chromecraft.setSidebarOpen(false);
+    })();
+  };
   return (
     <div
       className={`app-shell ${!snapshot.preferences.sidebarAttached ? "sidebar-detached" : tool ? "sidebar-panel-open" : "sidebar-rail-only"} ${snapshot.preferences.hyperdriveMonitorOpen ? "hyperdrive-monitor-open" : ""}`}
@@ -5416,12 +6690,14 @@ export function App() {
       onClick={() => {
         setBrandMenuOpen(false);
         setExtensionsMenuOpen(false);
+        setSiteControlsOpen(false);
         setTabMenu(null);
       }}
     >
       <header className="browser-chrome">
         <TabStrip
           snapshot={snapshot}
+          data={data}
           settingsTabId={fullSettingsTabId}
           brandMenuOpen={brandMenuOpen}
           onToggleBrandMenu={() => {
@@ -5441,7 +6717,14 @@ export function App() {
           onMenu={(event, tab) => {
             event.preventDefault();
             event.stopPropagation();
-            setTabMenu({ x: 66, y: 116, tab });
+            setTabMenu({
+              x: Math.max(8, Math.min(event.clientX, window.innerWidth - 224)),
+              y: Math.max(
+                48,
+                Math.min(event.clientY, window.innerHeight - 360),
+              ),
+              tab,
+            });
           }}
         />
         <Toolbar
@@ -5471,6 +6754,10 @@ export function App() {
               height: rect.height,
             });
           }}
+          siteControl={activeSiteControl}
+          siteControlsOpen={siteControlsOpen}
+          onToggleSiteControls={() => setSiteControlsOpen((open) => !open)}
+          onManageSiteSettings={openWebsitePermissions}
           onOmniboxExpandedChange={setOmniboxExpanded}
         />
         {snapshot.preferences.showDownloadProgressInToolbar && (
@@ -5621,7 +6908,12 @@ export function App() {
           }
         }}
       />
-      {activeTab.url.startsWith("chromecraft://gallery/") ? (
+      {activeTab.url.startsWith("chromecraft://offline-pages/") ? (
+        <OfflinePagesPage
+          snapshot={offlinePages}
+          selectedId={new URL(activeTab.url).searchParams.get("page")}
+        />
+      ) : activeTab.url.startsWith("chromecraft://gallery/") ? (
         <GalleryPage
           snapshot={gallery}
           selectedId={new URL(activeTab.url).searchParams.get("video")}
@@ -5632,8 +6924,10 @@ export function App() {
         <FullSettingsPage
           snapshot={snapshot}
           hyperdrive={hyperdrive}
+          websiteControls={websiteControls}
           smartDownloads={smartDownloads}
           openSmartDownloadsRequest={openSmartDownloadsRequest}
+          openSitePermissionsRequest={openSitePermissionsRequest}
           openExtensionsPage={() => {
             setUpdatesOpen(false);
             setExtensionsPageOpen(true);
@@ -5677,6 +6971,63 @@ export function App() {
           style={{ left: tabMenu.x, top: tabMenu.y }}
           onClick={(event) => event.stopPropagation()}
         >
+          <button
+            role="menuitem"
+            onClick={() => {
+              const selected = getSelectedTabIds(snapshot).includes(
+                tabMenu.tab.id,
+              );
+              void tabOrganizationApi().selectTabs?.(
+                [tabMenu.tab.id],
+                selected ? "toggle" : "add",
+              );
+              setTabMenu(null);
+            }}
+          >
+            {getSelectedTabIds(snapshot).includes(tabMenu.tab.id)
+              ? "Remove from selection"
+              : "Select tab"}
+          </button>
+          <button
+            role="menuitem"
+            onClick={() => {
+              const selected = getSelectedTabIds(snapshot);
+              const tabIds = selected.includes(tabMenu.tab.id)
+                ? selected
+                : [tabMenu.tab.id];
+              void tabOrganizationApi().createTabGroup?.(
+                tabIds,
+                `Group ${getTabGroups(snapshot).length + 1}`,
+                "blue",
+              );
+              setTabMenu(null);
+            }}
+          >
+            {getSelectedTabIds(snapshot).length > 1 &&
+            getSelectedTabIds(snapshot).includes(tabMenu.tab.id)
+              ? "Group selected tabs"
+              : "Add tab to new group"}
+          </button>
+          <button
+            role="menuitem"
+            onClick={() => {
+              const selected = getSelectedTabIds(snapshot);
+              const tabIds = selected.includes(tabMenu.tab.id)
+                ? selected
+                : [tabMenu.tab.id];
+              const pinned =
+                (tabMenu.tab as OrganisedTabSnapshot).pinned === true;
+              void tabOrganizationApi().setTabsPinned?.(tabIds, !pinned);
+              setTabMenu(null);
+            }}
+          >
+            {(tabMenu.tab as OrganisedTabSnapshot).pinned ? "Unpin" : "Pin"}
+            {getSelectedTabIds(snapshot).length > 1 &&
+            getSelectedTabIds(snapshot).includes(tabMenu.tab.id)
+              ? " selected tabs"
+              : " tab"}
+          </button>
+          <div className="tab-menu-divider" role="separator" />
           <button
             role="menuitem"
             onClick={() => void window.chromecraft.reload(tabMenu.tab.id)}
