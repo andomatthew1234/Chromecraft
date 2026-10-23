@@ -5337,6 +5337,23 @@ export function App() {
       await window.chromecraft.setSidebarOpen(false);
     })();
   };
+  const openSmartDownloadsSettings = () => {
+    void (async () => {
+      const existingTab = fullSettingsTabId
+        ? snapshot.tabs.find((tab) => tab.id === fullSettingsTabId)
+        : null;
+      if (existingTab) {
+        await window.chromecraft.activateTab(existingTab.id);
+      } else {
+        const created = await window.chromecraft.createTab();
+        latestFullSettingsTabId.current = created;
+        setFullSettingsTabId(created);
+      }
+      setOpenSmartDownloadsRequest((value) => value + 1);
+      setTool(null);
+      await window.chromecraft.setSidebarOpen(false);
+    })();
+  };
   return (
     <div
       className={`app-shell ${!snapshot.preferences.sidebarAttached ? "sidebar-detached" : tool ? "sidebar-panel-open" : "sidebar-rail-only"} ${snapshot.preferences.hyperdriveMonitorOpen ? "hyperdrive-monitor-open" : ""}`}
@@ -5562,6 +5579,7 @@ export function App() {
         <GalleryPage
           snapshot={gallery}
           selectedId={new URL(activeTab.url).searchParams.get("video")}
+          onOpenSmartDownloads={openSmartDownloadsSettings}
         />
       ) : activeTab.id === fullSettingsTabId ? (
         <FullSettingsPage

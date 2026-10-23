@@ -513,9 +513,11 @@ function GalleryPlayer({
 export function GalleryPage({
   snapshot,
   selectedId,
+  onOpenSmartDownloads,
 }: {
   snapshot: GallerySnapshot;
   selectedId: string | null;
+  onOpenSmartDownloads: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<GallerySort>("newest");
@@ -583,18 +585,58 @@ export function GalleryPage({
           <h1>My Gallery</h1>
           <p>Your downloaded videos, ready to watch offline.</p>
         </div>
+        <div className="gallery-hero-actions">
+          <button
+            type="button"
+            className="gallery-manage-button"
+            onClick={onOpenSmartDownloads}
+          >
+            <span className="material-icon material-symbols-rounded">
+              settings
+            </span>
+            Manage My Gallery
+          </button>
+          <button
+            type="button"
+            className="gallery-delete-all"
+            onClick={deleteAll}
+            disabled={snapshot.items.length === 0 || deletingAll}
+          >
+            <span className="material-icon material-symbols-rounded">
+              delete_sweep
+            </span>
+            {deletingAll ? "Deleting…" : "Delete all"}
+          </button>
+        </div>
+      </header>
+      <section
+        className="gallery-smart-downloads-banner"
+        aria-labelledby="gallery-smart-downloads-title"
+      >
+        <span
+          className="gallery-smart-downloads-icon material-icon material-symbols-rounded"
+          aria-hidden="true"
+        >
+          smart_display
+        </span>
+        <div className="gallery-smart-downloads-copy">
+          <h2 id="gallery-smart-downloads-title">Set up Smart Downloads?</h2>
+          <p>Automatically download from your favorite creators</p>
+        </div>
         <button
           type="button"
-          className="gallery-delete-all"
-          onClick={deleteAll}
-          disabled={snapshot.items.length === 0 || deletingAll}
+          className="gallery-smart-downloads-action"
+          onClick={onOpenSmartDownloads}
         >
-          <span className="material-icon material-symbols-rounded">
-            delete_sweep
+          Check Smart Downloads
+          <span
+            className="material-icon material-symbols-rounded"
+            aria-hidden="true"
+          >
+            arrow_forward
           </span>
-          {deletingAll ? "Deleting…" : "Delete all"}
         </button>
-      </header>
+      </section>
       {actionError && (
         <div className="gallery-action-error" role="alert">
           <span className="material-icon material-symbols-rounded">error</span>

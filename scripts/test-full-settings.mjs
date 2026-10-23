@@ -202,6 +202,63 @@ async function openFullSettings(cdp) {
   );
 }
 
+async function openSmartDownloadsFromGallery(cdp) {
+  await cdp.evaluate("window.chromecraft.openGallery() ");
+  await poll(
+    () => cdp.evaluate("Boolean(document.querySelector('.gallery-page'))"),
+    Boolean,
+    "My Gallery",
+  );
+  const gallery = await cdp.evaluate(`(() => ({
+    manage: [...document.querySelectorAll('button')].some((button) =>
+      button.textContent?.includes('Manage My Gallery')
+    ),
+    bannerTitle: document.querySelector('#gallery-smart-downloads-title')?.textContent,
+    bannerSubtitle: document.querySelector('.gallery-smart-downloads-copy p')?.textContent,
+    action: document.querySelector('.gallery-smart-downloads-action')?.textContent?.trim(),
+  }))()`);
+  if (
+    !gallery.manage ||
+    gallery.bannerTitle !== "Set up Smart Downloads?" ||
+    gallery.bannerSubtitle !==
+      "Automatically download from your favorite creators" ||
+    !gallery.action?.includes("Check Smart Downloads")
+  ) {
+    throw new Error(
+      `Unexpected Smart Downloads Gallery entry points: ${JSON.stringify(gallery)}`,
+    );
+  }
+  await cdp.evaluate(
+    "document.querySelector('.gallery-smart-downloads-action')?.click()",
+  );
+  const navigation = await poll(
+    () =>
+      cdp.evaluate(`(() => ({
+        pageVisible: Boolean(document.querySelector('.smart-downloads-page')),
+        detail: document.querySelector('.full-settings-detail')?.getAttribute('data-settings-detail'),
+        heading: document.querySelector('.smart-downloads-page h2')?.textContent,
+      }))()`),
+    (state) =>
+      state.pageVisible &&
+      state.detail === "downloads" &&
+      state.heading === "Smart Downloads",
+    "Gallery to Smart Downloads Settings navigation",
+  );
+  await cdp.evaluate(`(() => {
+    document.querySelector('.smart-downloads-hero .smart-icon-button')?.click();
+    document.querySelector('[data-settings-category="general"]')?.click();
+  })()`);
+  await poll(
+    () =>
+      cdp.evaluate(
+        "document.querySelector('.full-settings-detail')?.getAttribute('data-settings-detail')",
+      ),
+    (detail) => detail === "general",
+    "General Settings after Gallery validation",
+  );
+  return { gallery, navigation };
+}
+
 async function selectCategory(cdp, category) {
   await cdp.evaluate(
     `document.querySelector('[data-settings-category="${category}"]')?.click()`,
@@ -266,7 +323,7 @@ let app;
 let expectedRestoreSession;
 try {
   app = await launch();
-  await openFullSettings(app.cdp);
+  const galleryEntryPoints = await openSmartDownloadsFromGallery(app.cdp);
 
   const initialLayout = await app.cdp.evaluate(`(() => {
     const detail = document.querySelector('.full-settings-detail');
@@ -690,6 +747,7 @@ try {
       {
         pass: true,
         initialLayout,
+        galleryEntryPoints,
         categoryChecks,
         smartDownloads,
         searchResult,

@@ -326,7 +326,7 @@ describe("SmartDownloadsStore", () => {
     });
   });
 
-  it("recovers interrupted queue work as paused after restart", async () => {
+  it("recovers interrupted queue work as pending after restart", async () => {
     const store = await initializedStore();
     const { job } = await store.enqueueVideo({
       videoId: VIDEO_A,
@@ -340,10 +340,10 @@ describe("SmartDownloadsStore", () => {
     await reloaded.initialize();
 
     expect(reloaded.snapshot.queue[0]).toMatchObject({
-      state: "paused",
+      state: "pending",
       updatedAt: now,
       retryAt: null,
-      lastError: expect.stringContaining("closed"),
+      lastError: null,
     });
   });
 

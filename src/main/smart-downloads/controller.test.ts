@@ -57,12 +57,16 @@ async function harness() {
     async ({ videoId }: { videoId: string }) => `download-${videoId}`,
   );
   const canStartAutomatic = vi.fn(() => true);
+  const setTimer = vi.fn(
+    (callback: () => void, delayMs: number) =>
+      ({ callback, delayMs, unref: () => undefined }) as never,
+  );
   const controller = new SmartDownloadsController({
     store,
     discovery: { resolveChannel, discoverRecent },
     enqueuer: { enqueueAutomatic, canStartAutomatic },
     now: () => now,
-    setTimer: (() => ({ unref: () => undefined })) as never,
+    setTimer,
     clearTimer: () => undefined,
   });
   return {
@@ -71,6 +75,7 @@ async function harness() {
     discoverRecent,
     enqueueAutomatic,
     canStartAutomatic,
+    setTimer,
     setRecent: (value: ResolvedSmartDownloadVideo[]) => {
       recent = value;
     },
@@ -185,10 +190,56 @@ describe("SmartDownloadsController", () => {
     await test.controller.addChannel("@channel", 1);
     expect(test.enqueueAutomatic).not.toHaveBeenCalled();
     expect(test.store.snapshot.queue[0].state).toBe("pending");
+    const scheduled = test.setTimer.mock.lastCall;
+    expect(scheduled?.[1]).toBe(2_500);
 
     test.canStartAutomatic.mockReturnValue(true);
-    await test.controller.resumeQueue();
-    expect(test.enqueueAutomatic).toHaveBeenCalledOnce();
+    scheduled?.[0]();
+    await vi.waitFor(() =>
+      expect(test.enqueueAutomatic).toHaveBeenCalledOnce(),
+    );
+  });
+
+  it("automatically resumes interrupted automatic work after restart", async () => {
+    const directory = await fs.mkdtemp(
+      path.join(os.tmpdir(), "chromecraft-smart-restart-"),
+    );
+    directories.push(directory);
+    const filePath = path.join(directory, "smart-downloads.json");
+    const initialStore = new SmartDownloadsStore({ filePath });
+    await initialStore.initialize();
+    await initialStore.updateConfig({ enabled: true });
+    const queued = await initialStore.enqueueVideo({
+      videoId: "aaaaaaaaaaa",
+      channelId: CHANNEL_ID,
+    });
+    await initialStore.transitionJob(queued.job.id, "preparing");
+    await initialStore.transitionJob(queued.job.id, "downloading");
+
+    const recoveredStore = new SmartDownloadsStore({ filePath });
+    const enqueueAutomatic = vi.fn(async () => "recovered-download");
+    const controller = new SmartDownloadsController({
+      store: recoveredStore,
+      discovery: {
+        resolveChannel: vi.fn(async () => resolved([])),
+        discoverRecent: vi.fn(async () => []),
+      },
+      enqueuer: {
+        canStartAutomatic: vi.fn(() => true),
+        enqueueAutomatic,
+      },
+      setTimer: (() => ({ unref: () => undefined })) as never,
+      clearTimer: () => undefined,
+    });
+
+    await controller.initialize();
+
+    expect(controller.snapshot.queuePaused).toBe(false);
+    expect(enqueueAutomatic).toHaveBeenCalledOnce();
+    expect(recoveredStore.snapshot.queue[0]).toMatchObject({
+      state: "downloading",
+      lastError: null,
+    });
   });
 
   it("does not mark a live stream seen before it becomes a replay", async () => {

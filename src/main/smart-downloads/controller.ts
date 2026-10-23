@@ -18,6 +18,7 @@ const MINUTE_MS = 60_000;
 const CHANNEL_RETRY_BASE_MS = 5 * MINUTE_MS;
 const MAX_RETRY_MS = 6 * 60 * MINUTE_MS;
 const MAX_DOWNLOAD_ATTEMPTS = 5;
+const PENDING_QUEUE_RETRY_MS = 2_500;
 type TimerHandle = ReturnType<typeof setTimeout> | number;
 
 export type InitialDownloadMode = "future" | 1 | 3 | 5;
@@ -532,6 +533,11 @@ export class SmartDownloadsController extends EventEmitter {
       ...this.options.store.snapshot.queue.flatMap((job) =>
         job.state === "failed" && job.retryAt !== null ? [job.retryAt] : [],
       ),
+      ...(this.options.store.snapshot.queue.some(
+        (job) => job.state === "pending",
+      ) && !this.queuePaused
+        ? [this.now() + PENDING_QUEUE_RETRY_MS]
+        : []),
     ];
     if (candidates.length === 0) return;
     const setTimer = this.options.setTimer ?? setTimeout;

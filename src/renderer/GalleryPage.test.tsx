@@ -1,5 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { GallerySnapshot } from "../shared/browser";
 import { GalleryPage } from "./GalleryPage";
@@ -27,7 +27,11 @@ const snapshot: GallerySnapshot = {
 describe("GalleryPage", () => {
   it("renders a local searchable library with file actions", () => {
     const markup = renderToStaticMarkup(
-      <GalleryPage snapshot={snapshot} selectedId={null} />,
+      <GalleryPage
+        snapshot={snapshot}
+        selectedId={null}
+        onOpenSmartDownloads={vi.fn()}
+      />,
     );
     expect(markup).toContain("My Gallery");
     expect(markup).toContain("A local video");
@@ -36,12 +40,22 @@ describe("GalleryPage", () => {
     expect(markup).toContain("Delete from disk");
     expect(markup).toContain("chromecraft-media://video/video-1");
     expect(markup).toContain("Delete all");
+    expect(markup).toContain("Manage My Gallery");
+    expect(markup).toContain("Set up Smart Downloads?");
+    expect(markup).toContain(
+      "Automatically download from your favorite creators",
+    );
+    expect(markup).toContain("Check Smart Downloads");
     expect(markup).not.toContain("Import downloads");
   });
 
   it("opens a selected item in the built-in player", () => {
     const markup = renderToStaticMarkup(
-      <GalleryPage snapshot={snapshot} selectedId="video-1" />,
+      <GalleryPage
+        snapshot={snapshot}
+        selectedId="video-1"
+        onOpenSmartDownloads={vi.fn()}
+      />,
     );
     expect(markup).toContain("Now playing");
     expect(markup).toContain("Picture in picture");

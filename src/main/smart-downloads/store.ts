@@ -875,12 +875,14 @@ export class SmartDownloadsStore {
       if (
         job.state === "preparing" ||
         job.state === "downloading" ||
-        job.state === "processing"
+        job.state === "processing" ||
+        (job.state === "paused" &&
+          job.lastError === "Chromecraft closed before this download finished.")
       ) {
-        job.state = "paused";
+        job.state = "pending";
         job.updatedAt = now;
         job.retryAt = null;
-        job.lastError = "Chromecraft closed before this download finished.";
+        job.lastError = null;
         changed = true;
       }
     }
