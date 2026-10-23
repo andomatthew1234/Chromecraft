@@ -84,6 +84,7 @@ describe("full settings model", () => {
       "privacy",
       "appearance",
       "downloads",
+      "ai",
       "hyperdrive",
       "extensions",
       "advanced",
@@ -130,7 +131,7 @@ describe("full settings model", () => {
 
     expect(markup).toContain('aria-label="Search settings"');
     expect(markup).toContain('aria-label="Settings categories"');
-    expect(markup.match(/data-settings-category=/g)).toHaveLength(7);
+    expect(markup.match(/data-settings-category=/g)).toHaveLength(8);
     expect(markup).toContain('data-settings-detail="general"');
     expect(markup).toContain("Restore tabs on launch");
     expect(markup).toContain("Show bookmarks bar");

@@ -1,25 +1,51 @@
 import type { TabGroupColor } from "./browser";
 
 export const AI_TOOL_IDS = ["organise-tabs"] as const;
+export const AI_PROVIDER_IDS = ["ollama", "gemini"] as const;
+export const AI_GROUPING_MODES = ["smart", "website"] as const;
 
 export type AiToolId = (typeof AI_TOOL_IDS)[number];
+export type AiProviderId = (typeof AI_PROVIDER_IDS)[number];
+export type AiGroupingMode = (typeof AI_GROUPING_MODES)[number];
 
 export type AiRunStage =
   | "idle"
   | "checking"
+  | "preparing"
+  | "connecting"
+  | "loading"
   | "thinking"
+  | "validating"
   | "ready"
   | "applying"
   | "complete"
   | "failed"
   | "cancelled";
 
-export interface OllamaModelSnapshot {
+export interface AiModelSnapshot {
   name: string;
+  displayName?: string | null;
   size: number | null;
   modifiedAt: string | null;
   family: string | null;
   parameterSize: string | null;
+  recommended?: boolean;
+}
+
+export type OllamaModelSnapshot = AiModelSnapshot;
+
+export interface AiProviderSnapshot {
+  connection: "unknown" | "connected" | "unavailable";
+  models: AiModelSnapshot[];
+  selectedModel: string | null;
+  error: string | null;
+}
+
+export interface GeminiProviderSnapshot extends AiProviderSnapshot {
+  apiKeyConfigured: boolean;
+  secureStorageAvailable: boolean;
+  sessionOnly: boolean;
+  cloudConsentGranted: boolean;
 }
 
 export interface AiRunSnapshot {
@@ -33,13 +59,32 @@ export interface AiRunSnapshot {
 }
 
 export interface AiToolsSnapshot {
-  provider: "ollama";
+  provider: AiProviderId;
+  preferredGroupingMode: AiGroupingMode;
+  eligibleTabCount: number;
+  cloudDataPreview: Array<{ title: string; hostname: string }>;
+  ollama: AiProviderSnapshot & { endpoint: "http://127.0.0.1:11434" };
+  gemini: GeminiProviderSnapshot;
+  run: AiRunSnapshot;
   endpoint: "http://127.0.0.1:11434";
   connection: "unknown" | "connected" | "unavailable";
-  models: OllamaModelSnapshot[];
+  models: AiModelSnapshot[];
   selectedModel: string | null;
   error: string | null;
-  run: AiRunSnapshot;
+}
+
+export interface OrganiseTabsRequest {
+  provider: AiProviderId;
+  model: string;
+  groupingMode: AiGroupingMode;
+  customInstructions?: string;
+  rememberCustomInstructions?: boolean;
+  cloudConsent: boolean;
+}
+
+export interface GeminiApiKeyUpdate {
+  apiKey: string;
+  persist: boolean;
 }
 
 export interface OrganiseTabsProposalGroup {
@@ -47,16 +92,19 @@ export interface OrganiseTabsProposalGroup {
   color: TabGroupColor;
   tabIds: string[];
   tabTitles: string[];
+  tabFavicons: Array<string | null>;
 }
 
 export interface OrganiseTabsProposal {
   id: string;
   toolId: "organise-tabs";
+  provider: AiProviderId | "website";
   model: string;
   createdAt: number;
   groups: OrganiseTabsProposalGroup[];
   ungroupedTabIds: string[];
   ungroupedTabTitles: string[];
+  ungroupedTabFavicons: Array<string | null>;
   preservedTabCount: number;
   summary: string;
   warnings: string[];

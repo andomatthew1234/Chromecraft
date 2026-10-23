@@ -5,9 +5,12 @@ import type {
 } from "./offline-pages";
 import type {
   AiToolApplyResult,
-  AiToolId,
-  AiToolProposal,
+  AiGroupingMode,
+  AiProviderId,
   AiToolsSnapshot,
+  GeminiApiKeyUpdate,
+  OrganiseTabsProposal,
+  OrganiseTabsRequest,
 } from "./ai-tools";
 import type {
   AssistantContextCaptured,
@@ -877,10 +880,15 @@ export interface ChromecraftApi {
   checkForUpdates(): Promise<UpdateSnapshot>;
   restartToUpdate(): Promise<void>;
   getAiTools(): Promise<AiToolsSnapshot>;
-  refreshAiModels(): Promise<AiToolsSnapshot>;
-  setAiModel(model: string): Promise<AiToolsSnapshot>;
-  previewAiTool(toolId: AiToolId): Promise<AiToolProposal>;
-  applyAiTool(proposalId: string): Promise<AiToolApplyResult>;
+  refreshAiModels(provider?: AiProviderId): Promise<AiToolsSnapshot>;
+  installRecommendedOllamaModel(): Promise<AiToolsSnapshot>;
+  setAiProvider(provider: AiProviderId): Promise<AiToolsSnapshot>;
+  setAiGroupingMode(mode: AiGroupingMode): Promise<AiToolsSnapshot>;
+  setAiModel(provider: AiProviderId, model: string): Promise<AiToolsSnapshot>;
+  setGeminiApiKey(update: GeminiApiKeyUpdate): Promise<AiToolsSnapshot>;
+  removeGeminiApiKey(): Promise<AiToolsSnapshot>;
+  previewAiTool(request: OrganiseTabsRequest): Promise<OrganiseTabsProposal>;
+  applyAiTool(proposal: OrganiseTabsProposal): Promise<AiToolApplyResult>;
   cancelAiTool(): Promise<void>;
   undoAiTool(): Promise<AiToolApplyResult>;
   getAssistantPageContext(tabId: TabId): Promise<AssistantPageContext>;

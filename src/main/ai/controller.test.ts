@@ -4,13 +4,22 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { OrganiseTabsProposal } from "../../shared/ai-tools";
-import { AiToolsController, type AiToolDefinition } from "./controller";
+import type {
+  OrganiseTabsProposal,
+  OrganiseTabsRequest,
+} from "../../shared/ai-tools";
+import { AiToolsController } from "./controller";
+import type { GeminiCredentialStore } from "./gemini-credential-store";
 import type { OllamaClient } from "./ollama-client";
+import type {
+  InternalOrganiseTabsProposal,
+  OrganiseTabsTool,
+} from "./organise-tabs-tool";
 
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(
     temporaryDirectories
       .splice(0)
@@ -24,198 +33,209 @@ async function statePath() {
   return path.join(directory, "ai-tools.json");
 }
 
-function proposal(): OrganiseTabsProposal {
+function proposal(
+  provider: "ollama" | "gemini" | "website" = "ollama",
+): OrganiseTabsProposal {
   return {
     id: "proposal-1",
     toolId: "organise-tabs",
-    model: "qwen3:4b",
+    provider,
+    model: provider === "website" ? "By website" : "qwen3:1.7b",
     createdAt: 1,
     groups: [],
     ungroupedTabIds: ["a", "b"],
     ungroupedTabTitles: ["A", "B"],
+    ungroupedTabFavicons: [null, null],
     preservedTabCount: 0,
     summary: "Leave two tabs ungrouped.",
     warnings: [],
   };
 }
 
-describe("AiToolsController", () => {
-  it("discovers models, persists selection, and runs preview/apply/undo", async () => {
-    const file = await statePath();
-    const ollama = {
-      listModels: vi.fn().mockResolvedValue([
-        {
-          name: "qwen3:4b",
-          size: 1,
-          modifiedAt: null,
-          family: "qwen3",
-          parameterSize: "4B",
-        },
-      ]),
-    } as unknown as OllamaClient;
-    const apply = vi.fn().mockResolvedValue({
-      toolId: "organise-tabs",
+function credentials(apiKey: string | null = null) {
+  let current = apiKey;
+  return {
+    secureStorageAvailable: true,
+    get: vi.fn(async () => current),
+    set: vi.fn(async (key: string) => {
+      current = key;
+    }),
+    remove: vi.fn(async () => {
+      current = null;
+    }),
+  } as unknown as GeminiCredentialStore;
+}
+
+function organiser() {
+  const prepared: InternalOrganiseTabsProposal = {
+    publicProposal: proposal(),
+    revision: "revision-1",
+  };
+  return {
+    eligibleTabCount: 2,
+    cloudDataPreview: [
+      { title: "A", hostname: "a.example" },
+      { title: "B", hostname: "b.example" },
+    ],
+    preview: vi.fn(async (request: OrganiseTabsRequest) => ({
+      ...prepared,
+      publicProposal: proposal(
+        request.groupingMode === "website" ? "website" : request.provider,
+      ),
+    })),
+    apply: vi.fn(async () => ({
+      toolId: "organise-tabs" as const,
       summary: "Organised tabs.",
       organisedTabCount: 2,
       groupCount: 0,
       undoAvailable: true,
-    });
-    const tool: AiToolDefinition = {
-      id: "organise-tabs",
-      preview: vi.fn().mockResolvedValue({ proposal: proposal(), apply }),
-      undo: vi.fn().mockResolvedValue({
-        toolId: "organise-tabs",
-        summary: "Restored tabs.",
-        organisedTabCount: 2,
-        groupCount: 0,
-        undoAvailable: false,
-      }),
-    };
+    })),
+    undo: vi.fn(async () => ({
+      toolId: "organise-tabs" as const,
+      summary: "Restored tabs.",
+      organisedTabCount: 2,
+      groupCount: 0,
+      undoAvailable: false,
+    })),
+    isUndoRetryable: vi.fn(() => true),
+  } as unknown as OrganiseTabsTool;
+}
+
+function request(
+  overrides: Partial<OrganiseTabsRequest> = {},
+): OrganiseTabsRequest {
+  return {
+    provider: "ollama",
+    model: "qwen3:1.7b",
+    groupingMode: "smart",
+    customInstructions: "",
+    rememberCustomInstructions: false,
+    cloudConsent: false,
+    ...overrides,
+  };
+}
+
+describe("AiToolsController", () => {
+  it("does no inference on initialise and recommends a small Ollama model", async () => {
+    const file = await statePath();
+    const ollama = {
+      listModels: vi.fn().mockResolvedValue([
+        {
+          name: "gemma4:26b",
+          size: 18_600_000_000,
+          modifiedAt: null,
+          family: "gemma",
+          parameterSize: "26B",
+        },
+        {
+          name: "qwen3:1.7b",
+          size: 1_100_000_000,
+          modifiedAt: null,
+          family: "qwen3",
+          parameterSize: "1.7B",
+        },
+      ]),
+      chatStructured: vi.fn(),
+    } as unknown as OllamaClient;
+    const tabs = organiser();
     const controller = new AiToolsController({
       stateFilePath: file,
       ollama,
-      tools: [tool],
+      credentials: credentials(),
+      organiseTabs: tabs,
     });
 
     await controller.initialize();
-    await controller.refreshModels();
-    expect(controller.snapshot).toMatchObject({
-      connection: "connected",
-      selectedModel: "qwen3:4b",
+    expect(ollama.listModels).not.toHaveBeenCalled();
+    expect(
+      (ollama as unknown as { chatStructured: ReturnType<typeof vi.fn> })
+        .chatStructured,
+    ).not.toHaveBeenCalled();
+
+    await controller.refreshModels("ollama");
+    expect(controller.snapshot.ollama.selectedModel).toBe("qwen3:1.7b");
+    expect(JSON.parse(await readFile(file, "utf8"))).toMatchObject({
+      provider: "ollama",
+      ollamaModel: "qwen3:1.7b",
     });
-    expect(JSON.parse(await readFile(file, "utf8"))).toEqual({
-      selectedModel: "qwen3:4b",
+  });
+
+  it("runs website grouping without a model or Gemini credential", async () => {
+    const tabs = organiser();
+    const controller = new AiToolsController({
+      stateFilePath: await statePath(),
+      ollama: { listModels: vi.fn() } as unknown as OllamaClient,
+      credentials: credentials(),
+      organiseTabs: tabs,
     });
 
-    await expect(controller.preview("organise-tabs")).resolves.toMatchObject({
-      id: "proposal-1",
-    });
+    const result = await controller.preview(
+      request({ provider: "gemini", groupingMode: "website", model: "" }),
+    );
+
+    expect(result.provider).toBe("website");
     expect(controller.snapshot.run.stage).toBe("ready");
-    await controller.apply("proposal-1");
-    expect(apply).toHaveBeenCalledOnce();
+    expect(
+      (tabs as unknown as { preview: ReturnType<typeof vi.fn> }).preview,
+    ).toHaveBeenCalledWith(
+      expect.objectContaining({ groupingMode: "website" }),
+      null,
+      expect.any(AbortSignal),
+    );
+  });
+
+  it("applies only a prepared proposal and keeps undo available", async () => {
+    const tabs = organiser();
+    const controller = new AiToolsController({
+      stateFilePath: await statePath(),
+      ollama: {
+        listModels: vi.fn().mockResolvedValue([
+          {
+            name: "qwen3:1.7b",
+            size: 1,
+            modifiedAt: null,
+            family: "qwen3",
+            parameterSize: "1.7B",
+          },
+        ]),
+        chatStructured: vi.fn(),
+      } as unknown as OllamaClient,
+      credentials: credentials(),
+      organiseTabs: tabs,
+    });
+    await controller.refreshModels("ollama");
+    const prepared = await controller.preview(request());
+
+    await expect(
+      controller.apply({ ...prepared, summary: "Edited plan" }),
+    ).resolves.toMatchObject({
+      undoAvailable: true,
+    });
     expect(controller.snapshot.run).toMatchObject({
       stage: "complete",
       undoAvailable: true,
     });
-    await controller.undo();
-    expect(tool.undo).toHaveBeenCalledOnce();
+    await expect(controller.undo()).resolves.toMatchObject({
+      undoAvailable: false,
+    });
     expect(controller.snapshot.run.undoAvailable).toBe(false);
   });
 
-  it("reports an unreachable local Ollama instance without leaking the error", async () => {
+  it("sanitises an unreachable Ollama error for the renderer", async () => {
     const controller = new AiToolsController({
       stateFilePath: await statePath(),
       ollama: {
         listModels: vi
           .fn()
-          .mockRejectedValue(new Error("connect ECONNREFUSED")),
+          .mockRejectedValue(new Error("connect ECONNREFUSED secret")),
       } as unknown as OllamaClient,
-      tools: [],
+      credentials: credentials(),
+      organiseTabs: organiser(),
     });
 
-    const snapshot = await controller.refreshModels();
-
-    expect(snapshot.connection).toBe("unavailable");
-    expect(snapshot.error).toContain("127.0.0.1:11434");
-    expect(snapshot.error).not.toContain("ECONNREFUSED");
-  });
-
-  it("keeps Undo retryable after a transient persistence failure", async () => {
-    const undo = vi
-      .fn()
-      .mockRejectedValueOnce(new Error("temporary disk error"))
-      .mockResolvedValueOnce({
-        toolId: "organise-tabs",
-        summary: "Restored tabs.",
-        organisedTabCount: 2,
-        groupCount: 0,
-        undoAvailable: false,
-      });
-    const tool: AiToolDefinition = {
-      id: "organise-tabs",
-      preview: vi.fn().mockResolvedValue({
-        proposal: proposal(),
-        apply: vi.fn().mockResolvedValue({
-          toolId: "organise-tabs",
-          summary: "Organised tabs.",
-          organisedTabCount: 2,
-          groupCount: 0,
-          undoAvailable: true,
-        }),
-      }),
-      undo,
-    };
-    const controller = new AiToolsController({
-      stateFilePath: await statePath(),
-      ollama: {
-        listModels: vi.fn().mockResolvedValue([
-          {
-            name: "qwen3:4b",
-            size: null,
-            modifiedAt: null,
-            family: null,
-            parameterSize: null,
-          },
-        ]),
-      } as unknown as OllamaClient,
-      tools: [tool],
-    });
-    await controller.refreshModels();
-    await controller.preview("organise-tabs");
-    await controller.apply("proposal-1");
-
-    await expect(controller.undo()).rejects.toThrow("temporary disk error");
-    expect(controller.snapshot.run).toMatchObject({
-      stage: "failed",
-      undoAvailable: true,
-    });
-    await expect(controller.undo()).resolves.toMatchObject({
-      summary: "Restored tabs.",
-    });
-    expect(undo).toHaveBeenCalledTimes(2);
-  });
-
-  it("removes Undo after a non-retryable topology failure", async () => {
-    const undoError = new Error("tabs changed");
-    const tool: AiToolDefinition = {
-      id: "organise-tabs",
-      preview: vi.fn().mockResolvedValue({
-        proposal: proposal(),
-        apply: vi.fn().mockResolvedValue({
-          toolId: "organise-tabs",
-          summary: "Organised tabs.",
-          organisedTabCount: 2,
-          groupCount: 0,
-          undoAvailable: true,
-        }),
-      }),
-      undo: vi.fn().mockRejectedValue(undoError),
-      isUndoRetryable: (error) => error !== undoError,
-    };
-    const controller = new AiToolsController({
-      stateFilePath: await statePath(),
-      ollama: {
-        listModels: vi.fn().mockResolvedValue([
-          {
-            name: "qwen3:4b",
-            size: null,
-            modifiedAt: null,
-            family: null,
-            parameterSize: null,
-          },
-        ]),
-      } as unknown as OllamaClient,
-      tools: [tool],
-    });
-    await controller.refreshModels();
-    await controller.preview("organise-tabs");
-    await controller.apply("proposal-1");
-
-    await expect(controller.undo()).rejects.toThrow("tabs changed");
-    expect(controller.snapshot.run).toMatchObject({
-      stage: "failed",
-      undoAvailable: false,
-    });
-    await expect(controller.undo()).rejects.toThrow("no AI action to undo");
+    const snapshot = await controller.refreshModels("ollama");
+    expect(snapshot.ollama.connection).toBe("unavailable");
+    expect(snapshot.ollama.error).toContain("Start Ollama");
+    expect(snapshot.ollama.error).not.toContain("secret");
   });
 });

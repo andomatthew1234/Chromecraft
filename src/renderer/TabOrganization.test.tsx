@@ -197,6 +197,26 @@ const data: BrowserDataSnapshot = {
 
 const aiTools: AiToolsSnapshot = {
   provider: "ollama",
+  preferredGroupingMode: "smart",
+  eligibleTabCount: 0,
+  cloudDataPreview: [],
+  ollama: {
+    endpoint: "http://127.0.0.1:11434",
+    connection: "unknown",
+    models: [],
+    selectedModel: null,
+    error: null,
+  },
+  gemini: {
+    connection: "unknown",
+    models: [],
+    selectedModel: null,
+    error: null,
+    apiKeyConfigured: false,
+    secureStorageAvailable: false,
+    sessionOnly: false,
+    cloudConsentGranted: false,
+  },
   endpoint: "http://127.0.0.1:11434",
   connection: "unknown",
   models: [],

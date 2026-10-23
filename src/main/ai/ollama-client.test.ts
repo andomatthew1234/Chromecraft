@@ -66,7 +66,26 @@ describe("OllamaClient", () => {
       stream: false,
       think: false,
       format: { type: "object" },
-      options: { temperature: 0 },
+      options: { temperature: 0.1, num_ctx: 4_096, num_predict: 2_048 },
+    });
+  });
+
+  it("installs a model only after the caller explicitly requests it", async () => {
+    const request = vi.fn(
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        jsonResponse({ status: "success" }),
+    );
+    const client = new OllamaClient(request as unknown as typeof fetch);
+
+    await expect(
+      client.installModel("qwen3:1.7b", new AbortController().signal),
+    ).resolves.toBeUndefined();
+
+    const [, options] = request.mock.calls[0];
+    expect(request.mock.calls[0][0]).toBe("http://127.0.0.1:11434/api/pull");
+    expect(JSON.parse(String(options?.body))).toEqual({
+      model: "qwen3:1.7b",
+      stream: false,
     });
   });
 

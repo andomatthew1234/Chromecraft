@@ -3,33 +3,32 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 
 import type {
+  AiGroupingMode,
+  AiProviderId,
+  AiProviderSnapshot,
   AiToolApplyResult,
-  AiToolId,
-  AiToolProposal,
   AiToolsSnapshot,
+  GeminiApiKeyUpdate,
+  GeminiProviderSnapshot,
+  OrganiseTabsProposal,
+  OrganiseTabsRequest,
 } from "../../shared/ai-tools";
+import { GeminiClient } from "./gemini-client";
+import { GeminiCredentialStore } from "./gemini-credential-store";
+import {
+  type InternalOrganiseTabsProposal,
+  OrganiseTabsTool,
+} from "./organise-tabs-tool";
 import { OllamaClient } from "./ollama-client";
 
-export interface PreparedAiTool {
-  proposal: AiToolProposal;
-  apply: () => Promise<AiToolApplyResult>;
-}
-
-export interface AiToolDefinition {
-  id: AiToolId;
-  preview(input: {
-    model: string;
-    ollama: OllamaClient;
-    signal: AbortSignal;
-  }): Promise<PreparedAiTool>;
-  undo(): Promise<AiToolApplyResult>;
-  isUndoRetryable?(error: unknown): boolean;
-}
+const OLLAMA_ENDPOINT = "http://127.0.0.1:11434" as const;
+const RECOMMENDED_OLLAMA = "qwen3:1.7b";
 
 export interface AiToolsControllerOptions {
   stateFilePath: string;
   ollama: OllamaClient;
-  tools: AiToolDefinition[];
+  credentials: GeminiCredentialStore;
+  organiseTabs: OrganiseTabsTool;
   onChange?: (snapshot: AiToolsSnapshot) => void;
 }
 
@@ -54,110 +53,231 @@ function isAbort(error: unknown): boolean {
   return error instanceof DOMException && error.name === "AbortError";
 }
 
-/** Owns local model discovery, typed AI-tool execution and operation state. */
+function emptyProvider(): AiProviderSnapshot {
+  return {
+    connection: "unknown",
+    models: [],
+    selectedModel: null,
+    error: null,
+  };
+}
+
+function emptyGemini(secureStorageAvailable: boolean): GeminiProviderSnapshot {
+  return {
+    ...emptyProvider(),
+    apiKeyConfigured: false,
+    secureStorageAvailable,
+    sessionOnly: false,
+    cloudConsentGranted: false,
+  };
+}
+
+function ollamaRank(name: string, size: number | null): number {
+  if (name === RECOMMENDED_OLLAMA) return 0;
+  const lowered = name.toLowerCase();
+  if (/qwen.*(?:1\.7b|0\.8b|1b|2b)/u.test(lowered)) return 10;
+  if (/qwen.*(?:3b|4b)/u.test(lowered)) return 20;
+  if (size !== null && size <= 4 * 1024 ** 3) return 30;
+  return 100;
+}
+
+function chooseOllamaModel(
+  models: AiProviderSnapshot["models"],
+): string | null {
+  return (
+    [...models]
+      .sort(
+        (left, right) =>
+          ollamaRank(left.name, left.size) - ollamaRank(right.name, right.size),
+      )
+      .find((model) => ollamaRank(model.name, model.size) < 100)?.name ?? null
+  );
+}
+
+function validProvider(value: unknown): value is AiProviderId {
+  return value === "ollama" || value === "gemini";
+}
+
+function validGrouping(value: unknown): value is AiGroupingMode {
+  return value === "smart" || value === "website";
+}
+
 export class AiToolsController {
   private readonly stateFilePath: string;
   private readonly ollama: OllamaClient;
-  private readonly tools: Map<AiToolId, AiToolDefinition>;
+  private readonly credentials: GeminiCredentialStore;
+  private readonly organiseTabs: OrganiseTabsTool;
   private readonly onChange?: AiToolsControllerOptions["onChange"];
-  private state: AiToolsSnapshot;
+  private provider: AiProviderId = "ollama";
+  private preferredGroupingMode: AiGroupingMode = "smart";
+  private ollamaState: AiProviderSnapshot = emptyProvider();
+  private geminiState: GeminiProviderSnapshot;
+  private run = idleRun();
   private abortController: AbortController | null = null;
-  private prepared: { tool: AiToolDefinition; value: PreparedAiTool } | null =
-    null;
-  private lastAppliedTool: AiToolDefinition | null = null;
+  private prepared: InternalOrganiseTabsProposal | null = null;
   private disposed = false;
   private writeCounter = 0;
 
   constructor(options: AiToolsControllerOptions) {
     this.stateFilePath = path.resolve(options.stateFilePath);
     this.ollama = options.ollama;
-    this.tools = new Map(options.tools.map((tool) => [tool.id, tool]));
+    this.credentials = options.credentials;
+    this.organiseTabs = options.organiseTabs;
     this.onChange = options.onChange;
-    this.state = {
-      provider: "ollama",
-      endpoint: "http://127.0.0.1:11434",
-      connection: "unknown",
-      models: [],
-      selectedModel: null,
-      error: null,
-      run: idleRun(),
-    };
-    if (this.tools.size !== options.tools.length) {
-      throw new Error("AI tool identifiers must be unique.");
-    }
+    this.geminiState = emptyGemini(options.credentials.secureStorageAvailable);
   }
 
   get snapshot(): AiToolsSnapshot {
-    return structuredClone(this.state);
+    const active =
+      this.provider === "ollama" ? this.ollamaState : this.geminiState;
+    return structuredClone({
+      provider: this.provider,
+      preferredGroupingMode: this.preferredGroupingMode,
+      eligibleTabCount: this.organiseTabs.eligibleTabCount,
+      cloudDataPreview: this.organiseTabs.cloudDataPreview,
+      ollama: { ...this.ollamaState, endpoint: OLLAMA_ENDPOINT },
+      gemini: this.geminiState,
+      run: this.run,
+      endpoint: OLLAMA_ENDPOINT,
+      connection: active.connection,
+      models: active.models,
+      selectedModel: active.selectedModel,
+      error: active.error,
+    });
   }
 
   async initialize(): Promise<void> {
     try {
       const stored = JSON.parse(
         await fs.readFile(this.stateFilePath, "utf8"),
-      ) as { selectedModel?: unknown };
-      if (
-        typeof stored.selectedModel === "string" &&
-        stored.selectedModel.length > 0 &&
-        stored.selectedModel.length <= 256
-      ) {
-        this.state.selectedModel = stored.selectedModel;
+      ) as Record<string, unknown> | null;
+      if (stored && validProvider(stored.provider))
+        this.provider = stored.provider;
+      if (stored && validGrouping(stored.preferredGroupingMode)) {
+        this.preferredGroupingMode = stored.preferredGroupingMode;
       }
+      if (stored && typeof stored.ollamaModel === "string") {
+        this.ollamaState.selectedModel = stored.ollamaModel.slice(0, 256);
+      }
+      if (stored && typeof stored.geminiModel === "string") {
+        this.geminiState.selectedModel = stored.geminiModel.slice(0, 128);
+      }
+      this.geminiState.cloudConsentGranted =
+        stored?.cloudConsentGranted === true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
         console.warn("Could not read AI tool preferences.", error);
       }
     }
+    this.geminiState.apiKeyConfigured = Boolean(await this.credentials.get());
     this.emit();
   }
 
-  async refreshModels(): Promise<AiToolsSnapshot> {
+  async setProvider(provider: AiProviderId): Promise<AiToolsSnapshot> {
+    this.assertNotBusy();
+    this.provider = provider;
+    this.prepared = null;
+    this.run = idleRun();
+    await this.persist();
+    this.emit();
+    return this.snapshot;
+  }
+
+  async setGroupingMode(mode: AiGroupingMode): Promise<AiToolsSnapshot> {
+    this.assertNotBusy();
+    this.preferredGroupingMode = mode;
+    await this.persist();
+    this.emit();
+    return this.snapshot;
+  }
+
+  async refreshModels(
+    provider: AiProviderId = this.provider,
+  ): Promise<AiToolsSnapshot> {
     this.assertAvailable();
     this.assertNotBusy();
     const operationId = randomUUID();
     const controller = new AbortController();
     this.abortController = controller;
-    this.state.run = {
+    this.run = {
       ...idleRun(),
       operationId,
       stage: "checking",
-      label: "Checking Ollama",
+      label: provider === "ollama" ? "Checking Ollama" : "Checking Gemini",
     };
-    this.state.error = null;
     this.emit();
     try {
-      const models = await this.ollama.listModels(controller.signal);
-      this.state.connection = "connected";
-      this.state.models = models;
-      if (!this.state.selectedModel && models[0]) {
-        this.state.selectedModel = models[0].name;
-        await this.persist();
-      }
-      this.state.error =
-        models.length === 0
-          ? "Ollama is running, but no models are installed."
-          : this.state.selectedModel &&
-              !models.some((model) => model.name === this.state.selectedModel)
-            ? `The selected model “${this.state.selectedModel}” is not installed.`
-            : null;
-      this.state.run = idleRun();
-    } catch (error) {
-      if (isAbort(error)) {
-        this.state.run = {
-          ...idleRun(),
-          stage: "cancelled",
-          label: "Cancelled",
+      if (provider === "ollama") {
+        const models = await this.ollama.listModels(controller.signal);
+        this.ollamaState = {
+          connection: "connected",
+          models,
+          selectedModel:
+            this.ollamaState.selectedModel &&
+            models.some(
+              (model) => model.name === this.ollamaState.selectedModel,
+            )
+              ? this.ollamaState.selectedModel
+              : chooseOllamaModel(models),
+          error:
+            models.length === 0
+              ? "Ollama is running, but no models are installed."
+              : chooseOllamaModel(models)
+                ? null
+                : "No suitably small local model is installed.",
         };
       } else {
-        this.state.connection = "unavailable";
-        this.state.models = [];
-        this.state.error =
-          "Chromecraft could not reach Ollama at 127.0.0.1:11434. Start Ollama, then try again.";
-        this.state.run = {
+        const apiKey = await this.credentials.get();
+        if (!apiKey) throw new Error("Add a Gemini API key in Settings first.");
+        const models = await new GeminiClient(apiKey).listModels(
+          controller.signal,
+        );
+        this.geminiState = {
+          ...this.geminiState,
+          connection: "connected",
+          models,
+          selectedModel:
+            this.geminiState.selectedModel &&
+            models.some(
+              (model) => model.name === this.geminiState.selectedModel,
+            )
+              ? this.geminiState.selectedModel
+              : (models.find((model) => model.recommended)?.name ??
+                models[0]?.name ??
+                null),
+          error: models.length
+            ? null
+            : "No compatible Gemini text models were found.",
+        };
+      }
+      this.run = idleRun();
+      await this.persist();
+    } catch (error) {
+      if (isAbort(error)) {
+        this.run = { ...idleRun(), stage: "cancelled", label: "Cancelled" };
+      } else {
+        const detail = message(error);
+        if (provider === "ollama") {
+          this.ollamaState = {
+            ...this.ollamaState,
+            connection: "unavailable",
+            models: [],
+            error:
+              "Chromecraft could not reach Ollama. Start Ollama, then try again.",
+          };
+        } else {
+          this.geminiState = {
+            ...this.geminiState,
+            connection: "unavailable",
+            models: [],
+            error: detail,
+          };
+        }
+        this.run = {
           ...idleRun(),
           stage: "failed",
-          label: "Ollama unavailable",
-          error: message(error),
+          label: `${provider === "ollama" ? "Ollama" : "Gemini"} unavailable`,
+          error: detail,
         };
       }
     } finally {
@@ -167,91 +287,201 @@ export class AiToolsController {
     return this.snapshot;
   }
 
-  async setModel(model: string): Promise<AiToolsSnapshot> {
+  async installRecommendedOllamaModel(): Promise<AiToolsSnapshot> {
     this.assertAvailable();
     this.assertNotBusy();
-    if (
-      typeof model !== "string" ||
-      model.length === 0 ||
-      model.length > 256 ||
-      !this.state.models.some((candidate) => candidate.name === model)
-    ) {
-      throw new TypeError("Choose an installed Ollama model.");
+    const operationId = randomUUID();
+    const controller = new AbortController();
+    this.abortController = controller;
+    this.run = {
+      ...idleRun(),
+      operationId,
+      stage: "loading",
+      label: `Installing ${RECOMMENDED_OLLAMA}`,
+    };
+    this.emit();
+    try {
+      await this.ollama.installModel(RECOMMENDED_OLLAMA, controller.signal);
+      this.run = idleRun();
+    } catch (error) {
+      this.run = isAbort(error)
+        ? {
+            ...idleRun(),
+            stage: "cancelled",
+            label: "Model installation cancelled",
+          }
+        : {
+            ...idleRun(),
+            stage: "failed",
+            label: "Could not install the recommended model",
+            error: message(error),
+          };
+      this.emit();
+      throw error;
+    } finally {
+      if (this.abortController === controller) this.abortController = null;
     }
-    this.state.selectedModel = model;
-    this.state.error = null;
+    return this.refreshModels("ollama");
+  }
+
+  async setModel(
+    provider: AiProviderId,
+    model: string,
+  ): Promise<AiToolsSnapshot> {
+    this.assertNotBusy();
+    const state = provider === "ollama" ? this.ollamaState : this.geminiState;
+    if (!state.models.some((candidate) => candidate.name === model)) {
+      throw new TypeError(
+        `Choose an available ${provider === "ollama" ? "Ollama" : "Gemini"} model.`,
+      );
+    }
+    state.selectedModel = model;
+    state.error = null;
     this.prepared = null;
-    this.state.run = idleRun();
+    this.run = idleRun();
     await this.persist();
     this.emit();
     return this.snapshot;
   }
 
-  async preview(toolId: AiToolId): Promise<AiToolProposal> {
-    this.assertAvailable();
+  async setGeminiApiKey(update: GeminiApiKeyUpdate): Promise<AiToolsSnapshot> {
     this.assertNotBusy();
-    if (this.state.connection !== "connected" || !this.state.models.length) {
-      await this.refreshModels();
+    const apiKey = update.apiKey.trim();
+    if (
+      !apiKey ||
+      apiKey.length > 512 ||
+      /[\u0000-\u001f\u007f]/u.test(apiKey)
+    ) {
+      throw new TypeError("Enter a valid Gemini API key.");
     }
-    const model = this.state.selectedModel;
-    if (!model || !this.state.models.some((item) => item.name === model)) {
+    await this.credentials.set(apiKey, update.persist);
+    this.geminiState = {
+      ...this.geminiState,
+      apiKeyConfigured: true,
+      sessionOnly: !update.persist,
+      connection: "unknown",
+      error: null,
+    };
+    this.emit();
+    const snapshot = await this.refreshModels("gemini");
+    if (snapshot.gemini.connection !== "connected") {
       throw new Error(
-        "Choose an installed Ollama model before using AI tools.",
+        snapshot.gemini.error ?? "Chromecraft could not connect to Gemini.",
       );
     }
-    const tool = this.tools.get(toolId);
-    if (!tool) throw new TypeError("Unknown AI tool.");
+    return snapshot;
+  }
+
+  async removeGeminiApiKey(): Promise<AiToolsSnapshot> {
+    this.assertNotBusy();
+    await this.credentials.remove();
+    this.geminiState = emptyGemini(this.credentials.secureStorageAvailable);
+    this.prepared = null;
+    this.run = idleRun();
+    await this.persist();
+    this.emit();
+    return this.snapshot;
+  }
+
+  async preview(request: OrganiseTabsRequest): Promise<OrganiseTabsProposal> {
+    this.assertAvailable();
+    this.assertNotBusy();
+    this.validateRequest(request);
+    if (request.groupingMode === "smart") {
+      const state =
+        request.provider === "ollama" ? this.ollamaState : this.geminiState;
+      if (
+        state.connection !== "connected" ||
+        !state.models.some((model) => model.name === request.model)
+      ) {
+        const refreshed = await this.refreshModels(request.provider);
+        const nextState =
+          request.provider === "ollama" ? refreshed.ollama : refreshed.gemini;
+        if (
+          nextState.connection !== "connected" ||
+          !nextState.models.some((model) => model.name === request.model)
+        ) {
+          throw new Error(
+            nextState.error ?? "The selected AI model is not available.",
+          );
+        }
+      }
+    }
+    if (
+      request.groupingMode === "smart" &&
+      request.provider === "gemini" &&
+      !this.geminiState.cloudConsentGranted
+    ) {
+      if (!request.cloudConsent) {
+        throw new Error("Confirm cloud processing before using Gemini.");
+      }
+      this.geminiState.cloudConsentGranted = true;
+      await this.persist();
+    }
     const operationId = randomUUID();
     const controller = new AbortController();
     this.abortController = controller;
     this.prepared = null;
-    this.state.run = {
+    this.run = {
       ...idleRun(),
       operationId,
-      toolId,
-      stage: "thinking",
-      label: "Ollama is organising your tabs",
+      toolId: "organise-tabs",
+      stage: "preparing",
+      label: "Preparing tabs",
     };
     this.emit();
     try {
-      const prepared = await tool.preview({
-        model,
-        ollama: this.ollama,
-        signal: controller.signal,
-      });
-      if (
-        prepared.proposal.toolId !== toolId ||
-        !prepared.proposal.id ||
-        prepared.proposal.id.length > 128
-      ) {
-        throw new Error("The AI tool returned an invalid proposal.");
-      }
-      this.prepared = { tool, value: prepared };
-      this.state.run = {
-        ...this.state.run,
-        stage: "ready",
-        label: "Plan ready to review",
-        proposalId: prepared.proposal.id,
+      const apiKey =
+        request.provider === "gemini" ? await this.credentials.get() : null;
+      const provider =
+        request.groupingMode === "website"
+          ? null
+          : request.provider === "ollama"
+            ? this.ollama
+            : apiKey
+              ? new GeminiClient(apiKey)
+              : null;
+      this.run = {
+        ...this.run,
+        stage: request.groupingMode === "website" ? "validating" : "thinking",
+        label:
+          request.groupingMode === "website"
+            ? "Preparing website groups"
+            : "Analysing tab titles",
       };
       this.emit();
-      return structuredClone(prepared.proposal);
-    } catch (error) {
-      if (isAbort(error)) {
-        this.state.run = {
-          ...idleRun(),
-          toolId,
-          stage: "cancelled",
-          label: "Cancelled",
-        };
-      } else {
-        this.state.run = {
-          ...idleRun(),
-          toolId,
-          stage: "failed",
-          label: "Could not organise tabs",
-          error: message(error),
-        };
+      const prepared = await this.organiseTabs.preview(
+        request,
+        provider,
+        controller.signal,
+      );
+      if (this.abortController !== controller || controller.signal.aborted) {
+        throw new DOMException("Cancelled", "AbortError");
       }
+      this.prepared = prepared;
+      this.run = {
+        ...this.run,
+        stage: "ready",
+        label: "Ready for review",
+        proposalId: prepared.publicProposal.id,
+      };
+      this.emit();
+      return structuredClone(prepared.publicProposal);
+    } catch (error) {
+      this.run = isAbort(error)
+        ? {
+            ...idleRun(),
+            toolId: "organise-tabs",
+            stage: "cancelled",
+            label: "Cancelled",
+          }
+        : {
+            ...idleRun(),
+            toolId: "organise-tabs",
+            stage: "failed",
+            label: "Could not organise tabs",
+            error: message(error),
+          };
       this.emit();
       throw error;
     } finally {
@@ -259,27 +489,26 @@ export class AiToolsController {
     }
   }
 
-  async apply(proposalId: string): Promise<AiToolApplyResult> {
+  async apply(edited: OrganiseTabsProposal): Promise<AiToolApplyResult> {
     this.assertAvailable();
     this.assertNotBusy();
     const prepared = this.prepared;
-    if (!prepared || prepared.value.proposal.id !== proposalId) {
-      throw new Error("This AI proposal is no longer available.");
+    if (!prepared || prepared.publicProposal.id !== edited.id) {
+      throw new Error("This tab proposal is no longer available.");
     }
-    this.state.run = {
-      ...this.state.run,
+    this.run = {
+      ...this.run,
       stage: "applying",
-      label: "Applying the tab plan",
+      label: "Applying approved groups",
       error: null,
     };
     this.emit();
     try {
-      const result = await prepared.value.apply();
+      const result = await this.organiseTabs.apply(prepared, edited);
       this.prepared = null;
-      this.lastAppliedTool = prepared.tool;
-      this.state.run = {
+      this.run = {
         ...idleRun(),
-        toolId: prepared.tool.id,
+        toolId: "organise-tabs",
         stage: "complete",
         label: result.summary,
         undoAvailable: result.undoAvailable,
@@ -287,9 +516,9 @@ export class AiToolsController {
       this.emit();
       return result;
     } catch (error) {
-      this.state.run = {
+      this.run = {
         ...idleRun(),
-        toolId: prepared.tool.id,
+        toolId: "organise-tabs",
         stage: "failed",
         label: "The tab plan was not applied",
         error: message(error),
@@ -300,41 +529,36 @@ export class AiToolsController {
   }
 
   cancel(): void {
-    if (!this.abortController) return;
-    this.abortController.abort();
+    this.abortController?.abort();
     this.abortController = null;
   }
 
   async undo(): Promise<AiToolApplyResult> {
     this.assertAvailable();
     this.assertNotBusy();
-    const tool = this.lastAppliedTool;
-    if (!tool || !this.state.run.undoAvailable) {
+    if (!this.run.undoAvailable)
       throw new Error("There is no AI action to undo.");
-    }
-    this.state.run = {
-      ...this.state.run,
+    this.run = {
+      ...this.run,
       stage: "applying",
       label: "Restoring the previous tab layout",
     };
     this.emit();
     try {
-      const result = await tool.undo();
-      this.lastAppliedTool = null;
-      this.state.run = {
+      const result = await this.organiseTabs.undo();
+      this.run = {
         ...idleRun(),
-        toolId: tool.id,
+        toolId: "organise-tabs",
         stage: "complete",
         label: result.summary,
       };
       this.emit();
       return result;
     } catch (error) {
-      const retryable = tool.isUndoRetryable?.(error) ?? true;
-      if (!retryable) this.lastAppliedTool = null;
-      this.state.run = {
+      const retryable = this.organiseTabs.isUndoRetryable(error);
+      this.run = {
         ...idleRun(),
-        toolId: tool.id,
+        toolId: "organise-tabs",
         stage: "failed",
         label: "Could not restore the previous layout",
         error: message(error),
@@ -352,12 +576,47 @@ export class AiToolsController {
     this.prepared = null;
   }
 
+  private validateRequest(request: OrganiseTabsRequest): void {
+    if (
+      !validProvider(request.provider) ||
+      !validGrouping(request.groupingMode)
+    ) {
+      throw new TypeError("Choose a supported tab organisation option.");
+    }
+    if (
+      request.model.length > 256 ||
+      (request.customInstructions?.length ?? 0) > 1_000
+    ) {
+      throw new TypeError("The tab organisation request is too large.");
+    }
+    if (request.groupingMode === "smart" && !request.model) {
+      throw new TypeError("Choose a model before organising tabs.");
+    }
+    if (
+      request.groupingMode === "smart" &&
+      request.provider === "gemini" &&
+      !this.geminiState.apiKeyConfigured
+    ) {
+      throw new Error("Add a Gemini API key in Settings first.");
+    }
+  }
+
   private assertAvailable(): void {
     if (this.disposed) throw new Error("AI tools are no longer available.");
   }
 
   private assertNotBusy(): void {
-    if (["checking", "thinking", "applying"].includes(this.state.run.stage)) {
+    if (
+      [
+        "checking",
+        "preparing",
+        "connecting",
+        "loading",
+        "thinking",
+        "validating",
+        "applying",
+      ].includes(this.run.stage)
+    ) {
       throw new Error("Another AI operation is already running.");
     }
   }
@@ -365,11 +624,17 @@ export class AiToolsController {
   private async persist(): Promise<void> {
     await fs.mkdir(path.dirname(this.stateFilePath), { recursive: true });
     const temporary = `${this.stateFilePath}.${process.pid}.${this.writeCounter++}.tmp`;
-    await fs.writeFile(
-      temporary,
-      `${JSON.stringify({ selectedModel: this.state.selectedModel }, null, 2)}\n`,
-      { encoding: "utf8", flag: "wx" },
-    );
+    const preferences = {
+      provider: this.provider,
+      preferredGroupingMode: this.preferredGroupingMode,
+      ollamaModel: this.ollamaState.selectedModel,
+      geminiModel: this.geminiState.selectedModel,
+      cloudConsentGranted: this.geminiState.cloudConsentGranted,
+    };
+    await fs.writeFile(temporary, `${JSON.stringify(preferences, null, 2)}\n`, {
+      encoding: "utf8",
+      flag: "wx",
+    });
     try {
       await fs.rename(temporary, this.stateFilePath);
     } catch (error) {

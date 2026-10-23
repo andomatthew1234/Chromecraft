@@ -49,7 +49,14 @@ import type {
   GallerySnapshot,
 } from "../shared/browser";
 import type { OfflinePagesSnapshot } from "../shared/offline-pages";
-import type { AiToolId, AiToolsSnapshot } from "../shared/ai-tools";
+import type {
+  AiGroupingMode,
+  AiProviderId,
+  AiToolsSnapshot,
+  GeminiApiKeyUpdate,
+  OrganiseTabsProposal,
+  OrganiseTabsRequest,
+} from "../shared/ai-tools";
 import { isAllowedWebUrl } from "../shared/navigation";
 import { BrowserDataStore } from "./browser-data";
 import {
@@ -88,7 +95,8 @@ import {
   type WebsitePermissionPrompt,
 } from "./website-permission-controller";
 import { SmartDownloadsService } from "./smart-downloads/service";
-import { AiToolsController, type AiToolDefinition } from "./ai/controller";
+import { AiToolsController } from "./ai/controller";
+import { GeminiCredentialStore } from "./ai/gemini-credential-store";
 import { OllamaClient } from "./ai/ollama-client";
 import { OrganiseTabsTool } from "./ai/organise-tabs-tool";
 import {
@@ -790,9 +798,97 @@ function requireTabGroupUpdate(value: unknown): TabGroupUpdate {
   return update;
 }
 
-function requireAiToolId(value: unknown): AiToolId {
-  if (value !== "organise-tabs") throw new TypeError("Unknown AI tool.");
+function requireAiProvider(value: unknown): AiProviderId {
+  if (value !== "ollama" && value !== "gemini") {
+    throw new TypeError("Unknown AI provider.");
+  }
   return value;
+}
+
+function requireAiGroupingMode(value: unknown): AiGroupingMode {
+  if (value !== "smart" && value !== "website") {
+    throw new TypeError("Unknown tab grouping mode.");
+  }
+  return value;
+}
+
+function requireOrganiseTabsRequest(value: unknown): OrganiseTabsRequest {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("The tab organisation request is invalid.");
+  }
+  const request = value as Record<string, unknown>;
+  return {
+    provider: requireAiProvider(request.provider),
+    model:
+      request.groupingMode === "website" && request.model === ""
+        ? ""
+        : requireString(request.model, "model", 256),
+    groupingMode: requireAiGroupingMode(request.groupingMode),
+    customInstructions:
+      request.customInstructions === undefined ||
+      request.customInstructions === ""
+        ? undefined
+        : requireString(
+            request.customInstructions,
+            "customInstructions",
+            1_000,
+          ),
+    rememberCustomInstructions:
+      request.rememberCustomInstructions === undefined
+        ? undefined
+        : requireBoolean(
+            request.rememberCustomInstructions,
+            "rememberCustomInstructions",
+          ),
+    cloudConsent: requireBoolean(request.cloudConsent, "cloudConsent"),
+  };
+}
+
+function requireOrganiseTabsProposal(value: unknown): OrganiseTabsProposal {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("The tab proposal is invalid.");
+  }
+  const proposal = value as Record<string, unknown>;
+  if (!Array.isArray(proposal.groups) || proposal.groups.length > 64) {
+    throw new TypeError("The tab proposal has too many groups.");
+  }
+  const groups = proposal.groups.map((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw new TypeError("The tab proposal contains an invalid group.");
+    }
+    const group = entry as Record<string, unknown>;
+    const tabIds = requireTabIds(group.tabIds);
+    return {
+      name: requireString(group.name, "group name", 48),
+      color: requireTabGroupColor(group.color),
+      tabIds,
+      tabTitles: tabIds.map(() => ""),
+      tabFavicons: tabIds.map(() => null),
+    };
+  });
+  const ungroupedTabIds = requireTabIds(proposal.ungroupedTabIds);
+  const provider =
+    proposal.provider === "website"
+      ? "website"
+      : requireAiProvider(proposal.provider);
+  return {
+    id: requireString(proposal.id, "proposalId", 128),
+    toolId: "organise-tabs",
+    provider,
+    model: requireString(proposal.model, "model", 256),
+    createdAt:
+      typeof proposal.createdAt === "number" &&
+      Number.isFinite(proposal.createdAt)
+        ? proposal.createdAt
+        : Date.now(),
+    groups,
+    ungroupedTabIds,
+    ungroupedTabTitles: ungroupedTabIds.map(() => ""),
+    ungroupedTabFavicons: ungroupedTabIds.map(() => null),
+    preservedTabCount: 0,
+    summary: "Edited tab organisation",
+    warnings: [],
+  };
 }
 
 function requireBookmarkInput(value: unknown): BookmarkInput {
@@ -910,17 +1006,46 @@ function registerIpc(): void {
     channels.getAiTools,
     (event) => requireAiTools(event).snapshot,
   );
-  ipcMain.handle(channels.refreshAiModels, (event) =>
-    requireAiTools(event).refreshModels(),
+  ipcMain.handle(channels.refreshAiModels, (event, provider: unknown) =>
+    requireAiTools(event).refreshModels(
+      provider === undefined ? undefined : requireAiProvider(provider),
+    ),
   );
-  ipcMain.handle(channels.setAiModel, (event, model: unknown) =>
-    requireAiTools(event).setModel(requireString(model, "model", 256)),
+  ipcMain.handle(channels.installRecommendedOllamaModel, (event) =>
+    requireAiTools(event).installRecommendedOllamaModel(),
   );
-  ipcMain.handle(channels.previewAiTool, (event, toolId: unknown) =>
-    requireAiTools(event).preview(requireAiToolId(toolId)),
+  ipcMain.handle(channels.setAiProvider, (event, provider: unknown) =>
+    requireAiTools(event).setProvider(requireAiProvider(provider)),
   );
-  ipcMain.handle(channels.applyAiTool, (event, proposalId: unknown) =>
-    requireAiTools(event).apply(requireString(proposalId, "proposalId", 128)),
+  ipcMain.handle(channels.setAiGroupingMode, (event, mode: unknown) =>
+    requireAiTools(event).setGroupingMode(requireAiGroupingMode(mode)),
+  );
+  ipcMain.handle(
+    channels.setAiModel,
+    (event, provider: unknown, model: unknown) =>
+      requireAiTools(event).setModel(
+        requireAiProvider(provider),
+        requireString(model, "model", 256),
+      ),
+  );
+  ipcMain.handle(channels.setGeminiApiKey, (event, value: unknown) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new TypeError("The Gemini credential update is invalid.");
+    }
+    const update = value as Record<string, unknown>;
+    return requireAiTools(event).setGeminiApiKey({
+      apiKey: requireString(update.apiKey, "apiKey", 512),
+      persist: requireBoolean(update.persist, "persist"),
+    } satisfies GeminiApiKeyUpdate);
+  });
+  ipcMain.handle(channels.removeGeminiApiKey, (event) =>
+    requireAiTools(event).removeGeminiApiKey(),
+  );
+  ipcMain.handle(channels.previewAiTool, (event, request: unknown) =>
+    requireAiTools(event).preview(requireOrganiseTabsRequest(request)),
+  );
+  ipcMain.handle(channels.applyAiTool, (event, proposal: unknown) =>
+    requireAiTools(event).apply(requireOrganiseTabsProposal(proposal)),
   );
   ipcMain.handle(channels.cancelAiTool, (event) => {
     requireAiTools(event).cancel();
@@ -2595,23 +2720,14 @@ async function createMainWindow(): Promise<void> {
   );
   tabManager = manager;
   const organiseTabs = new OrganiseTabsTool(manager);
-  const organiseTabsDefinition: AiToolDefinition = {
-    id: organiseTabs.id,
-    preview: async ({ model, ollama, signal }) => {
-      const value = await organiseTabs.preview(model, ollama, signal);
-      return {
-        proposal: value.publicProposal,
-        apply: () => organiseTabs.apply(value),
-      };
-    },
-    undo: () => organiseTabs.undo(),
-    isUndoRetryable: (error) => organiseTabs.isUndoRetryable(error),
-  };
   aiToolsController?.dispose();
   const aiTools = new AiToolsController({
     stateFilePath: path.join(app.getPath("userData"), "ai-tools.json"),
     ollama: new OllamaClient(),
-    tools: [organiseTabsDefinition],
+    credentials: new GeminiCredentialStore(
+      path.join(app.getPath("userData"), "gemini-api-key.bin"),
+    ),
+    organiseTabs,
     onChange: sendAiToolsSnapshot,
   });
   aiToolsController = aiTools;

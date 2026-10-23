@@ -29,9 +29,12 @@ import type {
 import type { UpdateSnapshot } from "../shared/updates";
 import type {
   AiToolApplyResult,
-  AiToolId,
-  AiToolProposal,
+  AiGroupingMode,
+  AiProviderId,
   AiToolsSnapshot,
+  GeminiApiKeyUpdate,
+  OrganiseTabsProposal,
+  OrganiseTabsRequest,
 } from "../shared/ai-tools";
 import type {
   AssistantContextCaptured,
@@ -511,19 +514,47 @@ const api: ChromecraftApi = {
     ipcRenderer.invoke(channels.restartToUpdate) as Promise<void>,
   getAiTools: () =>
     ipcRenderer.invoke(channels.getAiTools) as Promise<AiToolsSnapshot>,
-  refreshAiModels: () =>
-    ipcRenderer.invoke(channels.refreshAiModels) as Promise<AiToolsSnapshot>,
-  setAiModel: (model) =>
-    ipcRenderer.invoke(channels.setAiModel, model) as Promise<AiToolsSnapshot>,
-  previewAiTool: (toolId) =>
+  refreshAiModels: (provider) =>
+    ipcRenderer.invoke(
+      channels.refreshAiModels,
+      provider as AiProviderId | undefined,
+    ) as Promise<AiToolsSnapshot>,
+  installRecommendedOllamaModel: () =>
+    ipcRenderer.invoke(
+      channels.installRecommendedOllamaModel,
+    ) as Promise<AiToolsSnapshot>,
+  setAiProvider: (provider) =>
+    ipcRenderer.invoke(
+      channels.setAiProvider,
+      provider as AiProviderId,
+    ) as Promise<AiToolsSnapshot>,
+  setAiGroupingMode: (mode) =>
+    ipcRenderer.invoke(
+      channels.setAiGroupingMode,
+      mode as AiGroupingMode,
+    ) as Promise<AiToolsSnapshot>,
+  setAiModel: (provider, model) =>
+    ipcRenderer.invoke(
+      channels.setAiModel,
+      provider as AiProviderId,
+      model,
+    ) as Promise<AiToolsSnapshot>,
+  setGeminiApiKey: (update) =>
+    ipcRenderer.invoke(
+      channels.setGeminiApiKey,
+      update as GeminiApiKeyUpdate,
+    ) as Promise<AiToolsSnapshot>,
+  removeGeminiApiKey: () =>
+    ipcRenderer.invoke(channels.removeGeminiApiKey) as Promise<AiToolsSnapshot>,
+  previewAiTool: (request) =>
     ipcRenderer.invoke(
       channels.previewAiTool,
-      toolId as AiToolId,
-    ) as Promise<AiToolProposal>,
-  applyAiTool: (proposalId) =>
+      request as OrganiseTabsRequest,
+    ) as Promise<OrganiseTabsProposal>,
+  applyAiTool: (proposal) =>
     ipcRenderer.invoke(
       channels.applyAiTool,
-      proposalId,
+      proposal as OrganiseTabsProposal,
     ) as Promise<AiToolApplyResult>,
   cancelAiTool: () =>
     ipcRenderer.invoke(channels.cancelAiTool) as Promise<void>,

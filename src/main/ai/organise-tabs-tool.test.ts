@@ -1,13 +1,23 @@
 import { describe, expect, it, vi } from "vitest";
 
+import type { OrganiseTabsRequest } from "../../shared/ai-tools";
 import {
   AiTabOrganizationUndoUnavailableError,
   type TabManager,
 } from "../tab-manager";
-import type { OllamaClient } from "./ollama-client";
+import type { StructuredModelProvider } from "./structured-provider";
 import { OrganiseTabsTool } from "./organise-tabs-tool";
 
-function setup(response: unknown) {
+const smartRequest: OrganiseTabsRequest = {
+  provider: "ollama",
+  model: "qwen3:1.7b",
+  groupingMode: "smart",
+  customInstructions: "Keep research together",
+  rememberCustomInstructions: false,
+  cloudConsent: false,
+};
+
+function setup(responses: unknown[]) {
   const applyAiTabOrganization = vi.fn().mockResolvedValue({
     undoToken: "undo-1",
     organisedTabCount: 3,
@@ -25,13 +35,13 @@ function setup(response: unknown) {
         {
           id: "alpha",
           title: "Alpha docs",
-          hostname: "alpha.example",
+          hostname: "docs.example",
           pathHint: "/docs",
         },
         {
           id: "beta",
           title: "Beta docs",
-          hostname: "beta.example",
+          hostname: "docs.example",
           pathHint: "/guide",
         },
         {
@@ -46,11 +56,13 @@ function setup(response: unknown) {
     applyAiTabOrganization,
     undoAiTabOrganization,
   } as unknown as TabManager;
-  const chatStructured = vi.fn().mockResolvedValue(response);
-  const ollama = { chatStructured } as unknown as OllamaClient;
+  const chatStructured = vi.fn();
+  for (const response of responses)
+    chatStructured.mockResolvedValueOnce(response);
+  const provider = { chatStructured } as unknown as StructuredModelProvider;
   return {
     tool: new OrganiseTabsTool(tabs),
-    ollama,
+    provider,
     chatStructured,
     applyAiTabOrganization,
     undoAiTabOrganization,
@@ -58,80 +70,159 @@ function setup(response: unknown) {
 }
 
 describe("OrganiseTabsTool", () => {
-  it("maps opaque aliases into a reviewable plan and applies only that plan", async () => {
-    const harness = setup({
-      groups: [{ name: "Research", color: "purple", tabKeys: ["t1", "t2"] }],
-      ungroupedTabKeys: ["t3"],
-    });
+  it.each([5, 20, 50])(
+    "validates a complete model plan for %i tabs",
+    async (count) => {
+      const candidates = Array.from({ length: count }, (_, index) => ({
+        id: `tab-${index + 1}`,
+        title: `Tab ${index + 1}`,
+        hostname: `${index % 5}.example`,
+        pathHint: "/",
+      }));
+      const tabs = {
+        getAiTabOrganizationContext: () => ({
+          revision: "scale-test",
+          candidates,
+          preservedTabIds: [],
+        }),
+      } as unknown as TabManager;
+      const groupedCount = count - (count % 2);
+      const response = {
+        groups: Array.from({ length: groupedCount / 2 }, (_, groupIndex) => ({
+          name: `Group ${groupIndex + 1}`,
+          tabIds: [`t${groupIndex * 2 + 1}`, `t${groupIndex * 2 + 2}`],
+        })),
+        ungroupedTabIds: count % 2 ? [`t${count}`] : [],
+      };
+      const provider = {
+        chatStructured: vi.fn().mockResolvedValue(response),
+      } as unknown as StructuredModelProvider;
+
+      const prepared = await new OrganiseTabsTool(tabs).preview(
+        smartRequest,
+        provider,
+        new AbortController().signal,
+      );
+
+      const included =
+        prepared.publicProposal.groups.reduce(
+          (total, group) => total + group.tabIds.length,
+          0,
+        ) + prepared.publicProposal.ungroupedTabIds.length;
+      expect(included).toBe(count);
+    },
+  );
+
+  it("sends only temporary IDs, titles and hostnames and applies the approved plan", async () => {
+    const harness = setup([
+      {
+        groups: [{ name: "Research", tabIds: ["t1", "t2"] }],
+        ungroupedTabIds: ["t3"],
+      },
+    ]);
 
     const prepared = await harness.tool.preview(
-      "qwen3:4b",
-      harness.ollama,
+      smartRequest,
+      harness.provider,
       new AbortController().signal,
     );
 
     expect(prepared.publicProposal.groups[0]).toMatchObject({
       name: "Research",
-      color: "purple",
+      color: "blue",
       tabIds: ["alpha", "beta"],
       tabTitles: ["Alpha docs", "Beta docs"],
     });
     expect(prepared.publicProposal.ungroupedTabIds).toEqual(["mail"]);
-    expect(prepared.publicProposal.warnings[0]).toContain("protected");
     const call = harness.chatStructured.mock.calls[0][0];
     expect(call.prompt).not.toContain('"id":"alpha"');
-    expect(call.prompt).toContain('"key":"t1"');
-    expect(call.prompt).not.toContain("currentGroup");
+    expect(call.prompt).not.toContain("/docs");
+    expect(call.prompt).toContain('"id":"t1"');
+    expect(call.prompt).toContain('"hostname":"docs.example"');
 
-    const result = await harness.tool.apply(prepared);
+    const result = await harness.tool.apply(prepared, prepared.publicProposal);
     expect(result.undoAvailable).toBe(true);
     expect(harness.applyAiTabOrganization).toHaveBeenCalledWith({
       revision: "revision-1",
-      groups: [
-        { name: "Research", color: "purple", tabIds: ["alpha", "beta"] },
-      ],
+      groups: [{ name: "Research", color: "blue", tabIds: ["alpha", "beta"] }],
       ungroupedTabIds: ["mail"],
     });
   });
 
-  it("rejects duplicate or invented model tab references", async () => {
-    const harness = setup({
-      groups: [{ name: "Bad", color: "blue", tabKeys: ["t1", "t1"] }],
-      ungroupedTabKeys: ["t2", "t3"],
-    });
+  it("retries one invalid model plan and accepts a repaired response", async () => {
+    const harness = setup([
+      {
+        groups: [{ name: "Bad", tabIds: ["t1", "t1"] }],
+        ungroupedTabIds: ["t2", "t3"],
+      },
+      {
+        groups: [{ name: "Research", tabIds: ["t1", "t2"] }],
+        ungroupedTabIds: ["t3"],
+      },
+    ]);
 
     await expect(
       harness.tool.preview(
-        "qwen3:4b",
-        harness.ollama,
+        smartRequest,
+        harness.provider,
+        new AbortController().signal,
+      ),
+    ).resolves.toMatchObject({
+      publicProposal: { groups: [{ name: "Research" }] },
+    });
+    expect(harness.chatStructured).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a second invalid response and never mutates tabs", async () => {
+    const invalid = {
+      groups: [{ name: "Bad", tabIds: ["t1", "t1"] }],
+      ungroupedTabIds: ["t2", "t3"],
+    };
+    const harness = setup([invalid, invalid]);
+
+    await expect(
+      harness.tool.preview(
+        smartRequest,
+        harness.provider,
         new AbortController().signal,
       ),
     ).rejects.toThrow("duplicated or invented");
     expect(harness.applyAiTabOrganization).not.toHaveBeenCalled();
   });
 
-  it("keeps a one-shot undo token inside the tool", async () => {
-    const harness = setup({
-      groups: [{ name: "Research", color: "green", tabKeys: ["t1", "t2"] }],
-      ungroupedTabKeys: ["t3"],
-    });
+  it("groups matching hostnames locally without invoking a provider", async () => {
+    const harness = setup([]);
     const prepared = await harness.tool.preview(
-      "qwen3:4b",
-      harness.ollama,
+      { ...smartRequest, groupingMode: "website", model: "" },
+      null,
       new AbortController().signal,
     );
-    await harness.tool.apply(prepared);
+
+    expect(prepared.publicProposal.provider).toBe("website");
+    expect(prepared.publicProposal.groups[0].tabIds).toEqual(["alpha", "beta"]);
+    expect(prepared.publicProposal.ungroupedTabIds).toEqual(["mail"]);
+    expect(harness.chatStructured).not.toHaveBeenCalled();
+  });
+
+  it("keeps a one-shot undo token and classifies topology failures", async () => {
+    const harness = setup([
+      {
+        groups: [{ name: "Research", tabIds: ["t1", "t2"] }],
+        ungroupedTabIds: ["t3"],
+      },
+    ]);
+    const prepared = await harness.tool.preview(
+      smartRequest,
+      harness.provider,
+      new AbortController().signal,
+    );
+    await harness.tool.apply(prepared, prepared.publicProposal);
 
     await expect(harness.tool.undo()).resolves.toMatchObject({
       undoAvailable: false,
     });
     expect(harness.undoAiTabOrganization).toHaveBeenCalledWith("undo-1");
     await expect(harness.tool.undo()).rejects.toThrow("no AI tab organisation");
-  });
-
-  it("only retries undo failures that can still succeed", () => {
-    const harness = setup({ groups: [], ungroupedTabKeys: [] });
-
     expect(
       harness.tool.isUndoRetryable(new Error("temporary disk error")),
     ).toBe(true);

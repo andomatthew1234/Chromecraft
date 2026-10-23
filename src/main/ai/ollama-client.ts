@@ -1,20 +1,19 @@
 import type { OllamaModelSnapshot } from "../../shared/ai-tools";
+import type {
+  StructuredGenerationRequest,
+  StructuredModelProvider,
+} from "./structured-provider";
 
 const OLLAMA_ORIGIN = "http://127.0.0.1:11434" as const;
 const MODEL_LIST_LIMIT = 2 * 1024 ** 2;
 const CHAT_RESPONSE_LIMIT = 1024 ** 2;
 const MODEL_LIST_TIMEOUT_MS = 4_000;
 const CHAT_TIMEOUT_MS = 120_000;
+const MODEL_INSTALL_TIMEOUT_MS = 15 * 60_000;
 
 type FetchLike = typeof fetch;
 
-export interface OllamaChatRequest {
-  model: string;
-  system: string;
-  prompt: string;
-  schema: Record<string, unknown>;
-  signal: AbortSignal;
-}
+export type OllamaChatRequest = StructuredGenerationRequest;
 
 function cleanText(value: unknown, maximum: number): string | null {
   if (typeof value !== "string") return null;
@@ -93,7 +92,7 @@ async function parseJsonResponse(
 }
 
 /** Fixed-loopback adapter for the local Ollama HTTP interface. */
-export class OllamaClient {
+export class OllamaClient implements StructuredModelProvider {
   readonly endpoint = OLLAMA_ORIGIN;
 
   constructor(private readonly request: FetchLike = fetch) {}
@@ -153,6 +152,40 @@ export class OllamaClient {
     }
   }
 
+  async installModel(modelName: string, signal: AbortSignal): Promise<void> {
+    const model = cleanText(modelName, 256);
+    if (!model) throw new TypeError("A valid Ollama model is required.");
+    const scoped = requestSignal(signal, MODEL_INSTALL_TIMEOUT_MS);
+    try {
+      const response = await this.request(`${OLLAMA_ORIGIN}/api/pull`, {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          "content-type": "application/json",
+        },
+        redirect: "error",
+        signal: scoped.signal,
+        body: JSON.stringify({ model, stream: false }),
+      });
+      const value = await parseJsonResponse(response, CHAT_RESPONSE_LIMIT);
+      if (
+        !value ||
+        typeof value !== "object" ||
+        (value as { status?: unknown }).status !== "success"
+      ) {
+        throw new Error("Ollama did not confirm the model installation.");
+      }
+    } catch (error) {
+      if (scoped.signal.aborted) {
+        if (signal.aborted) throw new DOMException("Cancelled", "AbortError");
+        throw new Error("The Ollama model download took too long.");
+      }
+      throw error;
+    } finally {
+      scoped.dispose();
+    }
+  }
+
   async chatStructured(request: OllamaChatRequest): Promise<unknown> {
     const model = cleanText(request.model, 256);
     if (!model) throw new TypeError("A valid Ollama model is required.");
@@ -177,8 +210,12 @@ export class OllamaClient {
           stream: false,
           format: request.schema,
           think: false,
-          keep_alive: "5m",
-          options: { temperature: 0 },
+          keep_alive: "60s",
+          options: {
+            temperature: 0.1,
+            num_ctx: 4_096,
+            num_predict: 2_048,
+          },
         }),
       });
       const value = await parseJsonResponse(response, CHAT_RESPONSE_LIMIT);

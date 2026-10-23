@@ -44,7 +44,11 @@ import {
 import { parseChromeWebStoreListingUrl } from "../shared/web-store-listing";
 import type { UpdateSnapshot } from "../shared/updates";
 import type { OfflinePagesSnapshot } from "../shared/offline-pages";
-import type { AiToolsSnapshot, OrganiseTabsProposal } from "../shared/ai-tools";
+import type {
+  AiToolsSnapshot,
+  OrganiseTabsProposal,
+  OrganiseTabsRequest,
+} from "../shared/ai-tools";
 import {
   ExtensionInstallBanner,
   type ExtensionInstallBannerState,
@@ -182,6 +186,26 @@ const emptyExtensions: ExtensionsSnapshot = {
 };
 const emptyAiTools: AiToolsSnapshot = {
   provider: "ollama",
+  preferredGroupingMode: "smart",
+  eligibleTabCount: 0,
+  cloudDataPreview: [],
+  ollama: {
+    endpoint: "http://127.0.0.1:11434",
+    connection: "unknown",
+    models: [],
+    selectedModel: null,
+    error: null,
+  },
+  gemini: {
+    connection: "unknown",
+    models: [],
+    selectedModel: null,
+    error: null,
+    apiKeyConfigured: false,
+    secureStorageAvailable: false,
+    sessionOnly: false,
+    cloudConsentGranted: false,
+  },
   endpoint: "http://127.0.0.1:11434",
   connection: "unknown",
   models: [],
@@ -236,7 +260,9 @@ type IconName =
   | "warning"
   | "volumeUp"
   | "volumeOff"
-  | "videoLibrary";
+  | "videoLibrary"
+  | "visibility"
+  | "visibilityOff";
 
 const iconSymbols: Record<IconName, string> = {
   add: "add",
@@ -277,6 +303,8 @@ const iconSymbols: Record<IconName, string> = {
   volumeUp: "volume_up",
   volumeOff: "volume_off",
   videoLibrary: "video_library",
+  visibility: "visibility",
+  visibilityOff: "visibility_off",
 };
 
 function Icon({ name }: { name: IconName }) {
@@ -2723,6 +2751,7 @@ export type FullSettingsCategoryId =
   | "privacy"
   | "appearance"
   | "downloads"
+  | "ai"
   | "hyperdrive"
   | "extensions"
   | "advanced";
@@ -2766,6 +2795,12 @@ export const fullSettingsCategories: FullSettingsCategory[] = [
     label: "Utilities & tweaks",
     description: "YouTube downloads, My Gallery and useful extras",
     icon: "download",
+  },
+  {
+    id: "ai",
+    label: "AI",
+    description: "Local and cloud model providers",
+    icon: "autoAwesome",
   },
   {
     id: "hyperdrive",
@@ -2880,6 +2915,20 @@ export const fullSettingsSearchItems: FullSettingsSearchItem[] = [
     title: "Hyperdrive",
     description: "Predict and prepare likely destinations before navigation.",
     keywords: "enable preload prefetch performance speed",
+  },
+  {
+    id: "gemini-api-key",
+    category: "ai",
+    title: "Google Gemini API",
+    description: "Configure a private API key for fast cloud tab grouping.",
+    keywords: "ai gemini api key google cloud model provider",
+  },
+  {
+    id: "tab-organiser-model",
+    category: "ai",
+    title: "Tab organiser models",
+    description: "Choose independent Ollama and Gemini organiser models.",
+    keywords: "ollama qwen gemini model tabs organise local cloud",
   },
   {
     id: "hyperdrive-mode",
@@ -3511,21 +3560,275 @@ export function QuickSettingsPanel({
   );
 }
 
+function AiSettings({
+  aiTools,
+  highlightedSettingId,
+}: {
+  aiTools: AiToolsSnapshot;
+  highlightedSettingId: string | null;
+}) {
+  const [apiKey, setApiKey] = useState("");
+  const [showKey, setShowKey] = useState(false);
+  const [persist, setPersist] = useState(aiTools.gemini.secureStorageAvailable);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const saveKey = async () => {
+    if (!apiKey.trim()) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await window.chromecraft.setGeminiApiKey({
+        apiKey: apiKey.trim(),
+        persist,
+      });
+      setApiKey("");
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "Could not save the API key.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <>
+      <section className="settings-card" aria-labelledby="ai-gemini-title">
+        <header className="settings-card-header">
+          <span className="settings-card-icon">
+            <Icon name="autoAwesome" />
+          </span>
+          <span>
+            <h3 id="ai-gemini-title">Google Gemini</h3>
+            <p>Use your own API key for fast cloud tab organisation.</p>
+          </span>
+        </header>
+        <div
+          id="setting-gemini-api-key"
+          data-setting-id="gemini-api-key"
+          className={settingTargetClass(
+            "gemini-api-key",
+            highlightedSettingId,
+            "setting-row setting-row-stacked",
+          )}
+        >
+          <span className="setting-copy">
+            <span className="setting-title">Gemini API key</span>
+            <small className="setting-description">
+              {aiTools.gemini.apiKeyConfigured
+                ? `${aiTools.gemini.sessionOnly ? "Available for this session" : "Stored using operating-system encryption"} · ${aiTools.gemini.connection === "connected" ? "Connection ready" : "Not tested"}`
+                : "No key configured. Chromecraft never exposes this key to websites."}
+            </small>
+          </span>
+          <span className="ai-key-field">
+            <input
+              className="settings-text-field"
+              type={showKey ? "text" : "password"}
+              value={apiKey}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder={
+                aiTools.gemini.apiKeyConfigured
+                  ? "Enter a replacement key"
+                  : "Enter Gemini API key"
+              }
+              aria-label="Gemini API key"
+              onChange={(event) => setApiKey(event.target.value)}
+            />
+            <button
+              type="button"
+              aria-label={showKey ? "Hide API key" : "Show API key"}
+              onClick={() => setShowKey((shown) => !shown)}
+            >
+              <Icon name={showKey ? "visibilityOff" : "visibility"} />
+            </button>
+          </span>
+          <label className="ai-key-persistence">
+            <input
+              type="checkbox"
+              checked={persist}
+              disabled={!aiTools.gemini.secureStorageAvailable}
+              onChange={(event) => setPersist(event.target.checked)}
+            />
+            <span>Remember securely on this device</span>
+          </label>
+          {!aiTools.gemini.secureStorageAvailable && (
+            <small className="setting-description">
+              Secure credential storage is unavailable, so the key can only be
+              kept for this session.
+            </small>
+          )}
+          {error && (
+            <small className="settings-inline-error" role="alert">
+              {error}
+            </small>
+          )}
+          <span className="settings-inline-actions">
+            <button
+              type="button"
+              onClick={() =>
+                void window.chromecraft.createTab(
+                  "https://aistudio.google.com/apikey",
+                )
+              }
+            >
+              <Icon name="open" /> Get an API key
+            </button>
+            {aiTools.gemini.apiKeyConfigured && (
+              <button
+                type="button"
+                onClick={() =>
+                  void window.chromecraft.refreshAiModels("gemini")
+                }
+              >
+                <Icon name="reload" /> Test connection
+              </button>
+            )}
+            <button
+              type="button"
+              className="settings-primary-action"
+              disabled={!apiKey.trim() || saving}
+              onClick={() => void saveKey()}
+            >
+              {saving ? "Checking…" : "Save and test"}
+            </button>
+            {aiTools.gemini.apiKeyConfigured && (
+              <button
+                type="button"
+                onClick={() => void window.chromecraft.removeGeminiApiKey()}
+              >
+                Remove key
+              </button>
+            )}
+          </span>
+        </div>
+        <div
+          id="setting-gemini-model"
+          data-setting-id="gemini-model"
+          className={settingTargetClass(
+            "gemini-model",
+            highlightedSettingId,
+            "setting-row setting-row-stacked",
+          )}
+        >
+          <span className="setting-copy">
+            <span className="setting-title">Preferred Gemini model</span>
+            <small className="setting-description">
+              Stable text-generation models only. Chromecraft recommends the
+              latest compatible Flash-Lite model.
+            </small>
+          </span>
+          <select
+            className="settings-select"
+            value={aiTools.gemini.selectedModel ?? ""}
+            disabled={!aiTools.gemini.models.length}
+            onChange={(event) =>
+              void window.chromecraft.setAiModel("gemini", event.target.value)
+            }
+          >
+            {!aiTools.gemini.selectedModel && (
+              <option value="">Choose a Gemini model</option>
+            )}
+            {aiTools.gemini.models.map((model) => (
+              <option value={model.name} key={model.name}>
+                {model.recommended ? "Recommended · " : ""}
+                {model.displayName ?? model.name}
+              </option>
+            ))}
+          </select>
+          <span className="settings-inline-actions">
+            <button
+              type="button"
+              disabled={!aiTools.gemini.apiKeyConfigured}
+              onClick={() => void window.chromecraft.refreshAiModels("gemini")}
+            >
+              <Icon name="reload" /> Refresh Gemini models
+            </button>
+          </span>
+        </div>
+      </section>
+
+      <section className="settings-card" aria-labelledby="ai-models-title">
+        <header className="settings-card-header">
+          <span className="settings-card-icon">
+            <Icon name="memory" />
+          </span>
+          <span>
+            <h3 id="ai-models-title">Tab organiser models</h3>
+            <p>
+              These choices are independent from the conversational assistant
+              model.
+            </p>
+          </span>
+        </header>
+        <div
+          id="setting-tab-organiser-model"
+          data-setting-id="tab-organiser-model"
+          className={settingTargetClass(
+            "tab-organiser-model",
+            highlightedSettingId,
+            "setting-row setting-row-stacked",
+          )}
+        >
+          <span className="setting-copy">
+            <span className="setting-title">Ollama model</span>
+            <small className="setting-description">
+              Chromecraft recommends qwen3:1.7b or another small installed
+              model.
+            </small>
+          </span>
+          <select
+            className="settings-select"
+            value={aiTools.ollama.selectedModel ?? ""}
+            disabled={!aiTools.ollama.models.length}
+            onChange={(event) =>
+              void window.chromecraft.setAiModel("ollama", event.target.value)
+            }
+          >
+            {!aiTools.ollama.selectedModel && (
+              <option value="">Choose a local model</option>
+            )}
+            {aiTools.ollama.models.map((model) => (
+              <option value={model.name} key={model.name}>
+                {model.name}
+                {model.parameterSize ? ` · ${model.parameterSize}` : ""}
+              </option>
+            ))}
+          </select>
+          <span className="settings-inline-actions">
+            <button
+              type="button"
+              onClick={() => void window.chromecraft.refreshAiModels("ollama")}
+            >
+              <Icon name="reload" /> Refresh local models
+            </button>
+          </span>
+        </div>
+      </section>
+    </>
+  );
+}
+
 export function FullSettingsPage({
   snapshot,
   hyperdrive,
+  aiTools = emptyAiTools,
   websiteControls = emptyWebsiteControls,
   smartDownloads = emptySmartDownloads,
   openSmartDownloadsRequest = 0,
   openSitePermissionsRequest = 0,
+  openAiSettingsRequest = 0,
   openExtensionsPage,
 }: {
   snapshot: BrowserSnapshot;
   hyperdrive: HyperdriveSnapshot;
+  aiTools?: AiToolsSnapshot;
   websiteControls?: WebsiteControlsSnapshot;
   smartDownloads?: SmartDownloadsSnapshot;
   openSmartDownloadsRequest?: number;
   openSitePermissionsRequest?: number;
+  openAiSettingsRequest?: number;
   openExtensionsPage: () => void;
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
@@ -3557,6 +3860,12 @@ export function FullSettingsPage({
     setSmartDownloadsOpen(false);
     setHighlightedSettingId("website-permissions");
   }, [openSitePermissionsRequest]);
+  useEffect(() => {
+    if (openAiSettingsRequest <= 0) return;
+    setSelectedCategory("ai");
+    setSmartDownloadsOpen(false);
+    setHighlightedSettingId("gemini-api-key");
+  }, [openAiSettingsRequest]);
   useLayoutEffect(() => {
     if (!highlightedSettingId) return;
     const target = document.getElementById(`setting-${highlightedSettingId}`);
@@ -3994,6 +4303,13 @@ export function FullSettingsPage({
           />
         </label>
       </section>
+    );
+  } else if (selectedCategory === "ai") {
+    categoryContent = (
+      <AiSettings
+        aiTools={aiTools}
+        highlightedSettingId={highlightedSettingId}
+      />
     );
   } else if (selectedCategory === "hyperdrive") {
     categoryContent = (
@@ -6395,6 +6711,7 @@ export function App() {
   const [openSmartDownloadsRequest, setOpenSmartDownloadsRequest] = useState(0);
   const [openSitePermissionsRequest, setOpenSitePermissionsRequest] =
     useState(0);
+  const [openAiSettingsRequest, setOpenAiSettingsRequest] = useState(0);
   const [extensions, setExtensions] = useState(emptyExtensions);
   const [updates, setUpdates] = useState<UpdateSnapshot | null>(null);
   const [aiTools, setAiTools] = useState<AiToolsSnapshot>(emptyAiTools);
@@ -6764,32 +7081,28 @@ export function App() {
       await window.chromecraft.setSidebarOpen(false);
     })();
   };
-  const requestAiTabPlan = async (
-    current: AiToolsSnapshot = aiTools,
-    forceModelRefresh = false,
-  ) => {
+  const openAiSettings = () => {
+    setAiPanelOpen(false);
+    void (async () => {
+      const existingTab = fullSettingsTabId
+        ? snapshot.tabs.find((tab) => tab.id === fullSettingsTabId)
+        : null;
+      if (existingTab) {
+        await window.chromecraft.activateTab(existingTab.id);
+      } else {
+        const created = await window.chromecraft.createTab();
+        latestFullSettingsTabId.current = created;
+        setFullSettingsTabId(created);
+      }
+      setOpenAiSettingsRequest((value) => value + 1);
+      setTool(null);
+      await window.chromecraft.setSidebarOpen(false);
+    })();
+  };
+  const requestAiTabPlan = async (request: OrganiseTabsRequest) => {
     setAiProposal(null);
     try {
-      let next = current;
-      if (
-        forceModelRefresh ||
-        next.connection !== "connected" ||
-        next.models.length === 0 ||
-        !next.selectedModel ||
-        !next.models.some((model) => model.name === next.selectedModel)
-      ) {
-        next = await window.chromecraft.refreshAiModels();
-        setAiTools(next);
-      }
-      if (
-        next.connection !== "connected" ||
-        next.models.length === 0 ||
-        !next.selectedModel ||
-        !next.models.some((model) => model.name === next.selectedModel)
-      ) {
-        return;
-      }
-      const proposal = await window.chromecraft.previewAiTool("organise-tabs");
+      const proposal = await window.chromecraft.previewAiTool(request);
       setAiProposal(proposal);
     } catch {
       // The controller publishes a specific failure state for the panel.
@@ -6842,16 +7155,8 @@ export function App() {
             setExtensionsPageOpen(false);
             setAiPanelOpen(true);
             setBrandMenuOpen(false);
-            const hasCurrentPlan =
-              aiTools.run.stage === "ready" &&
-              aiProposal?.id === aiTools.run.proposalId;
-            if (
-              !hasCurrentPlan &&
-              aiTools.run.stage !== "complete" &&
-              !["checking", "thinking", "applying"].includes(aiTools.run.stage)
-            ) {
-              void requestAiTabPlan(aiTools, true);
-            }
+            setAiProposal(null);
+            void window.chromecraft.getAiTools().then(setAiTools);
           }}
           onMenu={(event, tab) => {
             event.preventDefault();
@@ -7045,16 +7350,8 @@ export function App() {
           setUpdatesOpen(false);
           setExtensionsPageOpen(false);
           setAiPanelOpen(true);
-          const hasCurrentPlan =
-            aiTools.run.stage === "ready" &&
-            aiProposal?.id === aiTools.run.proposalId;
-          if (
-            !hasCurrentPlan &&
-            aiTools.run.stage !== "complete" &&
-            !["checking", "thinking", "applying"].includes(aiTools.run.stage)
-          ) {
-            void requestAiTabPlan(aiTools, true);
-          }
+          setAiProposal(null);
+          void window.chromecraft.getAiTools().then(setAiTools);
         }}
         requestClearHistory={(range) => {
           if (range === "all") {
@@ -7080,10 +7377,12 @@ export function App() {
         <FullSettingsPage
           snapshot={snapshot}
           hyperdrive={hyperdrive}
+          aiTools={aiTools}
           websiteControls={websiteControls}
           smartDownloads={smartDownloads}
           openSmartDownloadsRequest={openSmartDownloadsRequest}
           openSitePermissionsRequest={openSitePermissionsRequest}
+          openAiSettingsRequest={openAiSettingsRequest}
           openExtensionsPage={() => {
             setUpdatesOpen(false);
             setExtensionsPageOpen(true);
@@ -7100,37 +7399,47 @@ export function App() {
           snapshot={aiTools}
           proposal={aiProposal}
           close={() => setAiPanelOpen(false)}
-          retry={() => {
-            if (
-              !["checking", "thinking", "applying"].includes(aiTools.run.stage)
-            ) {
-              void requestAiTabPlan(aiTools, true);
-            }
-          }}
-          refreshModels={() => {
+          organise={(request) => void requestAiTabPlan(request)}
+          refreshModels={(provider) => {
             void window.chromecraft
-              .refreshAiModels()
+              .refreshAiModels(provider)
               .then(setAiTools)
               .catch(() => undefined);
           }}
-          selectModel={(model) => {
+          installRecommendedModel={() => {
             void window.chromecraft
-              .setAiModel(model)
-              .then((next) => {
-                setAiTools(next);
-                return requestAiTabPlan(next);
-              })
+              .installRecommendedOllamaModel()
+              .then(setAiTools)
               .catch(() => undefined);
           }}
-          apply={(proposalId) => {
+          selectProvider={(provider) => {
             void window.chromecraft
-              .applyAiTool(proposalId)
+              .setAiProvider(provider)
+              .then(setAiTools)
+              .catch(() => undefined);
+          }}
+          selectGroupingMode={(mode) => {
+            void window.chromecraft
+              .setAiGroupingMode(mode)
+              .then(setAiTools)
+              .catch(() => undefined);
+          }}
+          selectModel={(provider, model) => {
+            void window.chromecraft
+              .setAiModel(provider, model)
+              .then(setAiTools)
+              .catch(() => undefined);
+          }}
+          apply={(proposal) => {
+            void window.chromecraft
+              .applyAiTool(proposal)
               .catch(() => undefined);
           }}
           cancel={() => window.chromecraft.cancelAiTool()}
           undo={() => {
             void window.chromecraft.undoAiTool().catch(() => undefined);
           }}
+          openAiSettings={openAiSettings}
         />
       )}
       {extensionsPageOpen && (
