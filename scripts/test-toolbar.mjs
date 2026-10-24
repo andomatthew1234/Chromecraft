@@ -310,6 +310,7 @@ try {
       "Planning",
       "pink",
     );
+    await window.chromecraft.activateTab(ids[1]);
     return { ids, firstGroupId, secondGroupId };
   })()`);
   await poll(
@@ -323,6 +324,11 @@ try {
     const groupedTabs = [...document.querySelectorAll('.tab-group .tab')];
     const firstGroupStyle = getComputedStyle(groups[0]);
     const firstPillStyle = getComputedStyle(pills[0]);
+    const activeTab = document.querySelector('.tab-group .tab.active');
+    activeTab?.scrollIntoView({ inline: 'center', block: 'nearest' });
+    const activeStyle = activeTab ? getComputedStyle(activeTab) : null;
+    const activeShoulder = activeTab ? getComputedStyle(activeTab, '::before') : null;
+    const activeContour = activeTab?.querySelector('.tab-target');
     return {
       groupCount: groups.length,
       groupedTabCount: groupedTabs.length,
@@ -331,8 +337,12 @@ try {
       pillRadius: firstPillStyle.borderRadius,
       pillBackground: firstPillStyle.backgroundColor,
       pillBackgrounds: pills.map((pill) => getComputedStyle(pill).backgroundColor),
+      groupIndicators: [...document.querySelectorAll('.tab-group-toggle > .material-icon')].map((icon) => icon.textContent),
       stripScrollable: document.querySelector('.tab-scroller').scrollWidth > document.querySelector('.tab-scroller').clientWidth,
       normalTabShape: groupedTabs.every((tab) => getComputedStyle(tab).borderTopLeftRadius !== '9999px'),
+      activeRadius: activeStyle?.borderTopLeftRadius,
+      activeShoulder: activeShoulder?.content,
+      activeContourWidth: activeContour ? getComputedStyle(activeContour, '::after').borderTopWidth : null,
     };
   })()`);
   if (
@@ -341,7 +351,13 @@ try {
     groupVisual.groupBackground !== "rgba(0, 0, 0, 0)" ||
     groupVisual.pillHeight > 30 ||
     new Set(groupVisual.pillBackgrounds).size !== 2 ||
-    !groupVisual.normalTabShape
+    groupVisual.groupIndicators.some(
+      (icon) => icon.includes("up") || icon.includes("down"),
+    ) ||
+    !groupVisual.normalTabShape ||
+    groupVisual.activeRadius !== "12px" ||
+    groupVisual.activeShoulder === "none" ||
+    groupVisual.activeContourWidth !== "2px"
   ) {
     throw new Error(
       `Tab-group visual regression: ${JSON.stringify(groupVisual)}`,
@@ -389,11 +405,14 @@ try {
       return {
         collapsed: group?.collapsed,
         tabCount: snapshot.tabs.length,
-        visibleMembers: document.querySelectorAll('.tab-group.group-blue .tab').length,
+        visibleMembers: document.querySelectorAll('.tab-group.group-blue .tab:not(.concealed)').length,
+        inertMembers: [...document.querySelectorAll('.tab-group.group-blue .tab.concealed')]
+          .every((tab) => tab.inert && tab.getAttribute('aria-hidden') === 'true'),
         activeTabId: snapshot.activeTabId,
       };
     })()`),
-    (value) => value?.collapsed && value.visibleMembers === 0,
+    (value) =>
+      value?.collapsed && value.visibleMembers === 0 && value.inertMembers,
     "the group to collapse without destroying tabs",
   );
   if (collapsed.tabCount !== beforeCollapse.tabs.length) {

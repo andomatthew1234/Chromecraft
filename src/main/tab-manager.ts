@@ -1558,6 +1558,13 @@ export class TabManager {
         if (groupId) tab.pinned = false;
         tab.groupId = groupId;
       }
+      if (
+        groupId &&
+        moving.includes(this.activeTabId) &&
+        this.requireTabGroup(groupId).collapsed
+      ) {
+        this.requireTabGroup(groupId).collapsed = false;
+      }
     }
     this.sortPinnedTabsFirst();
     this.removeUnreferencedGroups();

@@ -883,6 +883,25 @@ function readTabDragPayload(dataTransfer: DataTransfer): string[] {
   }
 }
 
+function setCompactDragPreview(
+  dataTransfer: DataTransfer,
+  source: HTMLElement,
+  kind: "tab" | "group",
+) {
+  const bounds = source.getBoundingClientRect();
+  const preview = source.cloneNode(true) as HTMLElement;
+  preview.classList.add("tab-drag-preview", `tab-drag-preview-${kind}`);
+  preview.removeAttribute("draggable");
+  preview.style.width = `${Math.min(bounds.width, kind === "group" ? 156 : 190)}px`;
+  document.body.append(preview);
+  dataTransfer.setDragImage(
+    preview,
+    Math.min(24, preview.getBoundingClientRect().width / 2),
+    preview.getBoundingClientRect().height / 2,
+  );
+  setTimeout(() => preview.remove(), 0);
+}
+
 export async function performTabGroupDrop({
   draggedTabIds,
   groupId,
@@ -939,12 +958,28 @@ export function tabDropIndex(
   return targetIndex + (side === "after" ? 1 : 0);
 }
 
+export function groupBoundaryDropIndex(
+  tabs: BrowserTabSnapshot[],
+  draggedTabIds: readonly string[],
+  targetGroupId: string,
+  side: TabDropSide,
+): number {
+  const targetTabs = tabs.filter(
+    (tab) => (tab as OrganisedTabSnapshot).groupId === targetGroupId,
+  );
+  const boundary = side === "before" ? targetTabs[0] : targetTabs.at(-1);
+  return boundary
+    ? tabDropIndex(tabs, draggedTabIds, boundary.id, side)
+    : tabs.length - draggedTabIds.length;
+}
+
 const TabButton = memo(function TabButton({
   active,
   selected,
   tab,
   settings,
   dragging,
+  concealed,
   onMenu,
   onDragStart,
   onDragEnd,
@@ -958,6 +993,7 @@ const TabButton = memo(function TabButton({
   tab: BrowserTabSnapshot;
   settings: boolean;
   dragging: boolean;
+  concealed: boolean;
   onMenu: (event: MouseEvent, tab: BrowserTabSnapshot) => void;
   onDragStart: (
     event: ReactDragEvent<HTMLDivElement>,
@@ -993,9 +1029,11 @@ const TabButton = memo(function TabButton({
   };
   return (
     <div
-      className={`tab ${active ? "active" : ""} ${selected ? "selected" : ""} ${dragging ? "dragging" : ""} ${dropSide ? `drop-${dropSide}` : ""} ${(tab as OrganisedTabSnapshot).pinned ? "pinned" : ""}`}
+      className={`tab ${active ? "active" : ""} ${selected ? "selected" : ""} ${dragging ? "dragging" : ""} ${concealed ? "concealed" : ""} ${dropSide ? `drop-${dropSide}` : ""} ${(tab as OrganisedTabSnapshot).pinned ? "pinned" : ""}`}
       data-tab-id={tab.id}
-      draggable
+      draggable={!concealed}
+      aria-hidden={concealed || undefined}
+      inert={concealed ? true : undefined}
       onDragStart={(event) => onDragStart(event, tab)}
       onDragEnd={onDragEnd}
       onDragOver={(event) => {
@@ -1024,7 +1062,7 @@ const TabButton = memo(function TabButton({
         aria-selected={active}
         aria-label={`${label}${selected ? ", selected for tab actions" : ""}`}
         onClick={activate}
-        tabIndex={active || selected ? 0 : -1}
+        tabIndex={!concealed && (active || selected) ? 0 : -1}
         aria-busy={tab.isLoading}
       >
         {tab.isLoading ? (
@@ -1040,6 +1078,9 @@ const TabButton = memo(function TabButton({
           </span>
         )}
       </button>
+      {dropSide && (
+        <span className={`tab-drop-indicator ${dropSide}`} aria-hidden="true" />
+      )}
       <button
         type="button"
         className="tab-close"
@@ -1048,6 +1089,7 @@ const TabButton = memo(function TabButton({
           void window.chromecraft.closeTab(tab.id);
         }}
         aria-label={`Close ${label}`}
+        tabIndex={concealed ? -1 : 0}
       >
         <Icon name="close" />
       </button>
@@ -1095,7 +1137,7 @@ function TabGroupPill({
           });
         }}
       >
-        <Icon name={group.collapsed ? "chevronRight" : "chevronDown"} />
+        <Icon name={group.collapsed ? "chevronRight" : "chevronLeft"} />
         <span>{group.name || "Tab group"}</span>
         {group.collapsed && <small>{tabCount}</small>}
       </button>
@@ -1234,7 +1276,7 @@ function TabGroupMenu({
           close();
         }}
       >
-        <Icon name={group.collapsed ? "chevronRight" : "chevronDown"} />
+        <Icon name={group.collapsed ? "chevronRight" : "chevronLeft"} />
         {group.collapsed ? "Expand group" : "Collapse group"}
       </button>
       <button
@@ -1857,6 +1899,7 @@ export function TabStrip({
     draggedWholeGroupIdRef.current = null;
     setHoverPreview(null);
     writeTabDragPayload(event.dataTransfer, ids);
+    setCompactDragPreview(event.dataTransfer, event.currentTarget, "tab");
   };
   const finishTabDrag = () => {
     draggedTabIdsRef.current = [];
@@ -1893,8 +1936,11 @@ export function TabStrip({
     const wholeGroupId = draggedWholeGroupIdRef.current;
     const moveTabs = tabOrganizationApi().moveTabs;
     if (moveTabs && ids.length > 0) {
-      const targetIndex = tabDropIndex(snapshot.tabs, ids, tab.id, side);
       const targetGroupId = (tab as OrganisedTabSnapshot).groupId ?? null;
+      const targetIndex =
+        wholeGroupId && targetGroupId
+          ? groupBoundaryDropIndex(snapshot.tabs, ids, targetGroupId, side)
+          : tabDropIndex(snapshot.tabs, ids, tab.id, side);
       void moveTabs(ids, targetIndex, wholeGroupId ? undefined : targetGroupId);
     }
     finishTabDrag();
@@ -1911,6 +1957,7 @@ export function TabStrip({
           tab={tab}
           settings={tab.id === settingsTabId}
           dragging={draggedTabIds.includes(tab.id)}
+          concealed={false}
           onMenu={onMenu}
           onDragStart={startTabDrag}
           onDragEnd={finishTabDrag}
@@ -1936,13 +1983,39 @@ export function TabStrip({
         key={`group-${group.id}`}
         onDragEnter={(event) => {
           if (draggedTabIdsRef.current.length === 0) return;
+          const changesMembership = draggedWholeGroupIdRef.current
+            ? draggedWholeGroupIdRef.current !== group.id
+            : draggedTabIdsRef.current.some(
+                (tabId) =>
+                  (
+                    snapshot.tabs.find((item) => item.id === tabId) as
+                      | OrganisedTabSnapshot
+                      | undefined
+                  )?.groupId !== group.id,
+              );
+          if (!changesMembership) return;
           event.preventDefault();
+          setTabDropTarget(null);
+          setDropAtStripEnd(false);
           setDragOverGroupId(group.id);
         }}
         onDragOver={(event) => {
           if (draggedTabIdsRef.current.length === 0) return;
+          const changesMembership = draggedWholeGroupIdRef.current
+            ? draggedWholeGroupIdRef.current !== group.id
+            : draggedTabIdsRef.current.some(
+                (tabId) =>
+                  (
+                    snapshot.tabs.find((item) => item.id === tabId) as
+                      | OrganisedTabSnapshot
+                      | undefined
+                  )?.groupId !== group.id,
+              );
+          if (!changesMembership) return;
           event.preventDefault();
           event.dataTransfer.dropEffect = "move";
+          setTabDropTarget(null);
+          setDropAtStripEnd(false);
           if (dragOverGroupId !== group.id) setDragOverGroupId(group.id);
         }}
         onDragLeave={(event) => {
@@ -1969,14 +2042,14 @@ export function TabStrip({
             return;
           }
           if (wholeGroupId) {
-            const firstTarget = groupTabs[0];
-            if (!firstTarget) {
-              finishTabDrag();
-              return;
-            }
+            const bounds = event.currentTarget.getBoundingClientRect();
+            const side =
+              event.clientX < bounds.left + bounds.width / 2
+                ? "before"
+                : "after";
             void moveTabs(
               ids,
-              tabDropIndex(snapshot.tabs, ids, firstTarget.id, "before"),
+              groupBoundaryDropIndex(snapshot.tabs, ids, group.id, side),
             );
             finishTabDrag();
             return;
@@ -2001,6 +2074,11 @@ export function TabStrip({
             setDraggedTabIds(ids);
             setHoverPreview(null);
             writeTabDragPayload(event.dataTransfer, ids);
+            setCompactDragPreview(
+              event.dataTransfer,
+              event.currentTarget,
+              "group",
+            );
           }}
           onDragEnd={finishTabDrag}
           onMenu={(nextGroup, anchor) => {
@@ -2014,26 +2092,26 @@ export function TabStrip({
             });
           }}
         />
-        {!group.collapsed &&
-          groupTabs.map((item) => (
-            <TabButton
-              active={item.id === snapshot.activeTabId}
-              selected={selectedIds.includes(item.id)}
-              key={item.id}
-              tab={item}
-              settings={item.id === settingsTabId}
-              dragging={draggedTabIds.includes(item.id)}
-              onMenu={onMenu}
-              onDragStart={startTabDrag}
-              onDragEnd={finishTabDrag}
-              dropSide={
-                tabDropTarget?.tabId === item.id ? tabDropTarget.side : null
-              }
-              onDragOverTab={dragOverTab}
-              onDropOnTab={dropOnTab}
-              onHoverChange={updateHoverPreview}
-            />
-          ))}
+        {groupTabs.map((item) => (
+          <TabButton
+            active={item.id === snapshot.activeTabId}
+            selected={selectedIds.includes(item.id)}
+            key={item.id}
+            tab={item}
+            settings={item.id === settingsTabId}
+            dragging={draggedTabIds.includes(item.id)}
+            concealed={group.collapsed}
+            onMenu={onMenu}
+            onDragStart={startTabDrag}
+            onDragEnd={finishTabDrag}
+            dropSide={
+              tabDropTarget?.tabId === item.id ? tabDropTarget.side : null
+            }
+            onDragOverTab={dragOverTab}
+            onDropOnTab={dropOnTab}
+            onHoverChange={updateHoverPreview}
+          />
+        ))}
       </div>,
     );
   }
@@ -2048,7 +2126,7 @@ export function TabStrip({
           return;
         const tabs = Array.from(
           event.currentTarget.querySelectorAll<HTMLButtonElement>(
-            ".tab-target",
+            ".tab:not(.concealed) .tab-target",
           ),
         );
         const current = tabs.indexOf(
@@ -2181,9 +2259,17 @@ export function TabStrip({
         )}
       </div>
       <div
-        className={`tab-scroller ${dropAtStripEnd ? "drop-at-end" : ""}`}
+        className={`tab-scroller ${dropAtStripEnd ? "drop-at-end" : ""} ${draggedTabIds.length > 0 ? "drag-active" : ""}`}
         role="tablist"
         aria-label="Open tabs"
+        onDragOverCapture={(event) => {
+          if (draggedTabIdsRef.current.length === 0) return;
+          const bounds = event.currentTarget.getBoundingClientRect();
+          if (event.clientX < bounds.left + 44)
+            event.currentTarget.scrollLeft -= 18;
+          else if (event.clientX > bounds.right - 44)
+            event.currentTarget.scrollLeft += 18;
+        }}
         onDragOver={(event) => {
           if (
             draggedTabIdsRef.current.length === 0 ||
@@ -2195,12 +2281,6 @@ export function TabStrip({
           setTabDropTarget(null);
           setDragOverGroupId(null);
           setDropAtStripEnd(true);
-          const edge = 44;
-          const bounds = event.currentTarget.getBoundingClientRect();
-          if (event.clientX < bounds.left + edge)
-            event.currentTarget.scrollLeft -= 24;
-          else if (event.clientX > bounds.right - edge)
-            event.currentTarget.scrollLeft += 24;
         }}
         onDrop={(event) => {
           if (event.target !== event.currentTarget) return;
@@ -2221,6 +2301,27 @@ export function TabStrip({
           type="button"
           className="new-tab-button"
           onClick={() => void window.chromecraft.createTab()}
+          onDragOver={(event) => {
+            if (draggedTabIdsRef.current.length === 0) return;
+            event.preventDefault();
+            event.stopPropagation();
+            event.dataTransfer.dropEffect = "move";
+            setTabDropTarget(null);
+            setDragOverGroupId(null);
+            setDropAtStripEnd(true);
+          }}
+          onDrop={(event) => {
+            if (draggedTabIdsRef.current.length === 0) return;
+            event.preventDefault();
+            event.stopPropagation();
+            const ids = draggedTabIdsRef.current;
+            void tabOrganizationApi().moveTabs?.(
+              ids,
+              snapshot.tabs.length - ids.length,
+              draggedWholeGroupIdRef.current ? undefined : null,
+            );
+            finishTabDrag();
+          }}
           aria-label="New tab"
           title="New tab (Ctrl+T)"
         >

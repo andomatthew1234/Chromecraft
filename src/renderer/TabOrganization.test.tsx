@@ -11,6 +11,7 @@ import type { AiToolsSnapshot } from "../shared/ai-tools";
 import {
   getSelectedTabIds,
   getTabGroups,
+  groupBoundaryDropIndex,
   performTabGroupDrop,
   tabDropIndex,
   TabOverview,
@@ -252,6 +253,18 @@ describe("tab organisation renderer", () => {
     expect(tabDropIndex(tabs, ["a"], "a", "before")).toBe(0);
   });
 
+  it("keeps whole-group drops outside the target group boundary", () => {
+    const tabs = [
+      tab("a1", "A1", "https://a.example/1", { groupId: "a" }),
+      tab("a2", "A2", "https://a.example/2", { groupId: "a" }),
+      tab("b1", "B1", "https://b.example/1", { groupId: "b" }),
+      tab("b2", "B2", "https://b.example/2", { groupId: "b" }),
+    ];
+
+    expect(groupBoundaryDropIndex(tabs, ["a1", "a2"], "b", "before")).toBe(0);
+    expect(groupBoundaryDropIndex(tabs, ["a1", "a2"], "b", "after")).toBe(2);
+  });
+
   it("renders discovered website favicons and Material icons for internal pages", () => {
     const current = snapshot();
     current.tabs = [
@@ -368,7 +381,7 @@ describe("tab organisation renderer", () => {
       "utf8",
     );
     expect(stylesheet).toMatch(
-      /\.tab\.active\s*\{[\s\S]*?border-radius:\s*var\(--shape-md\) var\(--shape-md\) 0 0;/,
+      /\.tab\.active\s*\{[\s\S]*?border-radius:\s*12px 12px 0 0;/,
     );
     expect(stylesheet).toMatch(
       /\.brand\.menu-open\s*\{[\s\S]*?border-radius:\s*var\(--shape-md\);[\s\S]*?box-shadow:\s*inset/,

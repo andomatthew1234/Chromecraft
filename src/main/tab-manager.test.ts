@@ -358,6 +358,23 @@ describe("tab organization", () => {
     );
   });
 
+  it("expands a collapsed destination when the active tab moves into it", () => {
+    const { manager } = organizedManager();
+    const groupId = manager.createTabGroup(["b", "c"], "Research", "blue");
+    const groups = (
+      manager as unknown as {
+        tabGroups: Map<string, { collapsed: boolean }>;
+      }
+    ).tabGroups;
+    const group = groups.get(groupId);
+    if (!group) throw new Error("Missing tab group.");
+    group.collapsed = true;
+
+    manager.moveTabs(["a"], 0, groupId);
+
+    expect(group.collapsed).toBe(false);
+  });
+
   it("preserves collapsed groups when reopening a closed window", async () => {
     const manager = Object.create(TabManager.prototype) as TabManager;
     const tabs = new Map<string, Record<string, unknown>>();

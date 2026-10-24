@@ -722,9 +722,9 @@ input::placeholder {
 
 .tab {
   position: relative;
-  min-width: 128px;
+  min-width: 120px;
   max-width: 240px;
-  height: 36px;
+  height: 34px;
   width: 240px;
   flex: 0 1 240px;
   display: flex;
@@ -740,7 +740,13 @@ input::placeholder {
     color var(--motion-standard),
     background-color var(--motion-standard),
     box-shadow var(--motion-standard),
-    transform var(--motion-standard);
+    transform 140ms cubic-bezier(0.2, 0, 0, 1),
+    opacity 120ms cubic-bezier(0.2, 0, 0, 1),
+    height 150ms cubic-bezier(0.2, 0, 0, 1),
+    border-radius 150ms cubic-bezier(0.2, 0, 0, 1),
+    width 180ms cubic-bezier(0.2, 0, 0, 1),
+    min-width 180ms cubic-bezier(0.2, 0, 0, 1),
+    flex-basis 180ms cubic-bezier(0.2, 0, 0, 1);
   cursor: grab;
 }
 
@@ -754,6 +760,8 @@ input::placeholder {
 }
 
 .tab-target {
+  position: relative;
+  z-index: 1;
   min-width: 0;
   height: 100%;
   display: flex;
@@ -761,7 +769,7 @@ input::placeholder {
   align-items: center;
   gap: var(--space-2);
   overflow: hidden;
-  padding: 0 4px 0 var(--space-3);
+  padding: 0 3px 0 11px;
   border-radius: inherit;
   color: inherit;
   background: transparent;
@@ -784,11 +792,37 @@ input::placeholder {
 }
 
 .tab.active {
+  z-index: 2;
   color: var(--md-on-surface);
   background: var(--md-surface-lowest);
   height: 38px;
-  border-radius: var(--shape-md) var(--shape-md) 0 0;
+  overflow: visible;
+  border-radius: 12px 12px 0 0;
   box-shadow: inset 0 -1px var(--md-surface-lowest);
+}
+
+.tab.active::before,
+.tab.active::after {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  bottom: 0;
+  width: 12px;
+  height: 12px;
+  background: transparent;
+  pointer-events: none;
+}
+
+.tab.active::before {
+  left: -12px;
+  border-bottom-right-radius: 12px;
+  box-shadow: 6px 6px 0 6px var(--md-surface-lowest);
+}
+
+.tab.active::after {
+  right: -12px;
+  border-bottom-left-radius: 12px;
+  box-shadow: -6px 6px 0 6px var(--md-surface-lowest);
 }
 
 .tab.active:hover {
@@ -860,17 +894,18 @@ input::placeholder {
   text-align: left;
   text-overflow: ellipsis;
   font:
-    500 0.8125rem/1.125rem "Google Sans Text",
+    400 0.8125rem/1.125rem "Google Sans Text",
     "Segoe UI",
     sans-serif;
 }
 
 .tab-close {
-  width: 24px;
-  height: 24px;
+  z-index: 2;
+  width: 22px;
+  height: 22px;
   display: grid;
-  flex: 0 0 24px;
-  margin-right: 5px;
+  flex: 0 0 22px;
+  margin-right: 4px;
   padding: 0;
   place-items: center;
   border-radius: 50%;
@@ -1187,7 +1222,8 @@ input::placeholder {
 }
 
 .tab-group.drop-target {
-  gap: 5px;
+  border-radius: 12px 12px 4px 4px;
+  background: color-mix(in srgb, var(--tab-group-color) 7%, transparent);
 }
 
 .tab-group.drop-target .tab-group-pill {
@@ -1199,6 +1235,7 @@ input::placeholder {
 
 .tab-group.collapsed {
   flex: 0 0 auto;
+  gap: 0;
 }
 
 .tab-group .tab {
@@ -1210,9 +1247,29 @@ input::placeholder {
 }
 
 .tab-group .tab.active {
-  box-shadow:
-    inset 0 -1px var(--md-surface-lowest),
-    inset 0 -3px color-mix(in srgb, var(--tab-group-color) 82%, transparent);
+  box-shadow: inset 0 -1px var(--md-surface-lowest);
+}
+
+.tab-group .tab.active .tab-target::after {
+  content: "";
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  border: 2px solid color-mix(in srgb, var(--tab-group-color) 76%, transparent);
+  border-bottom: 0;
+  border-radius: 12px 12px 0 0;
+  pointer-events: none;
+}
+
+.tab-group.collapsed .tab,
+.tab.concealed {
+  width: 0;
+  min-width: 0;
+  max-width: 0;
+  flex-basis: 0;
+  opacity: 0;
+  transform: scaleX(0.6);
+  pointer-events: none;
 }
 
 .group-grey {
@@ -1245,13 +1302,14 @@ input::placeholder {
 }
 
 .tab-group-pill {
-  height: 28px;
+  position: relative;
+  height: 26px;
   min-width: 0;
-  max-width: 156px;
+  max-width: 132px;
   display: flex;
   flex: 0 0 auto;
   align-items: center;
-  margin: 0 2px 4px 1px;
+  margin: 0 2px 6px 1px;
   overflow: hidden;
   border-radius: var(--shape-full);
   color: var(--tab-group-ink);
@@ -1290,12 +1348,13 @@ input::placeholder {
   display: flex;
   flex: 1;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   overflow: hidden;
-  padding: 0 6px 0 8px;
+  padding: 0 7px 0 6px;
   color: inherit;
   background: transparent;
   font: var(--type-label-medium);
+  transition: padding-right 120ms cubic-bezier(0.2, 0, 0, 1);
 }
 
 .tab-group-toggle:focus-visible {
@@ -1305,11 +1364,11 @@ input::placeholder {
 }
 
 .tab-group-toggle > .material-icon {
-  width: 16px;
-  height: 16px;
-  flex: 0 0 16px;
-  font-size: 16px;
-  line-height: 16px;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  font-size: 14px;
+  line-height: 14px;
 }
 
 .tab-group-toggle > span:nth-child(2) {
@@ -1330,12 +1389,14 @@ input::placeholder {
 }
 
 .tab-group-more {
-  width: 24px;
-  height: 24px;
+  position: absolute;
+  right: 2px;
+  width: 20px;
+  height: 20px;
   display: grid;
-  flex: 0 0 24px;
+  flex: 0 0 20px;
   place-items: center;
-  margin-right: 2px;
+  margin-right: 0;
   border-radius: 50%;
   color: inherit;
   background: transparent;
@@ -1351,14 +1412,17 @@ input::placeholder {
   opacity: 1;
 }
 
+.tab-group-pill:hover .tab-group-toggle,
+.tab-group-pill:focus-within .tab-group-toggle {
+  padding-right: 24px;
+}
+
 .tab-group-more:hover {
   background: color-mix(in srgb, white 18%, transparent);
 }
 
-.tab.drop-before::before,
-.tab.drop-after::after,
+.tab-drop-indicator,
 .tab-scroller.drop-at-end::after {
-  content: "";
   z-index: 4;
   width: 3px;
   height: 28px;
@@ -1370,14 +1434,51 @@ input::placeholder {
   pointer-events: none;
 }
 
-.tab.drop-before::before {
+.tab-scroller.drag-active {
+  scroll-behavior: auto;
+}
+
+.tab-drop-indicator {
   position: absolute;
+  top: 5px;
+}
+
+.tab-drop-indicator.before {
   left: 0;
 }
 
-.tab.drop-after::after {
-  position: absolute;
+.tab-drop-indicator.after {
   right: 0;
+}
+
+.tab.drop-before {
+  transform: translateX(4px);
+}
+
+.tab.drop-after {
+  transform: translateX(-4px);
+}
+
+.tab-drag-preview {
+  position: fixed !important;
+  z-index: 9999 !important;
+  top: -200px !important;
+  left: -200px !important;
+  height: 34px !important;
+  min-width: 0 !important;
+  max-width: 190px !important;
+  overflow: hidden !important;
+  border-radius: 10px !important;
+  opacity: 0.96 !important;
+  color: var(--md-on-surface) !important;
+  background: var(--md-surface-container-high) !important;
+  box-shadow: var(--elevation-2) !important;
+  pointer-events: none !important;
+}
+
+.tab-drag-preview-group {
+  max-width: 156px !important;
+  margin: 0 !important;
 }
 
 .tab-group-more:active {
