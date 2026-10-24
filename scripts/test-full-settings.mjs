@@ -15,6 +15,7 @@ const profile = await fs.mkdtemp(
 );
 const artifacts = {
   light: path.join(root, ".artifacts", "full-settings-light.png"),
+  about: path.join(root, ".artifacts", "full-settings-about.png"),
   dark: path.join(root, ".artifacts", "full-settings-dark.png"),
   narrow: path.join(root, ".artifacts", "full-settings-narrow.png"),
   scoutGemini: path.join(root, ".artifacts", "scout-settings-gemini.png"),
@@ -356,12 +357,79 @@ try {
     initialLayout.active !== "general" ||
     initialLayout.detail !== "general" ||
     initialLayout.horizontalOverflow ||
-    initialLayout.settingsVisible !== 3
+    initialLayout.settingsVisible !== 4
   ) {
     throw new Error(
       `Unexpected initial Settings layout: ${JSON.stringify(initialLayout)}`,
     );
   }
+
+  await app.cdp.evaluate(
+    "document.querySelector('#setting-about-chromecraft button')?.click()",
+  );
+  const aboutPage = await poll(
+    () =>
+      app.cdp.evaluate(`(() => {
+        const page = document.querySelector('.about-settings-page');
+        const summary = [...document.querySelectorAll('.about-settings-summary article')]
+          .map((item) => item.textContent?.trim());
+        const runtimes = [...document.querySelectorAll('.about-runtime-grid article')]
+          .map((item) => item.textContent?.trim());
+        return {
+          visible: Boolean(page),
+          heading: page?.querySelector('h2')?.textContent,
+          summary,
+          runtimes,
+          updateButton: [...(page?.querySelectorAll('button') ?? [])]
+            .some((button) => button.textContent?.includes('Update Chromecraft')),
+        };
+      })()`),
+    (value) =>
+      value?.visible &&
+      value.heading === "Chromecraft" &&
+      value.summary.some((item) => item?.includes("Version")) &&
+      value.summary.some((item) => item?.includes("Chromecraft Vanilla")) &&
+      value.runtimes.some((item) => item?.includes("Chromium")) &&
+      value.runtimes.some((item) => item?.includes("Electron")) &&
+      value.updateButton,
+    "the Chromecraft About page",
+  );
+  await capture(app.cdp, artifacts.about);
+  await app.cdp.evaluate(`(() => {
+    const page = document.querySelector('.about-settings-page');
+    [...(page?.querySelectorAll('button') ?? [])]
+      .find((button) => button.textContent?.includes('Update Chromecraft'))
+      ?.click();
+  })()`);
+  await poll(
+    () => app.cdp.evaluate("Boolean(document.querySelector('.updates-page'))"),
+    Boolean,
+    "About to open Updates and versions",
+  );
+  await app.cdp.evaluate(
+    "document.querySelector('.updates-back-button')?.click()",
+  );
+  await poll(
+    () =>
+      app.cdp.evaluate(`({
+        updatesOpen: Boolean(document.querySelector('.updates-page')),
+        aboutOpen: Boolean(document.querySelector('.about-settings-page')),
+      })`),
+    (value) => !value?.updatesOpen && value?.aboutOpen,
+    "Updates and versions to return to About",
+  );
+  await app.cdp.evaluate(
+    "document.querySelector('.about-settings-back')?.click()",
+  );
+  await poll(
+    () =>
+      app.cdp.evaluate(`({
+        aboutOpen: Boolean(document.querySelector('.about-settings-page')),
+        detail: document.querySelector('.full-settings-detail')?.getAttribute('data-settings-detail'),
+      })`),
+    (value) => !value?.aboutOpen && value?.detail === "general",
+    "About to return to General settings",
+  );
 
   const categoryChecks = {};
   for (const category of expectedCategories) {
@@ -934,6 +1002,7 @@ try {
       {
         pass: true,
         initialLayout,
+        aboutPage,
         galleryEntryPoints,
         categoryChecks,
         scoutHome,

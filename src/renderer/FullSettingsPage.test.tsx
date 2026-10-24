@@ -2,7 +2,10 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
 import type { BrowserSnapshot, HyperdriveSnapshot } from "../shared/browser";
+import type { UpdateSnapshot } from "../shared/updates";
 import {
+  AboutSettingsPage,
+  CHROMECRAFT_BUILD_NAME,
   FullSettingsPage,
   fullSettingsCategories,
   fullSettingsSearchItems,
@@ -78,6 +81,23 @@ const hyperdrive: HyperdriveSnapshot = {
   events: [],
 };
 
+const updates: UpdateSnapshot = {
+  status: "idle",
+  installedVersions: [
+    { id: "chromecraft", label: "Chromecraft", version: "1.2.3" },
+    { id: "electron", label: "Electron", version: "44.7.2" },
+    { id: "chromium", label: "Chromium", version: "142.0.0" },
+    { id: "node", label: "Node.js", version: "24.14.0" },
+    { id: "yt-dlp", label: "yt-dlp", version: "2026.10.01" },
+  ],
+  results: [],
+  progress: null,
+  checkedAt: null,
+  message: null,
+  canCheck: true,
+  canRestart: false,
+};
+
 describe("full settings model", () => {
   it("defines each requested category and assigns every setting to one", () => {
     expect(fullSettingsCategories.map((category) => category.id)).toEqual([
@@ -126,7 +146,9 @@ describe("full settings model", () => {
       <FullSettingsPage
         snapshot={snapshot}
         hyperdrive={hyperdrive}
+        updates={updates}
         openExtensionsPage={vi.fn()}
+        openUpdatesPage={vi.fn()}
       />,
     );
 
@@ -137,8 +159,28 @@ describe("full settings model", () => {
     expect(markup).toContain("Restore tabs on launch");
     expect(markup).toContain("Show bookmarks bar");
     expect(markup).toContain("Show browser sidebar");
+    expect(markup).toContain("About Chromecraft");
     expect(markup).not.toContain("Live search suggestions");
     expect(markup).not.toContain("Maximum RAM to reserve");
     expect(markup).not.toContain("Extension developer mode");
+  });
+
+  it("renders an About page from authoritative version metadata", () => {
+    const markup = renderToStaticMarkup(
+      <AboutSettingsPage
+        snapshot={updates}
+        back={vi.fn()}
+        openUpdates={vi.fn()}
+      />,
+    );
+
+    expect(markup).toContain("Version");
+    expect(markup).toContain("1.2.3");
+    expect(markup).toContain("Build");
+    expect(markup).toContain(CHROMECRAFT_BUILD_NAME);
+    expect(markup).toContain("Chromium");
+    expect(markup).toContain("Electron");
+    expect(markup).toContain("Update Chromecraft");
+    expect(markup).toContain('aria-label="Back to General settings"');
   });
 });

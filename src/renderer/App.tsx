@@ -3807,6 +3807,13 @@ export const fullSettingsSearchItems: FullSettingsSearchItem[] = [
     keywords: "sidebar rail layout tools attached",
   },
   {
+    id: "about-chromecraft",
+    category: "general",
+    title: "About Chromecraft",
+    description: "View the browser version, build and runtime information.",
+    keywords: "about version build vanilla chromium electron node update",
+  },
+  {
     id: "ublock-origin",
     category: "privacy",
     title: "uBlock Origin",
@@ -4536,9 +4543,120 @@ export function QuickSettingsPanel({
   );
 }
 
+export const CHROMECRAFT_BUILD_NAME = "Chromecraft Vanilla";
+
+export function AboutSettingsPage({
+  snapshot,
+  back,
+  openUpdates,
+}: {
+  snapshot: UpdateSnapshot;
+  back: () => void;
+  openUpdates: () => void;
+}) {
+  const version =
+    snapshot.installedVersions.find((item) => item.id === "chromecraft")
+      ?.version ?? "Unknown";
+  const runtimeVersions = snapshot.installedVersions.filter(
+    (item) => item.id !== "chromecraft",
+  );
+
+  return (
+    <section
+      className="about-settings-page"
+      aria-labelledby="settings-category-general"
+    >
+      <header className="about-settings-header">
+        <button
+          type="button"
+          className="about-settings-back"
+          onClick={back}
+          aria-label="Back to General settings"
+          title="Back to General settings"
+        >
+          <Icon name="back" />
+        </button>
+        <span className="about-settings-brand" aria-hidden="true">
+          C
+        </span>
+        <span className="about-settings-heading">
+          <small>About</small>
+          <h2 id="settings-category-general">Chromecraft</h2>
+          <p>Your browser, your workspace.</p>
+        </span>
+      </header>
+
+      <div
+        className="about-settings-summary"
+        aria-label="Chromecraft build information"
+      >
+        <article>
+          <span>Version</span>
+          <strong>{version}</strong>
+        </article>
+        <article>
+          <span>Build</span>
+          <strong>{CHROMECRAFT_BUILD_NAME}</strong>
+        </article>
+      </div>
+
+      <section
+        className="about-settings-card"
+        aria-labelledby="about-browser-title"
+      >
+        <span className="about-settings-card-icon">
+          <Icon name="info" />
+        </span>
+        <span>
+          <h3 id="about-browser-title">A dependable, local-first browser</h3>
+          <p>
+            Chromecraft combines Chromium compatibility with a focused desktop
+            workspace. Your tabs, history, bookmarks, extensions and settings
+            stay in your local browser profile.
+          </p>
+        </span>
+      </section>
+
+      <section
+        className="about-runtime-card"
+        aria-labelledby="about-runtime-title"
+      >
+        <header>
+          <span>
+            <small>Under the hood</small>
+            <h3 id="about-runtime-title">Runtime components</h3>
+          </span>
+        </header>
+        <div className="about-runtime-grid">
+          {runtimeVersions.map((item) => (
+            <article key={item.id}>
+              <span>{item.label}</span>
+              <strong>{item.version}</strong>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      <footer className="about-settings-actions">
+        <span>
+          <strong>Keep Chromecraft current</strong>
+          <small>
+            Check the browser, engine and bundled extensions from one place.
+          </small>
+        </span>
+        <button type="button" className="filled-button" onClick={openUpdates}>
+          <Icon name="reload" />
+          Update Chromecraft
+        </button>
+      </footer>
+    </section>
+  );
+}
+
 export function FullSettingsPage({
   snapshot,
   hyperdrive,
+  updates,
   aiTools = emptyAiTools,
   websiteControls = emptyWebsiteControls,
   smartDownloads = emptySmartDownloads,
@@ -4546,9 +4664,11 @@ export function FullSettingsPage({
   openSitePermissionsRequest = 0,
   openAiSettingsRequest = 0,
   openExtensionsPage,
+  openUpdatesPage,
 }: {
   snapshot: BrowserSnapshot;
   hyperdrive: HyperdriveSnapshot;
+  updates: UpdateSnapshot;
   aiTools?: AiToolsSnapshot;
   websiteControls?: WebsiteControlsSnapshot;
   smartDownloads?: SmartDownloadsSnapshot;
@@ -4556,6 +4676,7 @@ export function FullSettingsPage({
   openSitePermissionsRequest?: number;
   openAiSettingsRequest?: number;
   openExtensionsPage: () => void;
+  openUpdatesPage: () => void;
 }) {
   const heading = useRef<HTMLHeadingElement>(null);
   const searchResultRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -4564,6 +4685,7 @@ export function FullSettingsPage({
   const [searchQuery, setSearchQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [smartDownloadsOpen, setSmartDownloadsOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
   const [highlightedSettingId, setHighlightedSettingId] = useState<
     string | null
   >(null);
@@ -4591,17 +4713,20 @@ export function FullSettingsPage({
     if (openSmartDownloadsRequest <= 0) return;
     setSelectedCategory("downloads");
     setSmartDownloadsOpen(true);
+    setAboutOpen(false);
   }, [openSmartDownloadsRequest]);
   useEffect(() => {
     if (openSitePermissionsRequest <= 0) return;
     setSelectedCategory("privacy");
     setSmartDownloadsOpen(false);
+    setAboutOpen(false);
     setHighlightedSettingId("website-permissions");
   }, [openSitePermissionsRequest]);
   useEffect(() => {
     if (openAiSettingsRequest <= 0) return;
     setSelectedCategory("ai");
     setSmartDownloadsOpen(false);
+    setAboutOpen(false);
     setHighlightedSettingId("gemini-api-key");
   }, [openAiSettingsRequest]);
   useLayoutEffect(() => {
@@ -4631,12 +4756,14 @@ export function FullSettingsPage({
   const chooseCategory = (nextCategory: FullSettingsCategoryId) => {
     setSelectedCategory(nextCategory);
     setSmartDownloadsOpen(false);
+    setAboutOpen(false);
     setHighlightedSettingId(null);
     setSearchOpen(false);
   };
   const chooseSearchResult = (item: FullSettingsSearchItem) => {
     setSelectedCategory(item.category);
     setSmartDownloadsOpen(item.id === "smart-downloads");
+    setAboutOpen(item.id === "about-chromecraft");
     setHighlightedSettingId(item.id);
     setSearchOpen(false);
   };
@@ -4662,7 +4789,15 @@ export function FullSettingsPage({
   };
 
   let categoryContent;
-  if (selectedCategory === "general") {
+  if (selectedCategory === "general" && aboutOpen) {
+    categoryContent = (
+      <AboutSettingsPage
+        snapshot={updates}
+        back={() => setAboutOpen(false)}
+        openUpdates={openUpdatesPage}
+      />
+    );
+  } else if (selectedCategory === "general") {
     categoryContent = (
       <section className="settings-card" aria-labelledby="general-layout-title">
         <header className="settings-card-header">
@@ -4748,6 +4883,30 @@ export function FullSettingsPage({
             }
           />
         </label>
+        <div
+          id="setting-about-chromecraft"
+          data-setting-id="about-chromecraft"
+          className={settingTargetClass(
+            "about-chromecraft",
+            highlightedSettingId,
+            "settings-action-row",
+          )}
+        >
+          <span className="setting-copy">
+            <span className="setting-title">About Chromecraft</span>
+            <small className="setting-description">
+              Version, build and browser runtime information.
+            </small>
+          </span>
+          <button
+            type="button"
+            className="tonal-button settings-action-button"
+            onClick={() => setAboutOpen(true)}
+          >
+            <Icon name="info" />
+            Open About
+          </button>
+        </div>
       </section>
     );
   } else if (selectedCategory === "privacy") {
@@ -5348,18 +5507,20 @@ export function FullSettingsPage({
             data-settings-detail={selectedCategory}
             aria-labelledby={`settings-category-${selectedCategory}`}
           >
-            <header className="settings-category-header">
-              <span className="settings-category-header-icon">
-                <Icon name={category.icon} />
-              </span>
-              <span>
-                <small>Chromecraft settings</small>
-                <h2 id={`settings-category-${selectedCategory}`}>
-                  {category.label}
-                </h2>
-                <p>{category.description}</p>
-              </span>
-            </header>
+            {!(selectedCategory === "general" && aboutOpen) && (
+              <header className="settings-category-header">
+                <span className="settings-category-header-icon">
+                  <Icon name={category.icon} />
+                </span>
+                <span>
+                  <small>Chromecraft settings</small>
+                  <h2 id={`settings-category-${selectedCategory}`}>
+                    {category.label}
+                  </h2>
+                  <p>{category.description}</p>
+                </span>
+              </header>
+            )}
             <div className="settings-category-content">{categoryContent}</div>
           </section>
         </div>
@@ -8162,6 +8323,7 @@ export function App() {
         <FullSettingsPage
           snapshot={snapshot}
           hyperdrive={hyperdrive}
+          updates={updates}
           aiTools={aiTools}
           websiteControls={websiteControls}
           smartDownloads={smartDownloads}
@@ -8171,6 +8333,10 @@ export function App() {
           openExtensionsPage={() => {
             setUpdatesOpen(false);
             setExtensionsPageOpen(true);
+          }}
+          openUpdatesPage={() => {
+            setExtensionsPageOpen(false);
+            setUpdatesOpen(true);
           }}
         />
       ) : (
