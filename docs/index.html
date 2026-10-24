@@ -765,6 +765,94 @@
                 </figure>
               </div>
             </article>
+
+            <article
+              class="agentic-panel agentic-models-panel"
+              id="agentic-panel-models"
+              role="tabpanel"
+              aria-labelledby="agentic-tab-models"
+              data-agentic-panel="3"
+              aria-hidden="true"
+            >
+              <div class="agentic-copy agentic-models-copy">
+                <p class="section-kicker">04 / Your AI, your call</p>
+                <div class="provider-split-mark" aria-hidden="true">
+                  <span class="provider-split-half provider-split-half--gemini">
+                    <img src="./assets/agentic/gemini-sparkle.png" alt="" />
+                  </span>
+                  <span class="provider-split-half provider-split-half--ollama">
+                    <img src="./assets/agentic/ollama.svg" alt="" />
+                  </span>
+                </div>
+                <h2>Ready for Gemini. <span>Or not.</span></h2>
+                <p>
+                  Ready for the power of Gemini intelligence? Some people say no
+                  for obvious reasons: privacy, security, internet usage, and
+                  rate limiting.
+                </p>
+              </div>
+
+              <div class="provider-choices" aria-label="Chromecraft AI choices">
+                <article class="provider-choice provider-choice--gemini">
+                  <div class="provider-choice-icon">
+                    <img
+                      src="./assets/agentic/gemini-sparkle.png"
+                      width="512"
+                      height="512"
+                      alt=""
+                    />
+                  </div>
+                  <div>
+                    <p class="provider-choice-eyebrow">Google Gemini</p>
+                    <h3>Use it when you want.</h3>
+                    <p>
+                      Use the latest Gemini models directly in Chromecraft,
+                      free. Google's data centres handle the response when you
+                      want cloud-powered intelligence.
+                    </p>
+                  </div>
+                </article>
+
+                <article class="provider-choice provider-choice--ollama">
+                  <div class="provider-choice-icon">
+                    <img
+                      src="./assets/agentic/ollama.svg"
+                      width="28"
+                      height="28"
+                      alt=""
+                    />
+                  </div>
+                  <div>
+                    <p class="provider-choice-eyebrow">Local Ollama</p>
+                    <h3>Skip it when you don't.</h3>
+                    <p>
+                      Run local models through Ollama with no subscription, rate
+                      limit, or internet connection. Download Ollama, add your
+                      models, and get started.
+                    </p>
+                    <small>Side note: will not run on a potato 🥔</small>
+                  </div>
+                </article>
+
+                <article class="provider-choice provider-choice--off">
+                  <div
+                    class="provider-choice-icon material-symbols-rounded"
+                    aria-hidden="true"
+                  >
+                    smart_toy
+                  </div>
+                  <div>
+                    <p class="provider-choice-eyebrow">AI off</p>
+                    <h3>Or skip them all.</h3>
+                    <p>
+                      Don't want any AI in your browser? Turn it all off in one
+                      click. Boom, gone.
+                    </p>
+                  </div>
+                  <span class="provider-off-slash" aria-hidden="true"></span>
+                </article>
+              </div>
+            </article>
           </div>
 
           <div class="agentic-picker">
@@ -828,6 +916,27 @@
                 <span
                   ><strong>Organise tabs</strong
                   ><small>Your tabs. Now organised.</small></span
+                >
+              </button>
+              <button
+                class="agentic-tab"
+                id="agentic-tab-models"
+                type="button"
+                role="tab"
+                aria-selected="false"
+                aria-controls="agentic-panel-models"
+                data-agentic-slide="3"
+                tabindex="-1"
+              >
+                <span class="agentic-provider-icon" aria-hidden="true">
+                  <span
+                    ><img src="./assets/agentic/gemini-sparkle.png" alt=""
+                  /></span>
+                  <span><img src="./assets/agentic/ollama.svg" alt="" /></span>
+                </span>
+                <span
+                  ><strong>AI models</strong
+                  ><small>Gemini, Ollama, or off</small></span
                 >
               </button>
             </div>
