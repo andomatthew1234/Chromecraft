@@ -7,6 +7,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
   useEffect,
+  useId,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -236,6 +237,7 @@ type IconName =
   | "chevronRight"
   | "chevronUp"
   | "chevronDown"
+  | "check"
   | "close"
   | "download"
   | "extension"
@@ -278,6 +280,7 @@ const iconSymbols: Record<IconName, string> = {
   chevronRight: "chevron_right",
   chevronUp: "keyboard_arrow_up",
   chevronDown: "keyboard_arrow_down",
+  check: "check",
   close: "close",
   download: "download",
   extension: "extension",
@@ -318,6 +321,140 @@ function Icon({ name }: { name: IconName }) {
     >
       {iconSymbols[name]}
     </span>
+  );
+}
+
+type MaterialSelectOption<T extends string> = {
+  value: T;
+  label: string;
+};
+
+const newTabThemeOptions: ReadonlyArray<MaterialSelectOption<NewTabTheme>> = [
+  { value: "overworld", label: "Chromecraft blue" },
+  { value: "nether", label: "Soft violet" },
+  { value: "end", label: "Blue grey" },
+  { value: "minimal", label: "Minimal" },
+];
+
+function MaterialSelect<T extends string>({
+  ariaLabel,
+  className = "",
+  disabled = false,
+  onValueChange,
+  options,
+  value,
+}: {
+  ariaLabel: string;
+  className?: string;
+  disabled?: boolean;
+  onValueChange: (value: T) => void;
+  options: ReadonlyArray<MaterialSelectOption<T>>;
+  value: T;
+}) {
+  const [open, setOpen] = useState(false);
+  const listId = useId();
+  const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const selectedIndex = Math.max(
+    0,
+    options.findIndex((option) => option.value === value),
+  );
+  const selectedOption = options[selectedIndex];
+
+  useEffect(() => {
+    if (!open) return;
+    const dismiss = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    addEventListener("pointerdown", dismiss);
+    return () => removeEventListener("pointerdown", dismiss);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const frame = requestAnimationFrame(() => {
+      optionRefs.current[selectedIndex]?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [open, selectedIndex]);
+
+  const choose = (nextValue: T) => {
+    onValueChange(nextValue);
+    setOpen(false);
+    triggerRef.current?.focus();
+  };
+  const focusOption = (index: number) => {
+    optionRefs.current[(index + options.length) % options.length]?.focus();
+  };
+
+  return (
+    <div className={`material-select ${className}`} ref={rootRef}>
+      <button
+        type="button"
+        className="material-select-trigger"
+        ref={triggerRef}
+        aria-label={ariaLabel}
+        aria-controls={open ? listId : undefined}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        disabled={disabled}
+        onClick={() => setOpen((current) => !current)}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+            event.preventDefault();
+            setOpen(true);
+          } else if (event.key === "Escape") {
+            setOpen(false);
+          }
+        }}
+      >
+        <span>{selectedOption?.label}</span>
+        <Icon name={open ? "chevronUp" : "chevronDown"} />
+      </button>
+      {open && (
+        <div className="material-select-menu" id={listId} role="listbox">
+          {options.map((option, index) => {
+            const selected = option.value === value;
+            return (
+              <button
+                type="button"
+                className={selected ? "selected" : ""}
+                key={option.value}
+                ref={(element) => {
+                  optionRefs.current[index] = element;
+                }}
+                role="option"
+                aria-selected={selected}
+                onClick={() => choose(option.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "ArrowDown") {
+                    event.preventDefault();
+                    focusOption(index + 1);
+                  } else if (event.key === "ArrowUp") {
+                    event.preventDefault();
+                    focusOption(index - 1);
+                  } else if (event.key === "Home") {
+                    event.preventDefault();
+                    focusOption(0);
+                  } else if (event.key === "End") {
+                    event.preventDefault();
+                    focusOption(options.length - 1);
+                  } else if (event.key === "Escape") {
+                    event.preventDefault();
+                    setOpen(false);
+                    triggerRef.current?.focus();
+                  }
+                }}
+              >
+                <span>{option.label}</span>
+                {selected && <Icon name="check" />}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -3539,7 +3676,7 @@ export function QuickSettingsPanel({
           />
         </label>
 
-        <label className="quick-setting-tile quick-setting-theme">
+        <div className="quick-setting-tile quick-setting-theme">
           <span className="quick-setting-icon quick-setting-theme-icon">
             <Icon name="tune" />
           </span>
@@ -3547,24 +3684,16 @@ export function QuickSettingsPanel({
             <strong>Theme</strong>
             <small>New tab appearance</small>
           </span>
-          <span className="quick-theme-select-wrap">
-            <select
-              value={snapshot.preferences.newTabTheme}
-              aria-label="Theme"
-              onChange={(event) =>
-                void window.chromecraft.setNewTabTheme(
-                  event.target.value as NewTabTheme,
-                )
-              }
-            >
-              <option value="overworld">Chromecraft blue</option>
-              <option value="nether">Soft violet</option>
-              <option value="end">Blue grey</option>
-              <option value="minimal">Minimal</option>
-            </select>
-            <Icon name="chevronDown" />
-          </span>
-        </label>
+          <MaterialSelect
+            ariaLabel="Theme"
+            className="quick-theme-select-wrap"
+            options={newTabThemeOptions}
+            value={snapshot.preferences.newTabTheme}
+            onValueChange={(theme) =>
+              void window.chromecraft.setNewTabTheme(theme)
+            }
+          />
+        </div>
 
         <button
           type="button"
@@ -3913,7 +4042,7 @@ export function FullSettingsPage({
             <p>Choose a restrained colour mood for every new tab.</p>
           </span>
         </header>
-        <label
+        <div
           id="setting-new-tab-theme"
           data-setting-id="new-tab-theme"
           className={settingTargetClass(
@@ -3928,22 +4057,15 @@ export function FullSettingsPage({
               Applies to Chromecraft's built-in new tab page.
             </small>
           </span>
-          <select
-            className="settings-select"
+          <MaterialSelect
+            ariaLabel="New tab theme"
+            options={newTabThemeOptions}
             value={snapshot.preferences.newTabTheme}
-            aria-label="New tab theme"
-            onChange={(event) =>
-              void window.chromecraft.setNewTabTheme(
-                event.target.value as NewTabTheme,
-              )
+            onValueChange={(theme) =>
+              void window.chromecraft.setNewTabTheme(theme)
             }
-          >
-            <option value="overworld">Chromecraft blue</option>
-            <option value="nether">Soft violet</option>
-            <option value="end">Blue grey</option>
-            <option value="minimal">Minimal</option>
-          </select>
-        </label>
+          />
+        </div>
       </section>
     );
   } else if (selectedCategory === "downloads") {

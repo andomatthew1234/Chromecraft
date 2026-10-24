@@ -2273,35 +2273,123 @@ input::placeholder {
 .quick-setting-theme {
   min-height: 112px;
   grid-template-rows: 38px 40px;
+  z-index: 1;
+  overflow: visible;
   cursor: default;
 }
 
 .quick-theme-select-wrap {
-  position: relative;
   grid-column: 1 / -1;
   grid-row: 2;
 }
 
-.quick-theme-select-wrap select {
+.material-select {
+  position: relative;
   width: 100%;
-  height: 40px;
-  padding: 0 34px 0 var(--space-3);
+}
+
+.material-select-trigger {
+  width: 100%;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
   border: 1px solid var(--md-outline);
-  border-radius: var(--shape-md);
+  border-radius: var(--shape-sm);
   outline: 0;
-  appearance: none;
   color: var(--md-on-surface);
   background: var(--md-surface-container-lowest);
   cursor: pointer;
+  font: var(--type-body-medium);
+  text-align: left;
+  transition:
+    border-color var(--motion-standard),
+    background-color var(--motion-standard),
+    box-shadow var(--motion-standard);
+}
+
+.quick-theme-select-wrap .material-select-trigger {
+  min-height: 40px;
   font: var(--type-label-medium);
 }
 
-.quick-theme-select-wrap > .material-icon {
+.material-select-trigger:hover:not(:disabled) {
+  border-color: var(--md-on-surface);
+  background: var(--md-surface-container-highest);
+}
+
+.material-select-trigger[aria-expanded="true"],
+.material-select-trigger:focus-visible {
+  border: 2px solid var(--md-primary);
+  padding-inline: calc(var(--space-3) - 1px);
+}
+
+.material-select-trigger:disabled {
+  color: var(--md-disabled-content);
+  border-color: var(--md-outline-variant);
+  background: var(--md-disabled-container);
+  cursor: default;
+}
+
+.material-select-trigger .material-icon {
+  width: 18px;
+  height: 18px;
+  flex-basis: 18px;
+  font-size: 18px;
+  line-height: 18px;
+}
+
+.material-select-menu {
   position: absolute;
-  top: 10px;
-  right: 9px;
+  z-index: 20;
+  top: calc(100% + var(--space-1));
+  left: 0;
+  width: 100%;
+  min-width: max-content;
+  padding: var(--space-1) 0;
+  border: 1px solid var(--md-outline-variant);
+  border-radius: var(--shape-md);
+  color: var(--md-on-surface);
+  background: var(--md-surface-container);
+  box-shadow: var(--elevation-3);
+  overflow: hidden;
+  animation: toolbar-popover-enter 160ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.material-select-menu > button {
+  width: 100%;
+  min-height: 48px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 20px;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  border: 0;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+  font: var(--type-body-large);
+  text-align: left;
+}
+
+.material-select-menu > button:hover,
+.material-select-menu > button:focus-visible {
+  outline: 0;
+  background: var(--md-hover);
+}
+
+.material-select-menu > button.selected {
+  color: var(--md-on-secondary-container);
+  background: var(--md-secondary-container);
+}
+
+.material-select-menu > button .material-icon {
+  width: 20px;
+  height: 20px;
   font-size: 20px;
-  pointer-events: none;
+  line-height: 20px;
 }
 
 .quick-setting-open-all {
@@ -4178,6 +4266,10 @@ input::placeholder {
   border-radius: var(--shape-lg);
   background: var(--md-surface-container);
   box-shadow: var(--elevation-1);
+}
+
+.settings-card:has(.material-select-menu) {
+  overflow: visible;
 }
 
 .settings-card-header {

@@ -55,6 +55,8 @@ describe("QuickSettingsPanel", () => {
     expect(markup).toContain('aria-label="Show bookmarks bar"');
     expect(markup).toContain('aria-label="uBlock Origin"');
     expect(markup).toContain('aria-label="Theme"');
+    expect(markup).toContain('aria-haspopup="listbox"');
+    expect(markup).not.toContain("<select");
     expect(markup).toContain("Open full settings");
     expect(markup).toContain("Blocking enabled");
     expect(markup).not.toContain("Restore tabs on launch");
