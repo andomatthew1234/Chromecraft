@@ -866,6 +866,7 @@ button {
 
 .vanilla-platform-grid {
   animation: vanilla-enter-cards 720ms 760ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .platform-page.vanilla .platform-option {
@@ -882,6 +883,7 @@ button {
   isolation: isolate;
   overflow: hidden;
   position: relative;
+  text-decoration: none;
   transition:
     transform 240ms cubic-bezier(0.2, 0.8, 0.2, 1),
     border-color 240ms ease,
@@ -958,6 +960,54 @@ button {
   content: "";
   height: 7px;
   width: 7px;
+}
+
+.beta-platform-logo {
+  position: relative;
+}
+
+.beta-logo {
+  align-items: center;
+  background: var(--vanilla-primary);
+  border: 3px solid var(--page-surface);
+  border-radius: 999px;
+  color: white;
+  display: flex;
+  font-family: "DM Mono", monospace;
+  font-size: 8px;
+  font-weight: 500;
+  height: 27px;
+  justify-content: center;
+  left: -13px;
+  letter-spacing: 0;
+  position: absolute;
+  text-transform: uppercase;
+  top: -11px;
+  transform: rotate(-8deg);
+  width: 45px;
+}
+
+.platform-page.vanilla .available-badge {
+  color: var(--vanilla-primary);
+  font-weight: 500;
+}
+
+.platform-page.vanilla .available-badge::before {
+  display: none;
+}
+
+.platform-page.vanilla .available-badge i {
+  font-family: "Material Symbols Rounded";
+  font-size: 17px;
+  font-style: normal;
+}
+
+.platform-page.vanilla .vanilla-beta-option {
+  border-color: color-mix(
+    in srgb,
+    var(--vanilla-primary) 60%,
+    var(--page-border)
+  );
 }
 
 .vanilla-selection-panel {
@@ -1947,6 +1997,10 @@ button {
 }
 
 @media (max-width: 1080px) {
+  .vanilla-platform-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .mint-hero {
     gap: 40px;
     grid-template-columns: minmax(290px, 0.85fr) minmax(390px, 1.15fr);
@@ -1983,6 +2037,10 @@ button {
 
   .edition-grid,
   .platform-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .vanilla-platform-grid {
     grid-template-columns: 1fr;
   }
 

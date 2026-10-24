@@ -11,6 +11,8 @@ const terminalIndicator = document.querySelector(".nitro-terminal-bar b");
 
 platformButtons.forEach((button) => {
   button.addEventListener("click", () => {
+    const isAvailableDownload = Boolean(button.dataset.downloadUrl);
+
     platformButtons.forEach((candidate) => {
       const isSelected = candidate === button;
       candidate.classList.toggle("selected", isSelected);
@@ -26,7 +28,12 @@ platformButtons.forEach((button) => {
       if (isVanillaPage) {
         const badge = candidate.querySelector(".coming-badge");
         if (badge) {
-          badge.textContent = isSelected ? "Platform selected" : "Coming soon";
+          const isAvailableCandidate = Boolean(candidate.dataset.downloadUrl);
+          badge.innerHTML = isAvailableCandidate
+            ? '<i aria-hidden="true">download</i>Download now'
+            : isSelected
+              ? "Platform selected"
+              : "Coming soon";
         }
       }
 
@@ -59,12 +66,20 @@ platformButtons.forEach((button) => {
 
       selectionPanel?.classList.add("has-selection");
       if (selectionName) {
-        selectionName.textContent = `Vanilla for ${button.dataset.platform}`;
+        selectionName.textContent = isAvailableDownload
+          ? "Vanilla for Windows"
+          : `Vanilla for ${button.dataset.platform}`;
       }
       if (selectionCopy) {
-        selectionCopy.textContent = `${button.dataset.platform} support is in the works.`;
+        selectionCopy.textContent = isAvailableDownload
+          ? "Beta build 0.10 is available now."
+          : `${button.dataset.platform} support is in the works.`;
       }
-      if (selectionStatus) selectionStatus.textContent = "Coming soon";
+      if (selectionStatus) {
+        selectionStatus.textContent = isAvailableDownload
+          ? "Download now"
+          : "Coming soon";
+      }
     }
 
     if (isMintPage) {
@@ -82,7 +97,9 @@ platformButtons.forEach((button) => {
     }
 
     if (statusRegion) {
-      statusRegion.textContent = `${editionName} for ${button.dataset.platform} is coming soon.`;
+      statusRegion.textContent = isAvailableDownload
+        ? "Starting the Chromecraft Vanilla Windows Beta 0.10 download."
+        : `${editionName} for ${button.dataset.platform} is coming soon.`;
       statusRegion.classList.add("visible");
     }
   });
