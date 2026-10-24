@@ -5354,44 +5354,67 @@ h1 {
   font-weight: 560;
 }
 
-.motion-ready .browser-comparison-heading > *,
-.motion-ready .comparison-scroll-hint,
-.motion-ready .comparison-table-scroll,
-.motion-ready .comparison-table tbody tr {
+.motion-ready
+  .browser-comparison.is-motion-ready
+  .browser-comparison-heading
+  > *,
+.motion-ready .browser-comparison.is-motion-ready .comparison-scroll-hint,
+.motion-ready .browser-comparison.is-motion-ready .comparison-table-scroll,
+.motion-ready .browser-comparison.is-motion-ready .comparison-table tbody tr {
   opacity: 0;
   transform: translateY(28px);
 }
 
-.motion-ready .browser-comparison-heading > *,
-.motion-ready .comparison-scroll-hint,
-.motion-ready .comparison-table-scroll {
+.motion-ready
+  .browser-comparison.is-motion-ready
+  .browser-comparison-heading
+  > *,
+.motion-ready .browser-comparison.is-motion-ready .comparison-scroll-hint,
+.motion-ready .browser-comparison.is-motion-ready .comparison-table-scroll {
   transition:
     opacity 620ms ease,
     transform 760ms cubic-bezier(0.2, 0.76, 0.24, 1);
 }
 
-.motion-ready .browser-comparison.is-visible .browser-comparison-heading > *,
-.motion-ready .browser-comparison.is-visible .comparison-scroll-hint,
-.motion-ready .browser-comparison.is-visible .comparison-table-scroll,
-.motion-ready .browser-comparison.is-visible .comparison-table tbody tr {
+.motion-ready
+  .browser-comparison.is-motion-ready.is-visible
+  .browser-comparison-heading
+  > *,
+.motion-ready
+  .browser-comparison.is-motion-ready.is-visible
+  .comparison-scroll-hint,
+.motion-ready
+  .browser-comparison.is-motion-ready.is-visible
+  .comparison-table-scroll,
+.motion-ready
+  .browser-comparison.is-motion-ready.is-visible
+  .comparison-table
+  tbody
+  tr {
   opacity: 1;
   transform: translateY(0);
 }
 
-.motion-ready .browser-comparison-heading h2 {
+.motion-ready
+  .browser-comparison.is-motion-ready
+  .browser-comparison-heading
+  h2 {
   transition-delay: 80ms;
 }
 
-.motion-ready .browser-comparison-heading > p:last-child {
+.motion-ready
+  .browser-comparison.is-motion-ready
+  .browser-comparison-heading
+  > p:last-child {
   transition-delay: 150ms;
 }
 
-.motion-ready .comparison-scroll-hint,
-.motion-ready .comparison-table-scroll {
+.motion-ready .browser-comparison.is-motion-ready .comparison-scroll-hint,
+.motion-ready .browser-comparison.is-motion-ready .comparison-table-scroll {
   transition-delay: 220ms;
 }
 
-.motion-ready .comparison-table tbody tr {
+.motion-ready .browser-comparison.is-motion-ready .comparison-table tbody tr {
   transition:
     opacity 420ms ease var(--comparison-row-delay, 0ms),
     transform 520ms cubic-bezier(0.2, 0.76, 0.24, 1)

@@ -1821,18 +1821,28 @@ if (browserComparisonBody) {
 }
 
 if (browserComparison) {
-  if (reduceMotion) {
+  if (reduceMotion || !("IntersectionObserver" in window)) {
     browserComparison.classList.add("is-visible");
   } else {
+    browserComparison.classList.add("is-motion-ready");
+    const revealComparison = () => {
+      browserComparison.classList.add("is-visible");
+    };
     const comparisonObserver = new IntersectionObserver(
       ([entry]) => {
         if (!entry.isIntersecting) return;
-        browserComparison.classList.add("is-visible");
+        revealComparison();
         comparisonObserver.disconnect();
       },
       { rootMargin: "80px", threshold: 0.12 },
     );
     comparisonObserver.observe(browserComparison);
+
+    if (window.location.hash === "#compare") {
+      window.requestAnimationFrame(revealComparison);
+    }
+
+    window.setTimeout(revealComparison, 1200);
   }
 }
 
