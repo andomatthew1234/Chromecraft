@@ -623,104 +623,224 @@
       </section>
 
       <section class="scout-showcase" id="scout" aria-labelledby="scout-title">
-        <div class="scout-stage">
+        <div
+          class="scout-stage"
+          role="region"
+          aria-roledescription="carousel"
+          aria-label="Scout features"
+        >
           <div class="scout-copy">
             <p class="scout-kicker">05 / Meet Scout</p>
             <h2 id="scout-title">
               <span>Scout.</span> Your ready-on personal agent.
             </h2>
             <p class="scout-intro">
-              Ask about the page in front of you, bring a detail into focus, or
-              turn a crowded tab bar into something useful. Scout stays beside
-              your browsing, ready when you are.
+              Scout stays beside every tab, ready to understand, focus, and act
+              without pulling you away from the page.
             </p>
 
-            <ol class="scout-feature-list" aria-label="Scout features">
-              <li>
+            <div class="scout-feature-viewport">
+              <article
+                class="scout-feature-slide is-active"
+                data-scout-slide="0"
+              >
                 <span class="material-symbols-rounded" aria-hidden="true"
                   >language</span
                 >
-                <span
-                  ><strong>Understands this page</strong>Ask with the page's
-                  title, URL, and description attached.</span
-                >
-              </li>
-              <li>
+                <p>01 / PAGE AWARE</p>
+                <h3>Understands this page</h3>
+                <p>
+                  Ask with the page's title, URL, and description already in
+                  reach. Scout keeps the answer grounded in the tab you're
+                  actually looking at.
+                </p>
+              </article>
+
+              <article class="scout-feature-slide" data-scout-slide="1" hidden>
                 <span class="material-symbols-rounded" aria-hidden="true"
                   >select_window</span
                 >
-                <span
-                  ><strong>Point to what matters</strong>Attach selected text, a
-                  page element, or a screenshot area.</span
-                >
-              </li>
-              <li>
+                <p>02 / PRECISE CONTEXT</p>
+                <h3>Point to what matters</h3>
+                <p>
+                  Attach selected text, a meaningful page element, or a
+                  screenshot area. Bring only the detail that matters into the
+                  conversation.
+                </p>
+              </article>
+
+              <article class="scout-feature-slide" data-scout-slide="2" hidden>
                 <span class="material-symbols-rounded" aria-hidden="true"
                   >tab_group</span
                 >
-                <span
-                  ><strong>Turns intent into action</strong>Organise open tabs
-                  without leaving the page you're on.</span
-                >
-              </li>
-              <li>
+                <p>03 / BROWSER ACTIONS</p>
+                <h3>Turns intent into action</h3>
+                <p>
+                  Organise open tabs with local Ollama, Gemini, or instant
+                  website grouping, without leaving the page you're on.
+                </p>
+              </article>
+
+              <article class="scout-feature-slide" data-scout-slide="3" hidden>
                 <span class="material-symbols-rounded" aria-hidden="true"
                   >shield_lock</span
                 >
-                <span
-                  ><strong>Context on your terms</strong>Review what is included
-                  before every request.</span
+                <p>04 / PRIVATE BY DESIGN</p>
+                <h3>Context on your terms</h3>
+                <p>
+                  Review what Scout includes before every request, keep context
+                  local by default, and decide exactly what can leave your
+                  device.
+                </p>
+              </article>
+            </div>
+
+            <div class="scout-carousel-controls">
+              <div
+                class="scout-progress-tabs"
+                aria-label="Choose a Scout feature"
+              >
+                <button
+                  type="button"
+                  aria-label="Show Understands this page"
+                  aria-current="true"
+                  data-scout-go="0"
                 >
-              </li>
-            </ol>
+                  <span></span>
+                </button>
+                <button
+                  type="button"
+                  aria-label="Show Point to what matters"
+                  data-scout-go="1"
+                >
+                  <span></span>
+                </button>
+                <button
+                  type="button"
+                  aria-label="Show Turns intent into action"
+                  data-scout-go="2"
+                >
+                  <span></span>
+                </button>
+                <button
+                  type="button"
+                  aria-label="Show Context on your terms"
+                  data-scout-go="3"
+                >
+                  <span></span>
+                </button>
+              </div>
+              <button
+                class="scout-play-toggle"
+                type="button"
+                aria-label="Pause Scout slideshow"
+                aria-pressed="false"
+                title="Pause slideshow"
+              >
+                <span class="material-symbols-rounded" aria-hidden="true"
+                  >pause</span
+                >
+              </button>
+              <span class="scout-control-divider" aria-hidden="true"></span>
+              <button
+                class="scout-arrow"
+                type="button"
+                data-scout-direction="-1"
+                aria-label="Previous Scout feature"
+              >
+                <span class="material-symbols-rounded" aria-hidden="true"
+                  >arrow_back</span
+                >
+              </button>
+              <button
+                class="scout-arrow"
+                type="button"
+                data-scout-direction="1"
+                aria-label="Next Scout feature"
+              >
+                <span class="material-symbols-rounded" aria-hidden="true"
+                  >arrow_forward</span
+                >
+              </button>
+            </div>
+            <p class="sr-only scout-carousel-status" aria-live="polite"></p>
           </div>
 
-          <div class="scout-gallery" aria-label="Scout product screenshots">
-            <span class="scout-gallery-glow" aria-hidden="true"></span>
+          <div
+            class="scout-gallery"
+            aria-label="Scout product screenshots"
+            tabindex="0"
+          >
+            <span class="scout-gallery-backdrop" aria-hidden="true"></span>
 
-            <figure class="scout-shot scout-shot-main">
-              <span class="scout-pointer-light" aria-hidden="true"></span>
-              <div class="scout-shot-crop">
-                <img
-                  src="./assets/scout/scout-browser.png"
-                  width="1280"
-                  height="820"
-                  loading="lazy"
-                  decoding="async"
-                  alt="Chromecraft browser with Scout open in the sidebar, showing page-aware suggestions and the animated Scout character."
-                />
-              </div>
-              <figcaption>
-                <span class="material-symbols-rounded" aria-hidden="true"
-                  >side_navigation</span
-                >
-                Always one click away
-              </figcaption>
-            </figure>
-
-            <figure class="scout-shot scout-shot-context">
+            <button
+              class="scout-shot is-active"
+              type="button"
+              data-scout-slide="0"
+              aria-label="Show Understands this page feature"
+              aria-current="true"
+            >
               <img
-                src="./assets/scout/scout-context.png"
-                width="480"
-                height="716"
+                src="./assets/scout/scout-browser.png"
+                width="2560"
+                height="1640"
                 loading="lazy"
                 decoding="async"
-                alt="Scout's Add context menu with screenshot, page element, and selected text controls."
+                alt="Chromecraft browser with Scout open beside the current page and page-aware suggestions ready."
               />
-              <figcaption>Choose the context</figcaption>
-            </figure>
+              <span>Understands this page</span>
+            </button>
 
-            <figure class="scout-shot scout-shot-organiser">
+            <button
+              class="scout-shot is-next"
+              type="button"
+              data-scout-slide="1"
+              aria-label="Show Point to what matters feature"
+            >
+              <img
+                src="./assets/scout/scout-context.png"
+                width="2560"
+                height="1640"
+                loading="lazy"
+                decoding="async"
+                alt="Scout's context picker with screenshot, page element, and selected text controls."
+              />
+              <span>Point to what matters</span>
+            </button>
+
+            <button
+              class="scout-shot is-far"
+              type="button"
+              data-scout-slide="2"
+              aria-label="Show Turns intent into action feature"
+            >
               <img
                 src="./assets/scout/scout-organiser.png"
-                width="720"
-                height="560"
+                width="2560"
+                height="1640"
                 loading="lazy"
                 decoding="async"
                 alt="Scout's tab organiser with Gemini, local Ollama, and instant website sorting options."
               />
-              <figcaption>Make the busy work disappear</figcaption>
-            </figure>
+              <span>Turns intent into action</span>
+            </button>
+
+            <button
+              class="scout-shot is-previous"
+              type="button"
+              data-scout-slide="3"
+              aria-label="Show Context on your terms feature"
+            >
+              <img
+                src="./assets/scout/scout-privacy.png"
+                width="1280"
+                height="820"
+                loading="lazy"
+                decoding="async"
+                alt="Scout privacy settings showing local-by-default context controls for page URL, title, and description."
+              />
+              <span>Context on your terms</span>
+            </button>
           </div>
         </div>
       </section>

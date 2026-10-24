@@ -705,164 +705,226 @@ if (sidebarShowcase) {
 
 const scoutShowcase = document.querySelector(".scout-showcase");
 const scoutGallery = document.querySelector(".scout-gallery");
-const scoutMainShot = document.querySelector(".scout-shot-main");
-const scoutFinePointer = window.matchMedia(
-  "(hover: hover) and (pointer: fine)",
+const scoutFeatureSlides = [
+  ...document.querySelectorAll(".scout-feature-slide"),
+];
+const scoutShots = [...document.querySelectorAll(".scout-shot")];
+const scoutProgressButtons = [...document.querySelectorAll("[data-scout-go]")];
+const scoutArrowButtons = [
+  ...document.querySelectorAll("[data-scout-direction]"),
+];
+const scoutPlayToggle = document.querySelector(".scout-play-toggle");
+const scoutCarouselStatus = document.querySelector(".scout-carousel-status");
+const scoutSlideNames = scoutFeatureSlides.map(
+  (slide) => slide.querySelector("h3")?.textContent?.trim() ?? "Scout feature",
 );
 let scoutObserver;
 let scoutVisible = false;
-let scoutScrollFrame;
-let scoutTiltFrame;
-let scoutPointerX = 0.5;
-let scoutPointerY = 0.5;
+let scoutActiveIndex = 0;
+let scoutTimer;
+let scoutUserPaused = false;
+let scoutFocusInside = false;
+let scoutDragStart;
+const scoutDuration = 6500;
 
-function updateScoutScroll() {
-  scoutScrollFrame = undefined;
-  if (!scoutShowcase || reduceMotion) return;
-
-  const bounds = scoutShowcase.getBoundingClientRect();
-  const viewportHeight = window.innerHeight;
-  const scrollDistance = Math.max(
-    scoutShowcase.offsetHeight - viewportHeight,
-    1,
-  );
-  const progress = clamp(-bounds.top / scrollDistance);
-  const entry = clamp(
-    (viewportHeight * 0.92 - bounds.top) / (viewportHeight * 0.72),
-  );
-  const assembled = easeOutCubic(clamp(entry * 0.46 + progress * 1.2));
-  const opacity = clamp(entry * 1.3);
-
-  scoutShowcase.style.setProperty("--scout-progress", progress.toFixed(4));
-  scoutShowcase.style.setProperty("--scout-main-opacity", opacity.toFixed(3));
-  scoutShowcase.style.setProperty(
-    "--scout-main-scale",
-    (0.92 + assembled * 0.08).toFixed(4),
-  );
-  scoutShowcase.style.setProperty(
-    "--scout-main-y",
-    `${((1 - assembled) * 64 - progress * 8).toFixed(2)}px`,
-  );
-  scoutShowcase.style.setProperty(
-    "--scout-context-x",
-    `${((1 - assembled) * 74).toFixed(2)}px`,
-  );
-  scoutShowcase.style.setProperty(
-    "--scout-context-y",
-    `${((1 - assembled) * 52 - progress * 8).toFixed(2)}px`,
-  );
-  scoutShowcase.style.setProperty(
-    "--scout-context-rotate",
-    `${((1 - assembled) * 8 + progress * 0.8).toFixed(2)}deg`,
-  );
-  scoutShowcase.style.setProperty(
-    "--scout-organiser-x",
-    `${((1 - assembled) * -70).toFixed(2)}px`,
-  );
-  scoutShowcase.style.setProperty(
-    "--scout-organiser-y",
-    `${((1 - assembled) * 68 + progress * 5).toFixed(2)}px`,
-  );
-  scoutShowcase.style.setProperty(
-    "--scout-organiser-rotate",
-    `${((1 - assembled) * -7 - progress * 0.8).toFixed(2)}deg`,
+function scoutShouldPlay() {
+  const playToggleFocused = document.activeElement === scoutPlayToggle;
+  return (
+    scoutVisible &&
+    !reduceMotion &&
+    !scoutUserPaused &&
+    (!scoutFocusInside || playToggleFocused) &&
+    !document.hidden
   );
 }
 
-function requestScoutScroll() {
-  if (!scoutScrollFrame && scoutVisible && !reduceMotion) {
-    scoutScrollFrame = window.requestAnimationFrame(updateScoutScroll);
+function updateScoutPauseState() {
+  if (!scoutShowcase || !scoutPlayToggle) return;
+  const transientPause =
+    (scoutFocusInside && document.activeElement !== scoutPlayToggle) ||
+    document.hidden;
+  scoutShowcase.classList.toggle("is-paused", scoutUserPaused);
+  scoutShowcase.classList.toggle(
+    "is-transient-paused",
+    transientPause && !scoutUserPaused,
+  );
+  scoutPlayToggle.setAttribute("aria-pressed", String(scoutUserPaused));
+  scoutPlayToggle.setAttribute(
+    "aria-label",
+    scoutUserPaused ? "Play Scout slideshow" : "Pause Scout slideshow",
+  );
+  scoutPlayToggle.title = scoutUserPaused
+    ? "Play slideshow"
+    : "Pause slideshow";
+  const icon = scoutPlayToggle.querySelector(".material-symbols-rounded");
+  if (icon) icon.textContent = scoutUserPaused ? "play_arrow" : "pause";
+}
+
+function restartScoutProgress() {
+  const progress =
+    scoutProgressButtons[scoutActiveIndex]?.querySelector("span");
+  if (!progress) return;
+  progress.style.animation = "none";
+  void progress.offsetWidth;
+  progress.style.animation = "";
+}
+
+function scheduleScoutAdvance() {
+  window.clearTimeout(scoutTimer);
+  scoutTimer = undefined;
+  updateScoutPauseState();
+  if (!scoutShouldPlay()) return;
+  scoutTimer = window.setTimeout(() => {
+    showScoutSlide(scoutActiveIndex + 1);
+  }, scoutDuration);
+}
+
+function showScoutSlide(index, { announce = false } = {}) {
+  if (!scoutFeatureSlides.length) return;
+  scoutActiveIndex =
+    (index + scoutFeatureSlides.length) % scoutFeatureSlides.length;
+
+  scoutFeatureSlides.forEach((slide, slideIndex) => {
+    const isActive = slideIndex === scoutActiveIndex;
+    slide.hidden = !isActive;
+    slide.classList.toggle("is-active", isActive);
+    slide.setAttribute("aria-hidden", String(!isActive));
+  });
+
+  scoutShots.forEach((shot, shotIndex) => {
+    const distance =
+      (shotIndex - scoutActiveIndex + scoutShots.length) % scoutShots.length;
+    shot.classList.remove("is-active", "is-next", "is-far", "is-previous");
+    shot.classList.add(
+      ["is-active", "is-next", "is-far", "is-previous"][distance],
+    );
+    const isActive = distance === 0;
+    shot.setAttribute("aria-current", isActive ? "true" : "false");
+    shot.tabIndex = isActive ? 0 : -1;
+  });
+
+  scoutProgressButtons.forEach((button, buttonIndex) => {
+    if (buttonIndex === scoutActiveIndex) {
+      button.setAttribute("aria-current", "true");
+    } else {
+      button.removeAttribute("aria-current");
+    }
+  });
+  restartScoutProgress();
+
+  if (announce && scoutCarouselStatus) {
+    scoutCarouselStatus.textContent = `${scoutSlideNames[scoutActiveIndex]}, slide ${scoutActiveIndex + 1} of ${scoutFeatureSlides.length}`;
+  }
+  scheduleScoutAdvance();
+}
+
+function setScoutTransientPause(kind, active) {
+  if (kind === "focus") scoutFocusInside = active;
+  if (!active) restartScoutProgress();
+  scheduleScoutAdvance();
+}
+
+function handleScoutGalleryKeydown(event) {
+  if (event.key === "ArrowLeft") {
+    event.preventDefault();
+    showScoutSlide(scoutActiveIndex - 1, { announce: true });
+  } else if (event.key === "ArrowRight") {
+    event.preventDefault();
+    showScoutSlide(scoutActiveIndex + 1, { announce: true });
+  } else if (event.key === "Home") {
+    event.preventDefault();
+    showScoutSlide(0, { announce: true });
+  } else if (event.key === "End") {
+    event.preventDefault();
+    showScoutSlide(scoutFeatureSlides.length - 1, { announce: true });
   }
 }
 
-function renderScoutTilt() {
-  scoutTiltFrame = undefined;
-  if (!scoutMainShot) return;
-  scoutMainShot.style.setProperty(
-    "--scout-tilt-x",
-    `${((0.5 - scoutPointerY) * 4).toFixed(2)}deg`,
-  );
-  scoutMainShot.style.setProperty(
-    "--scout-tilt-y",
-    `${((scoutPointerX - 0.5) * 5).toFixed(2)}deg`,
-  );
-  scoutMainShot.style.setProperty(
-    "--scout-light-x",
-    `${(scoutPointerX * 100).toFixed(1)}%`,
-  );
-  scoutMainShot.style.setProperty(
-    "--scout-light-y",
-    `${(scoutPointerY * 100).toFixed(1)}%`,
-  );
+function handleScoutPointerDown(event) {
+  scoutDragStart = { id: event.pointerId, x: event.clientX, y: event.clientY };
 }
 
-function handleScoutPointerMove(event) {
-  if (!scoutMainShot) return;
-  const bounds = scoutMainShot.getBoundingClientRect();
-  scoutPointerX = clamp((event.clientX - bounds.left) / bounds.width);
-  scoutPointerY = clamp((event.clientY - bounds.top) / bounds.height);
-  if (!scoutTiltFrame) {
-    scoutTiltFrame = window.requestAnimationFrame(renderScoutTilt);
+function handleScoutPointerUp(event) {
+  if (!scoutDragStart || scoutDragStart.id !== event.pointerId) return;
+  const deltaX = event.clientX - scoutDragStart.x;
+  const deltaY = event.clientY - scoutDragStart.y;
+  scoutDragStart = undefined;
+  if (Math.abs(deltaX) < 48 || Math.abs(deltaX) < Math.abs(deltaY) * 1.25) {
+    return;
   }
-}
-
-function handleScoutPointerEnter() {
-  scoutMainShot?.classList.add("is-hovered");
-}
-
-function handleScoutPointerLeave() {
-  scoutPointerX = 0.5;
-  scoutPointerY = 0.5;
-  scoutMainShot?.classList.remove("is-hovered");
-  if (!scoutTiltFrame) {
-    scoutTiltFrame = window.requestAnimationFrame(renderScoutTilt);
-  }
+  showScoutSlide(scoutActiveIndex + (deltaX < 0 ? 1 : -1), {
+    announce: true,
+  });
 }
 
 function cleanupScoutShowcase() {
   scoutObserver?.disconnect();
-  window.cancelAnimationFrame(scoutScrollFrame);
-  window.cancelAnimationFrame(scoutTiltFrame);
-  window.removeEventListener("scroll", requestScoutScroll);
-  window.removeEventListener("resize", requestScoutScroll);
-  scoutMainShot?.removeEventListener("pointerenter", handleScoutPointerEnter);
-  scoutMainShot?.removeEventListener("pointermove", handleScoutPointerMove);
-  scoutMainShot?.removeEventListener("pointerleave", handleScoutPointerLeave);
+  window.clearTimeout(scoutTimer);
+  document.removeEventListener("visibilitychange", scheduleScoutAdvance);
+  scoutGallery?.removeEventListener("keydown", handleScoutGalleryKeydown);
+  scoutGallery?.removeEventListener("pointerdown", handleScoutPointerDown);
+  scoutGallery?.removeEventListener("pointerup", handleScoutPointerUp);
 }
 
-if (scoutShowcase && scoutGallery) {
-  if (reduceMotion) {
-    scoutShowcase.classList.add("is-visible");
-    scoutShowcase.style.setProperty("--scout-main-opacity", "1");
-    scoutShowcase.style.setProperty("--scout-main-scale", "1");
-    scoutShowcase.style.setProperty("--scout-main-y", "0px");
-    scoutShowcase.style.setProperty("--scout-context-x", "0px");
-    scoutShowcase.style.setProperty("--scout-context-y", "0px");
-    scoutShowcase.style.setProperty("--scout-context-rotate", "0deg");
-    scoutShowcase.style.setProperty("--scout-organiser-x", "0px");
-    scoutShowcase.style.setProperty("--scout-organiser-y", "0px");
-    scoutShowcase.style.setProperty("--scout-organiser-rotate", "0deg");
-  } else {
-    scoutObserver = new IntersectionObserver(
-      ([entry]) => {
-        scoutVisible = entry.isIntersecting;
-        if (scoutVisible) {
-          scoutShowcase.classList.add("is-visible");
-          requestScoutScroll();
-        }
-      },
-      { rootMargin: "100px", threshold: 0.08 },
-    );
-    scoutObserver.observe(scoutShowcase);
-    window.addEventListener("scroll", requestScoutScroll, { passive: true });
-    window.addEventListener("resize", requestScoutScroll);
-  }
+if (
+  scoutShowcase &&
+  scoutGallery &&
+  scoutFeatureSlides.length &&
+  scoutShots.length
+) {
+  scoutObserver = new IntersectionObserver(
+    ([entry]) => {
+      scoutVisible = entry.isIntersecting;
+      if (scoutVisible) {
+        scoutShowcase.classList.add("is-visible");
+        restartScoutProgress();
+      }
+      scheduleScoutAdvance();
+    },
+    { rootMargin: "100px", threshold: 0.18 },
+  );
+  scoutObserver.observe(scoutShowcase);
 
-  if (!reduceMotion && scoutFinePointer.matches && scoutMainShot) {
-    scoutMainShot.addEventListener("pointerenter", handleScoutPointerEnter);
-    scoutMainShot.addEventListener("pointermove", handleScoutPointerMove);
-    scoutMainShot.addEventListener("pointerleave", handleScoutPointerLeave);
-  }
+  scoutProgressButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      showScoutSlide(Number(button.dataset.scoutGo), { announce: true });
+    });
+  });
+  scoutArrowButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      showScoutSlide(scoutActiveIndex + Number(button.dataset.scoutDirection), {
+        announce: true,
+      });
+    });
+  });
+  scoutShots.forEach((shot) => {
+    shot.addEventListener("click", () => {
+      showScoutSlide(Number(shot.dataset.scoutSlide), { announce: true });
+    });
+  });
+  scoutPlayToggle?.addEventListener("click", () => {
+    scoutUserPaused = !scoutUserPaused;
+    if (!scoutUserPaused) restartScoutProgress();
+    scheduleScoutAdvance();
+  });
+
+  scoutShowcase.addEventListener("focusin", () =>
+    setScoutTransientPause("focus", true),
+  );
+  scoutShowcase.addEventListener("focusout", () => {
+    window.setTimeout(() => {
+      setScoutTransientPause(
+        "focus",
+        scoutShowcase.contains(document.activeElement),
+      );
+    }, 0);
+  });
+  scoutGallery.addEventListener("keydown", handleScoutGalleryKeydown);
+  scoutGallery.addEventListener("pointerdown", handleScoutPointerDown);
+  scoutGallery.addEventListener("pointerup", handleScoutPointerUp);
+  document.addEventListener("visibilitychange", scheduleScoutAdvance);
+
+  showScoutSlide(0);
 }
 
 const hyperdriveSection = document.querySelector(".hyperdrive-feature");
