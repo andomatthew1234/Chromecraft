@@ -840,6 +840,10 @@ let activeAgenticSlide = 0;
 function showAgenticSlide(index, { focus = false, announce = false } = {}) {
   if (!agenticPanels.length || !agenticTabs.length) return;
   activeAgenticSlide = (index + agenticPanels.length) % agenticPanels.length;
+  agenticShowcase?.setAttribute(
+    "data-agentic-active",
+    String(activeAgenticSlide),
+  );
 
   agenticPanels.forEach((panel, panelIndex) => {
     const active = panelIndex === activeAgenticSlide;

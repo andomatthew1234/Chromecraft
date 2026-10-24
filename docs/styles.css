@@ -8,6 +8,16 @@
   box-sizing: border-box;
 }
 
+.sr-only {
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  height: 1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+  width: 1px;
+}
+
 html,
 body {
   min-height: 100%;
@@ -4321,6 +4331,7 @@ h1 {
   border: 1px solid #4f414a;
   border-radius: 18px;
   box-shadow: 0 32px 74px rgba(57, 42, 51, 0.2);
+  color: #f4ebef;
   justify-self: stretch;
   min-height: 440px;
   position: relative;
@@ -4349,6 +4360,14 @@ h1 {
 
 .agentic-scout-copy h2 span {
   color: #3158c8;
+}
+
+.agentic-scout-copy h2 {
+  font-size: clamp(44px, 4.7vw, 68px);
+}
+
+.agentic-showcase[data-agentic-active="1"] .agentic-panels {
+  min-height: 650px;
 }
 
 .agentic-scout-points {
@@ -4542,9 +4561,12 @@ h1 {
 
 .agentic-organise-visual {
   align-self: center;
-  padding: 0 0 84px;
   position: relative;
   width: 100%;
+}
+
+.agentic-showcase[data-agentic-active="2"] .agentic-panels {
+  min-height: 780px;
 }
 
 .tabs-comparison {
@@ -4645,15 +4667,11 @@ h1 {
   background: #ffffff;
   border: 1px solid #d1ccd0;
   border-radius: 14px;
-  bottom: 0;
   box-shadow: 0 24px 54px rgba(45, 38, 43, 0.2);
-  margin: 0;
+  margin: 24px auto 0;
   overflow: hidden;
-  position: absolute;
-  right: -18px;
-  transform: rotate(1.5deg);
-  width: 46%;
-  z-index: 6;
+  position: relative;
+  width: 78%;
 }
 
 .tabs-plan-card img {
@@ -4707,7 +4725,15 @@ h1 {
   }
 
   .agentic-organise-visual {
-    padding-bottom: 64px;
+    padding-bottom: 0;
+  }
+
+  .agentic-showcase[data-agentic-active="1"] .agentic-panels {
+    min-height: 960px;
+  }
+
+  .agentic-showcase[data-agentic-active="2"] .agentic-panels {
+    min-height: 1120px;
   }
 }
 
@@ -4742,8 +4768,7 @@ h1 {
   }
 
   .tabs-plan-card {
-    right: 0;
-    width: 54%;
+    width: 92%;
   }
 
   .agentic-arrows {
