@@ -4,6 +4,7 @@ import { createServer } from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import WebSocket from "ws";
 
 const root = process.cwd();
 const executable = path.resolve(
