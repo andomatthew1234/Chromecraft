@@ -402,7 +402,10 @@ function MaterialSelect<T extends string>({
   };
 
   return (
-    <div className={`material-select ${className}`} ref={rootRef}>
+    <div
+      className={`material-select ${className} ${open ? "open" : ""}`}
+      ref={rootRef}
+    >
       <button
         type="button"
         className="material-select-trigger"

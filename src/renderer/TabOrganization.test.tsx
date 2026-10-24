@@ -337,6 +337,9 @@ describe("tab organisation renderer", () => {
     expect(stylesheet).toMatch(
       /\.toolbar-context-menu\s*\{[\s\S]*?position:\s*fixed;[\s\S]*?z-index:\s*50;/,
     );
+    expect(stylesheet).toMatch(
+      /\.quick-settings-grid:has\(\.quick-theme-select-wrap \.material-select\.open\)\s*\{[\s\S]*?overflow:\s*visible;/,
+    );
   });
 
   it("shows open tabs, saved groups, recently closed tabs and closed windows", () => {

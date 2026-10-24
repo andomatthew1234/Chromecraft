@@ -2532,6 +2532,15 @@ input::placeholder {
   overflow: hidden;
 }
 
+/* A select menu is an overlay, not part of the card below it. Let the
+ * quick-settings stack escape only while a menu is open, so its options stay
+ * completely visible and on top of the following tile. */
+.quick-settings-sidebar:has(.quick-theme-select-wrap .material-select.open) {
+  position: relative;
+  z-index: 30;
+  overflow: visible;
+}
+
 .quick-settings-subtitle {
   flex: 0 0 auto;
   margin: -6px var(--space-3) var(--space-2);
@@ -2548,6 +2557,12 @@ input::placeholder {
   padding: var(--space-1) var(--space-2) var(--space-3);
   overflow-y: auto;
   overscroll-behavior-y: contain;
+}
+
+.quick-settings-grid:has(.quick-theme-select-wrap .material-select.open) {
+  position: relative;
+  z-index: 1;
+  overflow: visible;
 }
 
 .quick-setting-tile {
@@ -2686,6 +2701,10 @@ input::placeholder {
   cursor: default;
 }
 
+.quick-setting-theme:has(.material-select.open) {
+  z-index: 2;
+}
+
 .quick-theme-select-wrap {
   grid-column: 1 / -1;
   grid-row: 2;
@@ -2694,6 +2713,10 @@ input::placeholder {
 .material-select {
   position: relative;
   width: 100%;
+}
+
+.quick-theme-select-wrap.material-select.open {
+  z-index: 40;
 }
 
 .material-select-trigger {
@@ -2751,7 +2774,7 @@ input::placeholder {
 
 .material-select-menu {
   position: absolute;
-  z-index: 20;
+  z-index: 40;
   top: calc(100% + var(--space-1));
   left: 0;
   width: 100%;
