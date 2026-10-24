@@ -18,7 +18,7 @@
       href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0..1,0"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css?v=20261024-compare-fit" />
+    <link rel="stylesheet" href="./styles.css?v=20261024-flavours" />
   </head>
   <body>
     <div class="scroll-progress" aria-hidden="true"><span></span></div>
@@ -1170,13 +1170,173 @@
       </section>
 
       <section
+        class="flavour-showcase"
+        id="flavours"
+        aria-labelledby="flavour-showcase-title"
+      >
+        <div
+          class="flavour-stage"
+          role="region"
+          aria-label="Choose your flavour of Chromecraft"
+        >
+          <div
+            class="flavour-overview"
+            id="flavour-overview"
+            role="tabpanel"
+            aria-labelledby="flavour-tab-overview"
+          >
+            <div class="flavour-copy">
+              <p class="section-kicker">
+                07 / Choose your flavour of Chromecraft
+              </p>
+              <h2 id="flavour-showcase-title">
+                One browser. One engine. <span>Three energies.</span>
+              </h2>
+              <p>
+                Choose your flavour of Chromecraft to curate your dream
+                experience.
+              </p>
+            </div>
+
+            <div
+              class="flavour-material-preview"
+              aria-label="Material 3 illustration of Chromecraft's three editions"
+            >
+              <div class="flavour-preview-toolbar">
+                <span class="flavour-preview-logo" aria-hidden="true">C</span>
+                <span class="flavour-preview-search">
+                  <i aria-hidden="true"></i>
+                  Search or enter an address
+                </span>
+                <span
+                  class="material-symbols-rounded flavour-preview-settings"
+                  aria-hidden="true"
+                  >tune</span
+                >
+              </div>
+              <div class="flavour-preview-content">
+                <div class="flavour-preview-heading">
+                  <p>YOUR BROWSER, YOUR WAY</p>
+                  <strong>Pick the energy that fits today.</strong>
+                </div>
+                <div class="flavour-preview-options" aria-hidden="true">
+                  <span class="flavour-preview-option is-vanilla">
+                    <i></i><b>Vanilla</b><small>Balanced</small>
+                  </span>
+                  <span class="flavour-preview-option is-nitro">
+                    <i></i><b>Nitro</b><small>Focused</small>
+                  </span>
+                  <span class="flavour-preview-option is-mint">
+                    <i></i><b>Mint</b><small>Productive</small>
+                  </span>
+                </div>
+                <div class="flavour-preview-actions" aria-hidden="true">
+                  <span>Personalise</span>
+                  <span class="material-symbols-rounded">arrow_forward</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="flavour-picker">
+            <div
+              class="flavour-tabs"
+              role="tablist"
+              aria-label="Choose a Chromecraft edition"
+            >
+              <button
+                class="flavour-tab is-active"
+                id="flavour-tab-overview"
+                type="button"
+                role="tab"
+                aria-selected="true"
+                aria-controls="flavour-overview"
+              >
+                <span
+                  class="flavour-tab-home material-symbols-rounded"
+                  aria-hidden="true"
+                  >home</span
+                >
+                <span
+                  ><strong>Overview</strong><small>Three energies</small></span
+                >
+              </button>
+              <button
+                class="flavour-tab flavour-tab--vanilla"
+                type="button"
+                role="tab"
+                aria-selected="false"
+                aria-disabled="true"
+                disabled
+              >
+                <span
+                  class="flavour-tab-art flavour-tab-art--vanilla"
+                  aria-hidden="true"
+                >
+                  <i class="flavour-art-search"></i>
+                  <i class="flavour-art-chip"></i>
+                  <i class="flavour-art-fab">+</i>
+                </span>
+                <span
+                  ><strong>Chromecraft Vanilla</strong
+                  ><small>For everyone</small></span
+                >
+              </button>
+              <button
+                class="flavour-tab flavour-tab--nitro"
+                type="button"
+                role="tab"
+                aria-selected="false"
+                aria-disabled="true"
+                disabled
+              >
+                <span
+                  class="flavour-tab-art flavour-tab-art--nitro"
+                  aria-hidden="true"
+                >
+                  <i class="flavour-art-nitro-line"></i>
+                  <b>144</b>
+                  <small>FPS</small>
+                </span>
+                <span
+                  ><strong>Chromecraft Nitro</strong
+                  ><small>For gamers</small></span
+                >
+              </button>
+              <button
+                class="flavour-tab flavour-tab--mint"
+                type="button"
+                role="tab"
+                aria-selected="false"
+                aria-disabled="true"
+                disabled
+              >
+                <span
+                  class="flavour-tab-art flavour-tab-art--mint"
+                  aria-hidden="true"
+                >
+                  <i class="flavour-art-check">✓</i>
+                  <i class="flavour-art-row flavour-art-row--one"></i>
+                  <i class="flavour-art-row flavour-art-row--two"></i>
+                </span>
+                <span
+                  ><strong>Chromecraft Mint</strong
+                  ><small>For productivity</small></span
+                >
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section
         class="browser-comparison"
         id="compare"
         aria-labelledby="browser-comparison-title"
       >
         <div class="browser-comparison-inner">
           <header class="browser-comparison-heading">
-            <p class="section-kicker">07 / Browser comparison</p>
+            <p class="section-kicker">08 / Browser comparison</p>
             <h2 id="browser-comparison-title">
               Compare with your favourite browsers
             </h2>
