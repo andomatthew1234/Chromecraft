@@ -718,6 +718,9 @@
 }
 
 .gallery-preview--missing .material-icon {
+  width: 42px;
+  height: 42px;
+  flex-basis: 42px;
   font-size: 42px;
 }
 
@@ -742,6 +745,9 @@
 }
 
 .gallery-play-indicator .material-icon {
+  width: 30px;
+  height: 30px;
+  flex-basis: 30px;
   font-size: 30px;
   font-variation-settings: "FILL" 1;
 }
@@ -1127,6 +1133,9 @@
 }
 
 .gallery-player-error .material-icon {
+  width: 52px;
+  height: 52px;
+  flex-basis: 52px;
   font-size: 52px;
 }
 

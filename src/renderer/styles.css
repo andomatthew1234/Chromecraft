@@ -406,8 +406,9 @@ input::placeholder {
 .material-icon {
   width: 20px;
   height: 20px;
-  display: block;
+  display: inline-grid;
   flex: 0 0 20px;
+  place-items: center;
   overflow: hidden;
   font-size: 20px;
   font-variation-settings:
@@ -415,8 +416,9 @@ input::placeholder {
     "wght" 450,
     "GRAD" 0,
     "opsz" 20;
-  line-height: 20px;
+  line-height: 1;
   text-rendering: optimizeLegibility;
+  vertical-align: middle;
 }
 
 .material-icon.filled {

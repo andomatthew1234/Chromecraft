@@ -43,6 +43,9 @@
 }
 
 .smart-downloads-hero-icon .material-icon {
+  width: 34px;
+  height: 34px;
+  flex-basis: 34px;
   font-size: 34px;
 }
 
@@ -449,6 +452,9 @@
 }
 
 .smart-empty > .material-icon {
+  width: 44px;
+  height: 44px;
+  flex-basis: 44px;
   font-size: 44px;
   color: var(--md-primary);
 }
