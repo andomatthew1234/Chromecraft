@@ -4514,6 +4514,7 @@ h1 {
   height: 100%;
   justify-content: center;
   overflow: hidden;
+  position: relative;
 }
 
 .agentic-provider-icon > span:first-child {
@@ -4525,9 +4526,19 @@ h1 {
 }
 
 .agentic-provider-icon img {
-  height: 25px;
+  height: 34px;
+  max-width: none;
   object-fit: contain;
-  width: 25px;
+  position: absolute;
+  width: 34px;
+}
+
+.agentic-provider-icon > span:first-child img {
+  right: -17px;
+}
+
+.agentic-provider-icon > span:last-child img {
+  left: -17px;
 }
 
 .agentic-tab-icon {
@@ -4759,6 +4770,8 @@ h1 {
   align-items: center;
   display: flex;
   justify-content: center;
+  overflow: hidden;
+  position: relative;
 }
 
 .provider-split-half--gemini {
@@ -4770,9 +4783,19 @@ h1 {
 }
 
 .provider-split-half img {
-  height: 42px;
+  height: 58px;
+  max-width: none;
   object-fit: contain;
-  width: 42px;
+  position: absolute;
+  width: 58px;
+}
+
+.provider-split-half:first-child img {
+  right: -29px;
+}
+
+.provider-split-half:last-child img {
+  left: -29px;
 }
 
 .provider-choices {
@@ -4817,6 +4840,25 @@ h1 {
   background: #242126;
   border-color: #242126;
   color: #ffffff;
+}
+
+.provider-choice--off .provider-choice-icon {
+  background: #484249;
+  color: #ffffff;
+  overflow: hidden;
+  position: relative;
+}
+
+.provider-choice--off .provider-choice-icon::after {
+  background: #ff8f9a;
+  border-radius: 999px;
+  content: "";
+  height: 3px;
+  left: 50%;
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%) rotate(-45deg);
+  width: 44px;
 }
 
 .provider-choice-icon {
@@ -4875,16 +4917,6 @@ h1 {
   display: block;
   font-size: 11px;
   margin-top: 7px;
-}
-
-.provider-off-slash {
-  background: #ff8f9a;
-  height: 2px;
-  left: 34px;
-  position: absolute;
-  top: 48px;
-  transform: rotate(-42deg);
-  width: 58px;
 }
 
 @media (max-width: 900px) {
