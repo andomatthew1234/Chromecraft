@@ -174,6 +174,94 @@ if (!reduceMotion) {
   document.fonts?.ready.then(requestScrollMotion);
 }
 
+const youtubeUtilities = document.querySelector(".youtube-utilities");
+const youtubeUtilitiesJourney = document.querySelector(
+  ".youtube-utilities-journey",
+);
+const youtubeUtilitySteps = [
+  ...document.querySelectorAll("[data-youtube-utility]"),
+];
+const youtubeUtilityVisuals = [
+  ...document.querySelectorAll("[data-youtube-utility-visual]"),
+];
+let activeYoutubeUtility = 0;
+let youtubeUtilityFrame;
+
+function showYoutubeUtility(index, focus = false) {
+  const next = Math.min(
+    Math.max(Number(index) || 0, 0),
+    youtubeUtilitySteps.length - 1,
+  );
+  if (!youtubeUtilities || !youtubeUtilitySteps.length) return;
+
+  activeYoutubeUtility = next;
+  youtubeUtilities.style.setProperty("--youtube-active", String(next));
+  youtubeUtilitySteps.forEach((step, stepIndex) => {
+    const active = stepIndex === next;
+    step.classList.toggle("is-active", active);
+    step.setAttribute("aria-selected", String(active));
+    step.tabIndex = active ? 0 : -1;
+  });
+  youtubeUtilityVisuals.forEach((visual, visualIndex) => {
+    const active = visualIndex === next;
+    visual.classList.toggle("is-active", active);
+    visual.setAttribute("aria-hidden", String(!active));
+  });
+
+  if (focus) youtubeUtilitySteps[next]?.focus();
+}
+
+function updateYoutubeUtilityFromScroll() {
+  youtubeUtilityFrame = undefined;
+  if (
+    !youtubeUtilitiesJourney ||
+    reduceMotion ||
+    window.matchMedia("(max-width: 900px)").matches
+  ) {
+    return;
+  }
+
+  const bounds = youtubeUtilitiesJourney.getBoundingClientRect();
+  const travel = Math.max(bounds.height - window.innerHeight, 1);
+  const progress = clamp(-bounds.top / travel);
+  const next = Math.min(2, Math.floor(progress * 3));
+  if (next !== activeYoutubeUtility) showYoutubeUtility(next);
+}
+
+function requestYoutubeUtilityUpdate() {
+  if (!youtubeUtilityFrame) {
+    youtubeUtilityFrame = window.requestAnimationFrame(
+      updateYoutubeUtilityFromScroll,
+    );
+  }
+}
+
+youtubeUtilitySteps.forEach((step, index) => {
+  step.addEventListener("click", () => showYoutubeUtility(index));
+  step.addEventListener("keydown", (event) => {
+    if (
+      !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)
+    ) {
+      return;
+    }
+    event.preventDefault();
+    const direction = ["ArrowRight", "ArrowDown"].includes(event.key) ? 1 : -1;
+    const next =
+      (activeYoutubeUtility + direction + youtubeUtilitySteps.length) %
+      youtubeUtilitySteps.length;
+    showYoutubeUtility(next, true);
+  });
+});
+
+if (youtubeUtilitiesJourney && !reduceMotion) {
+  showYoutubeUtility(0);
+  updateYoutubeUtilityFromScroll();
+  window.addEventListener("scroll", requestYoutubeUtilityUpdate, {
+    passive: true,
+  });
+  window.addEventListener("resize", requestYoutubeUtilityUpdate);
+}
+
 if (colorSlider && sliderValue) {
   colorSlider.addEventListener("pointerdown", () => {
     sliderTouched = true;
