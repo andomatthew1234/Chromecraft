@@ -250,6 +250,7 @@ type IconName =
   | "info"
   | "lock"
   | "memory"
+  | "offline"
   | "folder"
   | "group"
   | "more"
@@ -293,6 +294,7 @@ const iconSymbols: Record<IconName, string> = {
   info: "info",
   lock: "lock",
   memory: "memory",
+  offline: "offline_pin",
   folder: "folder",
   group: "tab_group",
   more: "more_vert",
@@ -669,6 +671,58 @@ function hostLabel(url: string): string {
   }
 }
 
+function internalTabIcon(url: string): IconName | null {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "chromecraft:") return null;
+    if (parsed.hostname === "gallery") return "videoLibrary";
+    if (parsed.hostname === "offline-pages") return "offline";
+    if (parsed.hostname === "error") return "warning";
+  } catch {
+    // The normal hostname initial remains a useful fallback for malformed URLs.
+  }
+  return null;
+}
+
+function TabFavicon({
+  tab,
+  settings = false,
+  className = "tab-favicon",
+}: {
+  tab: BrowserTabSnapshot;
+  settings?: boolean;
+  className?: string;
+}) {
+  const internalIcon = settings ? "settings" : internalTabIcon(tab.url);
+  const variant = settings
+    ? "settings-favicon"
+    : internalIcon
+      ? "internal-favicon"
+      : tab.isNewTab
+        ? "brand-favicon"
+        : tab.faviconDataUrl
+          ? "website-favicon"
+          : "";
+  return (
+    <span className={`${className} ${variant}`.trim()} aria-hidden="true">
+      {internalIcon ? (
+        <Icon name={internalIcon} />
+      ) : tab.isNewTab ? (
+        "C"
+      ) : tab.faviconDataUrl ? (
+        <img
+          className="tab-favicon-image"
+          src={tab.faviconDataUrl}
+          alt=""
+          draggable={false}
+        />
+      ) : (
+        hostLabel(tab.url).slice(0, 1).toUpperCase()
+      )}
+    </span>
+  );
+}
+
 type TabGroupColor =
   | "grey"
   | "blue"
@@ -928,17 +982,8 @@ const TabButton = memo(function TabButton({
       >
         {tab.isLoading ? (
           <ExpressiveLoadingIndicator compact />
-        ) : settings ? (
-          <span className="tab-favicon settings-favicon" aria-hidden="true">
-            <Icon name="settings" />
-          </span>
         ) : (
-          <span
-            className={`tab-favicon ${tab.isNewTab ? "brand-favicon" : ""}`}
-            aria-hidden="true"
-          >
-            {tab.isNewTab ? "C" : hostLabel(tab.url).slice(0, 1).toUpperCase()}
-          </span>
+          <TabFavicon tab={tab} settings={settings} />
         )}
         <span className="tab-title">{label}</span>
         {tab.isMuted && (
@@ -1374,9 +1419,7 @@ export function TabOverview({
                   onMouseEnter={() => setFocusedIndex(index)}
                   onClick={() => runAtIndex(index)}
                 >
-                  <span className="tab-overview-favicon">
-                    {hostLabel(tab.url).slice(0, 1).toUpperCase() || "C"}
-                  </span>
+                  <TabFavicon tab={tab} className="tab-overview-favicon" />
                   <span className="tab-overview-copy">
                     <strong>{tabLabel(tab)}</strong>
                     <small>

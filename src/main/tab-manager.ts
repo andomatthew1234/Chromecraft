@@ -33,6 +33,7 @@ import type {
   WebStoreListingSnapshot,
   YouTubeWatchSnapshot,
 } from "../shared/browser";
+import { faviconLimits, resolveFaviconDataUrl } from "./favicon";
 import type {
   AssistantAttachment,
   AssistantContextCaptured,
@@ -136,6 +137,7 @@ interface TabRecord {
   id: TabId;
   title: string;
   url: string;
+  faviconDataUrl: string | null;
   requestedUrl: string;
   isNewTab: boolean;
   isLoading: boolean;
@@ -2289,6 +2291,7 @@ export class TabManager {
       id,
       title: title || "New Tab",
       url,
+      faviconDataUrl: null,
       requestedUrl: url,
       isNewTab,
       isLoading: false,
@@ -2335,6 +2338,7 @@ export class TabManager {
     this.resetWebStoreVisitIfChanged(tab, target);
     this.resetYouTubeVisitIfChanged(tab, target);
     tab.title = "Loading…";
+    if (tab.url !== target) tab.faviconDataUrl = null;
     tab.url = target;
     tab.requestedUrl = target;
     tab.isNewTab = false;
@@ -2575,6 +2579,7 @@ export class TabManager {
     });
     contents.on("did-start-navigation", (details) => {
       if (details.isMainFrame && !details.isSameDocument) {
+        if (details.url !== tab.url) tab.faviconDataUrl = null;
         tab.documentEpoch += 1;
         if (this.pendingHtmlFullscreen?.tabId === tab.id)
           this.pendingHtmlFullscreen = null;
@@ -2636,6 +2641,29 @@ export class TabManager {
         this.scheduleSnapshot();
         this.scheduleSessionSave();
       }
+    });
+    contents.on("page-favicon-updated", (_event, favicons) => {
+      const documentEpoch = tab.documentEpoch;
+      const pageUrl = contents.getURL();
+      void resolveFaviconDataUrl(
+        favicons,
+        pageUrl,
+        (url, init) => this.browserSession.fetch(url, init),
+        (url) => this.readBlobFavicon(contents, url),
+      ).then((faviconDataUrl) => {
+        if (
+          !faviconDataUrl ||
+          !this.tabs.has(tab.id) ||
+          tab.view !== view ||
+          contents.isDestroyed() ||
+          tab.documentEpoch !== documentEpoch ||
+          contents.getURL() !== pageUrl ||
+          tab.faviconDataUrl === faviconDataUrl
+        )
+          return;
+        tab.faviconDataUrl = faviconDataUrl;
+        this.scheduleSnapshot();
+      });
     });
     contents.on("found-in-page", (_event, result) => {
       if (
@@ -3278,6 +3306,7 @@ export class TabManager {
       id: tab.id,
       title: tab.title,
       url: tab.url,
+      faviconDataUrl: tab.faviconDataUrl,
       isNewTab: tab.isNewTab,
       isLoading: tab.isLoading,
       canGoBack: tab.canGoBack,
@@ -3293,6 +3322,36 @@ export class TabManager {
       memoryBytes: this.tabMemoryBytes(tab, memoryByProcessId),
       thumbnailDataUrl: tab.thumbnailDataUrl,
     };
+  }
+
+  private async readBlobFavicon(
+    contents: WebContents,
+    url: string,
+  ): Promise<string | null> {
+    if (contents.isDestroyed()) return null;
+    const code = `(async () => {
+      try {
+        const response = await fetch(${JSON.stringify(url)});
+        const blob = await response.blob();
+        if (blob.size < 1 || blob.size > ${faviconLimits.maxBytes} || !blob.type.toLowerCase().startsWith("image/")) return null;
+        return await new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(typeof reader.result === "string" ? reader.result : null);
+          reader.onerror = () => resolve(null);
+          reader.readAsDataURL(blob);
+        });
+      } catch {
+        return null;
+      }
+    })()`;
+    try {
+      const value = await contents.executeJavaScriptInIsolatedWorld(1001, [
+        { code },
+      ]);
+      return typeof value === "string" ? value : null;
+    } catch {
+      return null;
+    }
   }
 
   private rendererMemoryByProcessId(): Map<number, number> {

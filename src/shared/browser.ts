@@ -67,6 +67,8 @@ export interface BrowserTabSnapshot {
   id: TabId;
   title: string;
   url: string;
+  /** Shell-safe image data discovered by Chromium for the current document. */
+  faviconDataUrl: string | null;
   isNewTab: boolean;
   isLoading: boolean;
   canGoBack: boolean;

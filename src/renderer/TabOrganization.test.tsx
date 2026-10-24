@@ -84,6 +84,7 @@ function tab(
     id,
     title,
     url,
+    faviconDataUrl: null,
     isNewTab: false,
     isLoading: false,
     canGoBack: true,
@@ -236,6 +237,38 @@ const aiTools: AiToolsSnapshot = {
 };
 
 describe("tab organisation renderer", () => {
+  it("renders discovered website favicons and Material icons for internal pages", () => {
+    const current = snapshot();
+    current.tabs = [
+      tab("web", "Example", "https://example.com/", {
+        faviconDataUrl: "data:image/png;base64,iVBORw0KGgo=",
+      }),
+      tab("gallery", "Gallery", "chromecraft://gallery/"),
+      tab("offline", "Offline Pages", "chromecraft://offline-pages/"),
+    ];
+
+    const markup = renderToStaticMarkup(
+      <TabStrip
+        snapshot={current}
+        data={data}
+        settingsTabId={null}
+        onMenu={vi.fn()}
+        brandMenuOpen={false}
+        onToggleBrandMenu={vi.fn()}
+        onSetSidebarAttached={vi.fn()}
+        onOpenUpdates={vi.fn()}
+        onOpenToolbarManager={vi.fn()}
+        aiTools={aiTools}
+        onOpenOrganiseTabs={vi.fn()}
+        onHoverCardOpenChange={vi.fn()}
+      />,
+    );
+
+    expect(markup).toContain('class="tab-favicon-image"');
+    expect(markup).toContain("video_library");
+    expect(markup).toContain("offline_pin");
+  });
+
   it("moves an ungrouped tab into a group when it is dropped on the group", async () => {
     const current = snapshot();
     current.tabs.push(tab("loose", "Loose tab", "https://example.com/loose"));
