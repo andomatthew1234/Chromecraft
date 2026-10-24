@@ -44,6 +44,7 @@ import type {
   SecureDnsMode,
   SitePermissionDecision,
   SitePermissionKey,
+  SplitViewCommand,
   WebsiteControlsSnapshot,
   YouTubeDownloadsSnapshot,
   GallerySnapshot,
@@ -83,6 +84,10 @@ import { registerGalleryMediaProtocol } from "./gallery-media-protocol";
 import { GalleryMediaRepairService } from "./gallery-media-repair";
 import { OfflinePageStore } from "./offline-page-store";
 import { registerOfflinePageProtocol } from "./offline-page-protocol";
+import {
+  registerSmartReaderProtocol,
+  SmartReaderDocumentStore,
+} from "./smart-reader-protocol";
 import { HyperdriveController } from "./hyperdrive/controller";
 import { PreferencesStore } from "./preferences";
 import { SearchSuggestionService } from "./search-suggestions";
@@ -141,6 +146,16 @@ protocol.registerSchemesAsPrivileged([
   },
   {
     scheme: "chromecraft-offline",
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: false,
+      corsEnabled: false,
+      stream: true,
+    },
+  },
+  {
+    scheme: "chromecraft-reader",
     privileges: {
       standard: true,
       secure: true,
@@ -823,6 +838,59 @@ function requireTabGroupUpdate(value: unknown): TabGroupUpdate {
   return update;
 }
 
+function requireSplitViewCommand(value: unknown): SplitViewCommand {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new TypeError("Split View command is invalid.");
+  const requested = value as Record<string, unknown>;
+  const type = requested.type;
+  const requireExactFields = (allowed: readonly string[]) => {
+    if (Object.keys(requested).some((key) => !allowed.includes(key)))
+      throw new TypeError("Split View command contains unexpected fields.");
+  };
+  if (type === "create") {
+    requireExactFields(["type", "tabId", "side"]);
+    if (requested.side !== "left" && requested.side !== "right")
+      throw new TypeError("Split View side must be left or right.");
+    return {
+      type,
+      tabId: requireString(requested.tabId, "tabId", 128),
+      side: requested.side,
+    };
+  }
+  if (type === "focus") {
+    requireExactFields(["type", "pairId", "tabId"]);
+    return {
+      type,
+      pairId: requireString(requested.pairId, "pairId", 128),
+      tabId: requireString(requested.tabId, "tabId", 128),
+    };
+  }
+  if (type === "resize") {
+    requireExactFields(["type", "pairId", "ratio"]);
+    if (
+      typeof requested.ratio !== "number" ||
+      !Number.isFinite(requested.ratio) ||
+      requested.ratio < 0.15 ||
+      requested.ratio > 0.85
+    ) {
+      throw new TypeError("Split View ratio must be between 0.15 and 0.85.");
+    }
+    return {
+      type,
+      pairId: requireString(requested.pairId, "pairId", 128),
+      ratio: requested.ratio,
+    };
+  }
+  if (type === "swap" || type === "exit") {
+    requireExactFields(["type", "pairId"]);
+    return {
+      type,
+      pairId: requireString(requested.pairId, "pairId", 128),
+    };
+  }
+  throw new TypeError("Unknown Split View command.");
+}
+
 function requireAiProvider(value: unknown): AiProviderId {
   if (value !== "ollama" && value !== "gemini") {
     throw new TypeError("Unknown AI provider.");
@@ -1317,6 +1385,9 @@ function registerIpc(): void {
       throw new TypeError("tabId must be a string.");
     requireManager(event).closeTab(tabId);
   });
+  ipcMain.handle(channels.updateSplitView, (event, command: unknown) =>
+    requireManager(event).updateSplitView(requireSplitViewCommand(command)),
+  );
   ipcMain.handle(
     channels.navigate,
     async (event, tabId: unknown, input: unknown, typed: unknown) => {
@@ -1350,6 +1421,33 @@ function registerIpc(): void {
       throw new TypeError("tabId must be a string.");
     requireManager(event).stop(tabId);
   });
+  ipcMain.handle(channels.getSmartReader, (event, tabId: unknown) =>
+    requireManager(event).getSmartReader(requireString(tabId, "tabId", 128)),
+  );
+  ipcMain.handle(
+    channels.toggleSmartReader,
+    (event, tabId: unknown, appearance: unknown) =>
+      requireManager(event).toggleSmartReader(
+        requireString(tabId, "tabId", 128),
+        appearance,
+      ),
+  );
+  ipcMain.handle(
+    channels.trySmartReader,
+    (event, tabId: unknown, appearance: unknown) =>
+      requireManager(event).trySmartReader(
+        requireString(tabId, "tabId", 128),
+        appearance,
+      ),
+  );
+  ipcMain.handle(
+    channels.setSmartReaderAppearance,
+    (event, tabId: unknown, appearance: unknown) =>
+      requireManager(event).setSmartReaderAppearance(
+        requireString(tabId, "tabId", 128),
+        appearance,
+      ),
+  );
   ipcMain.handle(channels.duplicateTab, async (event, tabId: unknown) =>
     requireManager(event).duplicateTab(requireString(tabId, "tabId", 128)),
   );
@@ -2544,6 +2642,8 @@ async function createMainWindow(): Promise<void> {
     browserSession.getUserAgent().replace(/\sElectron\/[^\s]+/, ""),
   );
   registerInternalProtocol(browserSession);
+  const smartReaderDocuments = new SmartReaderDocumentStore();
+  registerSmartReaderProtocol(browserSession, smartReaderDocuments);
 
   const actionHost = new ExtensionWebRequestHost(browserSession, {
     serviceWorkerPreloadPath: path.join(
@@ -2984,6 +3084,7 @@ async function createMainWindow(): Promise<void> {
     preferences,
     data,
     hyperdrive,
+    smartReaderDocuments,
     sendBrowserData,
     () => void sendExtensionsSnapshot(),
     (input) => actionHost.handleCommandInput(input),

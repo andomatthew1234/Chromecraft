@@ -16,6 +16,7 @@ import type {
   SecureDnsMode,
   SitePermissionDecision,
   SitePermissionKey,
+  SplitViewCommand,
   TabId,
   WebsiteControlSnapshot,
   WebsiteControlsSnapshot,
@@ -52,6 +53,8 @@ const api: ChromecraftApi = {
     ipcRenderer.invoke(channels.activateTab, tabId) as Promise<void>,
   closeTab: (tabId) =>
     ipcRenderer.invoke(channels.closeTab, tabId) as Promise<void>,
+  updateSplitView: (command: SplitViewCommand) =>
+    ipcRenderer.invoke(channels.updateSplitView, command) as Promise<void>,
   navigate: (tabId, input, typed) =>
     ipcRenderer.invoke(channels.navigate, tabId, input, typed) as Promise<void>,
   goBack: (tabId) =>
@@ -61,6 +64,13 @@ const api: ChromecraftApi = {
   reload: (tabId) =>
     ipcRenderer.invoke(channels.reload, tabId) as Promise<void>,
   stop: (tabId) => ipcRenderer.invoke(channels.stop, tabId) as Promise<void>,
+  getSmartReader: (tabId) => ipcRenderer.invoke(channels.getSmartReader, tabId),
+  toggleSmartReader: (tabId, appearance) =>
+    ipcRenderer.invoke(channels.toggleSmartReader, tabId, appearance),
+  trySmartReader: (tabId, appearance) =>
+    ipcRenderer.invoke(channels.trySmartReader, tabId, appearance),
+  setSmartReaderAppearance: (tabId, appearance) =>
+    ipcRenderer.invoke(channels.setSmartReaderAppearance, tabId, appearance),
   duplicateTab: (tabId) =>
     ipcRenderer.invoke(channels.duplicateTab, tabId) as Promise<TabId>,
   reopenClosedTab: (id) =>

@@ -5,6 +5,7 @@ import {
   BaseWindow,
   BrowserWindow,
   clipboard,
+  dialog,
   Menu,
   type BrowserWindowConstructorOptions,
   type NativeImage,
@@ -22,6 +23,7 @@ import type {
   HyperdriveOmniboxSignal,
   HyperdriveSnapshot,
   NewTabTheme,
+  SplitViewCommand,
   TabGroupColor,
   TabGroupSnapshot,
   TabGroupUpdate,
@@ -32,6 +34,14 @@ import type {
   WebStoreListingSnapshot,
   YouTubeWatchSnapshot,
 } from "../shared/browser";
+import type {
+  SmartReaderAppearance,
+  SmartReaderArticle,
+  SmartReaderExtractionResult,
+  SmartReaderTabSnapshot,
+  SmartReaderViewSnapshot,
+} from "../shared/smart-reader";
+import { normalizeSmartReaderAppearance } from "../shared/smart-reader";
 import { faviconLimits, resolveFaviconDataUrl } from "./favicon";
 import type {
   AssistantAttachment,
@@ -58,6 +68,11 @@ import {
   buildTextContextMenu,
 } from "./page-context-menu";
 import { PreferencesStore } from "./preferences";
+import { SplitViewState } from "./split-view-state";
+import {
+  renderSmartReaderDocument,
+  SmartReaderDocumentStore,
+} from "./smart-reader-protocol";
 import { UblockService } from "./ublock-service";
 import type { OfflinePageCaptureSource } from "./offline-page-store";
 import type { ActiveWebsitePermissionContext } from "./website-permission-controller";
@@ -160,6 +175,22 @@ interface TabRecord {
   webStoreListingDescription: string | null;
   groupId: string | null;
   thumbnailDataUrl: string | null;
+  reader: SmartReaderTabSnapshot;
+  readerView: WebContentsView | null;
+  readerDocumentUrl: string | null;
+  readerPendingRequestId: string | null;
+  readerError: string | null;
+  readerAppearanceCssKey: string | null;
+  readerAppearanceRevision: number;
+  readerMutationTimer: ReturnType<typeof setTimeout> | null;
+  readerTimers: Set<ReturnType<typeof setTimeout>>;
+}
+
+interface PendingReaderExtraction {
+  tabId: TabId;
+  revision: number;
+  resolve: (snapshot: SmartReaderViewSnapshot) => void;
+  timer: ReturnType<typeof setTimeout>;
 }
 
 export interface AiTabOrganizationCandidate {
@@ -388,6 +419,11 @@ export class TabManager {
   private readonly tabs = new Map<TabId, TabRecord>();
   private readonly order: TabId[] = [];
   private readonly tabGroups = new Map<string, TabGroupSnapshot>();
+  private readonly splitView = new SplitViewState();
+  private readonly pendingReaderExtractions = new Map<
+    string,
+    PendingReaderExtraction
+  >();
   private readonly selectedTabIds = new Set<TabId>();
   private aiTabOrganizationUndo: AiTabOrganizationUndo | null = null;
   private aiTabOrganizationMutationInProgress = false;
@@ -421,6 +457,7 @@ export class TabManager {
     private readonly preferences: PreferencesStore,
     private readonly browserData: BrowserDataStore,
     private readonly hyperdrive: HyperdriveController,
+    private readonly smartReaderDocuments: SmartReaderDocumentStore,
     private readonly onBrowserDataChanged: () => void,
     private readonly onExtensionsChanged: () => void,
     private readonly onExtensionCommandInput?: (
@@ -499,10 +536,30 @@ export class TabManager {
     this.activeTabId = this.tabs.has(session.activeTabId ?? "")
       ? (session.activeTabId as string)
       : this.order[0];
+    this.splitView.restore(
+      session.splitViewPairs ?? [],
+      this.splitEligibleTabIds(),
+    );
     this.selectionAnchorId = this.activeTabId;
     this.extensionTabs.activate(this.activeTabId);
     this.hyperdrive.setActiveTab(this.activeTabId);
     const active = this.requireTab(this.activeTabId);
+    const activePair = this.splitView.pairForTab(active.id);
+    if (activePair) {
+      const peerId =
+        activePair.leftTabId === active.id
+          ? activePair.rightTabId
+          : activePair.leftTabId;
+      const peer = this.tabs.get(peerId);
+      if (peer && this.isSplitEligibleTab(peer) && !peer.view) {
+        void this.navigateToUrl(
+          peer,
+          peer.url,
+          this.isAllowedInternalUrl(peer.url),
+          false,
+        );
+      }
+    }
     if (!active.isNewTab && active.url && !isShellInternalUrl(active.url)) {
       void this.navigateToUrl(
         active,
@@ -525,6 +582,7 @@ export class TabManager {
       tabGroups: [...this.tabGroups.values()].map((group) => ({ ...group })),
       selectedTabIds: this.order.filter((id) => this.selectedTabIds.has(id)),
       activeTabId: this.activeTabId,
+      splitView: this.splitView.snapshot(this.activeTabId),
       ublock: this.ublock.snapshot,
       preferences: {
         restoreSession: this.preferences.snapshot.restoreSession,
@@ -570,6 +628,7 @@ export class TabManager {
       (tab) => tab.view && !tab.view.webContents.isDestroyed(),
     ).length;
   }
+
   get performanceTabTasks(): PerformanceTabTask[] {
     return this.order.flatMap((tabId) => {
       const tab = this.tabs.get(tabId);
@@ -618,7 +677,6 @@ export class TabManager {
     target.forcefullyCrashRenderer();
     return matches.length;
   }
-
 
   get extensionPopupId(): string | null {
     return this.extensionPopup?.openExtensionId ?? null;
@@ -1207,8 +1265,8 @@ export class TabManager {
       this.onWebsiteDocumentInvalidated?.(previous.view.webContents);
     if (previous) void this.captureTabThumbnail(previous);
     this.extensionPopup?.close();
-    previous?.view?.setVisible(false);
     this.activeTabId = tabId;
+    this.splitView.noteFocusedTab(tabId);
     this.selectedTabIds.clear();
     this.selectionAnchorId = tabId;
     this.extensionTabs.activate(tabId);
@@ -1226,8 +1284,54 @@ export class TabManager {
         false,
       );
     }
+    const pair = this.splitView.pairForTab(tabId);
+    if (pair) {
+      const peer = this.tabs.get(
+        pair.leftTabId === tabId ? pair.rightTabId : pair.leftTabId,
+      );
+      if (peer && this.isSplitEligibleTab(peer) && !peer.view) {
+        void this.navigateToUrl(
+          peer,
+          peer.url,
+          this.isAllowedInternalUrl(peer.url),
+          false,
+        );
+      }
+    }
     this.layoutActiveView();
-    next.view?.setVisible(!next.isNewTab);
+    this.emitSnapshot();
+    this.scheduleSessionSave();
+  }
+
+  async updateSplitView(command: SplitViewCommand): Promise<void> {
+    const result = this.splitView.dispatch(command, {
+      activeTabId: this.activeTabId,
+      eligibleTabIds: this.splitEligibleTabIds(),
+    });
+    if (!result.changed) return;
+
+    if (result.activeTabId !== this.activeTabId) {
+      this.activateTab(result.activeTabId);
+      const focused = this.tabs.get(result.activeTabId)?.view?.webContents;
+      if (focused && !focused.isDestroyed()) focused.focus();
+      return;
+    }
+
+    const activePair = this.splitView.pairForTab(this.activeTabId);
+    if (activePair) {
+      for (const memberId of [activePair.leftTabId, activePair.rightTabId]) {
+        const member = this.tabs.get(memberId);
+        if (member && this.isSplitEligibleTab(member) && !member.view) {
+          await this.navigateToUrl(
+            member,
+            member.url,
+            this.isAllowedInternalUrl(member.url),
+            false,
+          );
+        }
+      }
+    }
+    this.layoutActiveView();
     this.emitSnapshot();
     this.scheduleSessionSave();
   }
@@ -1242,6 +1346,7 @@ export class TabManager {
     this.releaseWebsiteInputCapture(tab);
     if (tab.view && !tab.view.webContents.isDestroyed())
       this.onWebsiteDocumentInvalidated?.(tab.view.webContents);
+    const splitPeerId = this.splitView.removeTab(tabId);
     const closingIndex = this.order.indexOf(tabId);
     this.tabs.delete(tabId);
     this.order.splice(closingIndex, 1);
@@ -1276,10 +1381,15 @@ export class TabManager {
     }
     if (this.activeTabId === tabId) {
       const nextIndex = Math.min(closingIndex, this.order.length - 1);
+      const nextTabId =
+        splitPeerId && this.tabs.has(splitPeerId)
+          ? splitPeerId
+          : this.order[nextIndex];
       this.activeTabId = "";
-      this.activateTab(this.order[nextIndex]);
+      this.activateTab(nextTabId);
       return;
     }
+    this.layoutActiveView();
     this.emitSnapshot();
     this.scheduleSessionSave();
   }
@@ -1935,6 +2045,7 @@ export class TabManager {
         this.tabGroups.set(nextId, { ...group, id: nextId });
       }
       const created: TabId[] = [];
+      const tabIdMap = new Map<TabId, TabId>();
       let activeId: TabId | null = null;
       for (const savedTab of closed.tabs) {
         const tabId = this.createTab(savedTab.url || undefined, false);
@@ -1945,8 +2056,32 @@ export class TabManager {
           ? (groupIdMap.get(savedTab.groupId) ?? null)
           : null;
         created.push(tabId);
+        tabIdMap.set(savedTab.id, tabId);
         if (savedTab.id === closed.activeTabId) activeId = tabId;
       }
+      const existingPairs = this.splitView.snapshot(this.activeTabId).pairs;
+      const pairIds = new Set(existingPairs.map((pair) => pair.id));
+      const restoredPairs = (closed.splitViewPairs ?? []).flatMap((pair) => {
+        const leftTabId = tabIdMap.get(pair.leftTabId);
+        const rightTabId = tabIdMap.get(pair.rightTabId);
+        if (!leftTabId || !rightTabId) return [];
+        const id = pairIds.has(pair.id) ? randomUUID() : pair.id;
+        pairIds.add(id);
+        return [
+          {
+            ...pair,
+            id,
+            leftTabId,
+            rightTabId,
+            focusedTabId:
+              pair.focusedTabId === pair.rightTabId ? rightTabId : leftTabId,
+          },
+        ];
+      });
+      this.splitView.restore(
+        [...existingPairs, ...restoredPairs],
+        this.splitEligibleTabIds(),
+      );
       this.sortPinnedTabsFirst();
       if (created.length === 0) this.createTab();
       else this.activateTab(activeId ?? created[0]);
@@ -1963,6 +2098,7 @@ export class TabManager {
     if (tabId === this.activeTabId) this.extensionPopup?.close();
     if (isGalleryUrl(input.trim())) {
       const tab = this.requireTab(tabId);
+      this.splitView.removeTab(tab.id);
       this.destroyView(tab);
       const requested = new URL(input.trim());
       const entryId = requested.searchParams.get("video");
@@ -1979,6 +2115,7 @@ export class TabManager {
     }
     if (isOfflinePagesUrl(input.trim())) {
       const tab = this.requireTab(tabId);
+      this.splitView.removeTab(tab.id);
       this.destroyView(tab);
       const requested = new URL(input.trim());
       const entryId = requested.searchParams.get("page");
@@ -2008,18 +2145,23 @@ export class TabManager {
 
   goBack(tabId: TabId): void {
     const tab = this.requireTab(tabId);
-    if (tab.view?.webContents.navigationHistory.canGoBack())
+    if (tab.view?.webContents.navigationHistory.canGoBack()) {
+      this.invalidateSmartReader(tab);
       tab.view.webContents.navigationHistory.goBack();
+    }
   }
 
   goForward(tabId: TabId): void {
     const tab = this.requireTab(tabId);
-    if (tab.view?.webContents.navigationHistory.canGoForward())
+    if (tab.view?.webContents.navigationHistory.canGoForward()) {
+      this.invalidateSmartReader(tab);
       tab.view.webContents.navigationHistory.goForward();
+    }
   }
 
   reload(tabId: TabId): void {
     const tab = this.requireTab(tabId);
+    this.invalidateSmartReader(tab);
     if (tab.crashed) {
       const target = tab.requestedUrl || tab.url;
       this.destroyView(tab);
@@ -2041,6 +2183,168 @@ export class TabManager {
     this.requireTab(tabId).view?.webContents.stop();
   }
 
+  getSmartReader(tabId: TabId): SmartReaderViewSnapshot {
+    return this.smartReaderSnapshot(this.requireTab(tabId));
+  }
+
+  async toggleSmartReader(
+    tabId: TabId,
+    appearanceValue: unknown,
+  ): Promise<SmartReaderViewSnapshot> {
+    const tab = this.requireTab(tabId);
+    if (tab.reader.active) {
+      this.exitSmartReader(tab);
+      return this.smartReaderSnapshot(tab);
+    }
+    if (!isAllowedWebUrl(tab.url)) {
+      throw new Error("Smart Reader only supports web pages.");
+    }
+    if (!this.readerDocumentIsAvailable(tab)) {
+      const detected = await this.requestSmartReaderExtraction(tab, false);
+      if (!detected.article && detected.availability !== "available") {
+        return detected;
+      }
+    }
+    await this.enterSmartReader(
+      tab,
+      normalizeSmartReaderAppearance(appearanceValue),
+    );
+    return this.smartReaderSnapshot(tab);
+  }
+
+  async trySmartReader(
+    tabId: TabId,
+    appearanceValue: unknown,
+  ): Promise<SmartReaderViewSnapshot> {
+    const tab = this.requireTab(tabId);
+    if (!isAllowedWebUrl(tab.url)) {
+      throw new Error("Smart Reader only supports web pages.");
+    }
+    const detected = await this.requestSmartReaderExtraction(tab, true);
+    if (detected.availability !== "available") return detected;
+    await this.enterSmartReader(
+      tab,
+      normalizeSmartReaderAppearance(appearanceValue),
+    );
+    return this.smartReaderSnapshot(tab);
+  }
+
+  private async trySmartReaderFromNativeMenu(
+    tabId: TabId,
+    offerRetry = true,
+  ): Promise<void> {
+    let result: SmartReaderViewSnapshot | null = null;
+    try {
+      result = await this.trySmartReader(tabId, null);
+    } catch {
+      // The tab may have closed or navigated while extraction was running.
+    }
+    if (result?.active || !this.tabs.has(tabId) || this.window.isDestroyed()) {
+      return;
+    }
+    const response = await dialog.showMessageBox({
+      type: "info",
+      title: "Smart Reader",
+      message: "Smart Reader couldn't prepare this page.",
+      detail:
+        result?.error ??
+        "No readable article was found. The original page has not been changed.",
+      buttons: offerRetry ? ["Close", "Try again"] : ["Close"],
+      defaultId: 0,
+      cancelId: 0,
+      noLink: true,
+    });
+    if (offerRetry && response.response === 1 && this.tabs.has(tabId)) {
+      await this.trySmartReaderFromNativeMenu(tabId, false);
+    }
+  }
+
+  async setSmartReaderAppearance(
+    tabId: TabId,
+    appearanceValue: unknown,
+  ): Promise<SmartReaderViewSnapshot> {
+    const tab = this.requireTab(tabId);
+    if (!tab.readerView || tab.readerView.webContents.isDestroyed()) {
+      return this.smartReaderSnapshot(tab);
+    }
+    await this.applySmartReaderAppearance(
+      tab,
+      normalizeSmartReaderAppearance(appearanceValue),
+    );
+    return this.smartReaderSnapshot(tab);
+  }
+
+  handleSmartReaderExtractionResult(source: WebContents, value: unknown): void {
+    if (!value || typeof value !== "object") return;
+    const result = value as Partial<SmartReaderExtractionResult>;
+    if (
+      typeof result.requestId !== "string" ||
+      typeof result.sourceUrl !== "string" ||
+      typeof result.revision !== "number" ||
+      typeof result.available !== "boolean"
+    ) {
+      return;
+    }
+    const pending = this.pendingReaderExtractions.get(result.requestId);
+    if (!pending) return;
+    const tab = this.tabs.get(pending.tabId);
+    if (
+      !tab ||
+      tab.view?.webContents !== source ||
+      tab.readerPendingRequestId !== result.requestId ||
+      tab.reader.revision !== pending.revision ||
+      result.revision !== pending.revision ||
+      result.sourceUrl !== tab.url
+    ) {
+      this.finishReaderExtraction(result.requestId, tab);
+      if (
+        tab &&
+        this.tabs.has(tab.id) &&
+        tab.view?.webContents === source &&
+        tab.reader.revision === pending.revision &&
+        isAllowedWebUrl(tab.url)
+      ) {
+        tab.reader.availability = "unavailable";
+        tab.readerError = null;
+        this.scheduleReaderMutationDetection(tab, 100);
+        this.scheduleSnapshot();
+      }
+      return;
+    }
+
+    tab.readerPendingRequestId = null;
+    tab.readerError =
+      typeof result.error === "string" && result.error
+        ? result.error.slice(0, 500)
+        : null;
+    if (
+      result.available &&
+      this.isValidReaderArticle(result.article, tab.url)
+    ) {
+      this.smartReaderDocuments.removeUrl(tab.readerDocumentUrl);
+      try {
+        tab.readerDocumentUrl = this.smartReaderDocuments.put(
+          renderSmartReaderDocument(
+            result.article,
+            normalizeSmartReaderAppearance(null),
+          ),
+        );
+        tab.reader.availability = "available";
+        tab.readerError = null;
+        this.clearReaderTimers(tab);
+      } catch (error) {
+        tab.readerDocumentUrl = null;
+        tab.reader.availability = "error";
+        tab.readerError =
+          error instanceof Error ? error.message : "Reader preparation failed.";
+      }
+    } else {
+      tab.reader.availability = tab.readerError ? "error" : "unavailable";
+    }
+    this.finishReaderExtraction(result.requestId, tab);
+    this.scheduleSnapshot();
+  }
+
   toggleMute(tabId: TabId): void {
     const tab = this.requireTab(tabId);
     tab.isMuted = !tab.isMuted;
@@ -2053,15 +2357,21 @@ export class TabManager {
       throw new TypeError("Zoom factor must be finite.");
     const tab = this.requireTab(tabId);
     tab.zoomFactor = Math.min(5, Math.max(0.25, factor));
-    tab.view?.webContents.setZoomFactor(tab.zoomFactor);
+    for (const view of [tab.view, tab.readerView]) {
+      if (view && !view.webContents.isDestroyed()) {
+        view.webContents.setZoomFactor(tab.zoomFactor);
+      }
+    }
     this.emitSnapshot();
   }
 
   findInPage(tabId: TabId, text: string, forward: boolean): void {
     if (text.length > 1024) throw new RangeError("Find text is too long.");
-    const contents = this.requireTab(tabId).view?.webContents;
-    if (!contents || contents.isDestroyed() || !text) return;
     const tab = this.requireTab(tabId);
+    const contents = tab.reader.active
+      ? tab.readerView?.webContents
+      : tab.view?.webContents;
+    if (!contents || contents.isDestroyed() || !text) return;
     tab.findRequestId = contents.findInPage(text, {
       forward,
       findNext: tab.lastFindText === text,
@@ -2073,7 +2383,11 @@ export class TabManager {
     const tab = this.requireTab(tabId);
     tab.lastFindText = "";
     tab.findRequestId = 0;
-    tab.view?.webContents.stopFindInPage("clearSelection");
+    for (const view of [tab.view, tab.readerView]) {
+      if (view && !view.webContents.isDestroyed()) {
+        view.webContents.stopFindInPage("clearSelection");
+      }
+    }
   }
 
   setFullscreen(fullscreen: boolean): void {
@@ -2363,6 +2677,7 @@ export class TabManager {
       tabs,
       activeId,
       this.serializableTabGroups(tabs),
+      this.splitView.snapshot(activeId).pairs,
     );
   }
 
@@ -2376,6 +2691,7 @@ export class TabManager {
     await this.browserData.addRecentlyClosedWindow({
       tabs,
       tabGroups: this.serializableTabGroups(tabs),
+      splitViewPairs: this.splitView.snapshot(this.activeTabId).pairs,
       activeTabId: tabs.some((tab) => tab.id === this.activeTabId)
         ? this.activeTabId
         : tabs[0].id,
@@ -2398,6 +2714,7 @@ export class TabManager {
       console.warn("Could not save the browser session.", error),
     );
     for (const tab of this.tabs.values()) this.destroyView(tab);
+    this.smartReaderDocuments.clear();
     this.tabs.clear();
     this.order.length = 0;
     this.extensionTabs.dispose();
@@ -2446,6 +2763,15 @@ export class TabManager {
       webStoreListingDescription: null,
       groupId,
       thumbnailDataUrl: null,
+      reader: { availability: "unavailable", active: false, revision: 0 },
+      readerView: null,
+      readerDocumentUrl: null,
+      readerPendingRequestId: null,
+      readerError: null,
+      readerAppearanceCssKey: null,
+      readerAppearanceRevision: 0,
+      readerMutationTimer: null,
+      readerTimers: new Set(),
     };
     return tab;
   }
@@ -2463,6 +2789,7 @@ export class TabManager {
       await this.ublock.readyForNavigation();
       if (!this.tabs.has(tab.id)) return;
     }
+    this.invalidateSmartReader(tab);
     // Attach the real Electron target before mutating navigation state so the
     // extension event stream observes one canonical native tab ID from
     // creation through the first navigation.
@@ -2478,7 +2805,6 @@ export class TabManager {
     tab.crashed = false;
     tab.error = null;
     tab.nextHistoryEntryTyped = typed;
-    if (tab.id === this.activeTabId) view.setVisible(true);
     this.extensionTabs.update(tab.id, {
       title: tab.title,
       url: tab.url,
@@ -2493,6 +2819,8 @@ export class TabManager {
       if (!message.includes("ERR_ABORTED"))
         console.warn(`Navigation failed for ${target}: ${message}`);
     });
+    if (tab.id === this.activeTabId || this.splitView.pairForTab(tab.id))
+      this.layoutActiveView();
   }
 
   private ensureView(tab: TabRecord): WebContentsView {
@@ -2514,9 +2842,47 @@ export class TabManager {
     tab.view = view;
     this.window.contentView.addChildView(view);
     view.setBounds(this.currentPageBounds());
-    view.setVisible(tab.id === this.activeTabId);
+    view.setVisible(false);
     this.attachShortcutHandler(view);
     const contents = view.webContents;
+    contents.setZoomMode("isolated");
+    contents.setZoomFactor(tab.zoomFactor);
+    contents.on("found-in-page", (_event, result) => {
+      if (
+        result.requestId !== tab.findRequestId ||
+        tab.id !== this.activeTabId ||
+        this.shellView.webContents.isDestroyed()
+      ) {
+        return;
+      }
+      const snapshot: FindResultSnapshot = {
+        requestId: result.requestId,
+        activeMatchOrdinal: result.activeMatchOrdinal,
+        matches: result.matches,
+        finalUpdate: result.finalUpdate,
+      };
+      this.shellView.webContents.send(channels.findResult, snapshot);
+    });
+    contents.on("zoom-changed", () =>
+      queueMicrotask(() => {
+        if (!contents.isDestroyed() && tab.reader.active) {
+          tab.zoomFactor = contents.getZoomFactor();
+          if (tab.view && !tab.view.webContents.isDestroyed()) {
+            tab.view.webContents.setZoomFactor(tab.zoomFactor);
+          }
+          this.scheduleSnapshot();
+        }
+      }),
+    );
+    contents.on("focus", () => {
+      if (
+        this.tabs.has(tab.id) &&
+        tab.id !== this.activeTabId &&
+        this.splitView.pairForTab(tab.id)
+      ) {
+        this.activateTab(tab.id);
+      }
+    });
     contents.on("context-menu", (_event, params) => {
       if (
         !this.tabs.has(tab.id) ||
@@ -2559,6 +2925,11 @@ export class TabManager {
             inspectAt: (x, y) => {
               if (!contents.isDestroyed()) contents.inspectElement(x, y);
             },
+            trySmartReader: isAllowedWebUrl(tab.url)
+              ? () => {
+                  void this.trySmartReaderFromNativeMenu(tab.id);
+                }
+              : undefined,
           },
         ),
       );
@@ -2585,6 +2956,7 @@ export class TabManager {
       if (tab.view === view) tab.view = null;
       if (this.tabs.has(tab.id) && tab.id === this.activeTabId)
         this.extensionTabs.activate(tab.id);
+      if (this.tabs.has(tab.id)) this.layoutActiveView();
     });
     contents.on("enter-html-full-screen", () => {
       if (
@@ -2681,6 +3053,29 @@ export class TabManager {
         void this.handleAssistantSelection(tab, contents, value);
       },
     );
+    contents.ipc.on(
+      channels.smartReaderExtractionResult,
+      (event, value: unknown) => {
+        if (event.senderFrame !== contents.mainFrame || contents.isDestroyed())
+          return;
+        this.handleSmartReaderExtractionResult(contents, value);
+      },
+    );
+    contents.ipc.on(
+      channels.smartReaderContentChanged,
+      (event, value: unknown) => {
+        if (
+          event.senderFrame !== contents.mainFrame ||
+          contents.isDestroyed() ||
+          !value ||
+          typeof value !== "object" ||
+          (value as { url?: unknown }).url !== tab.url
+        ) {
+          return;
+        }
+        this.scheduleReaderMutationDetection(tab);
+      },
+    );
     contents.setZoomMode("isolated");
     contents.setZoomFactor(tab.zoomFactor);
     contents.setAudioMuted(tab.isMuted);
@@ -2707,12 +3102,14 @@ export class TabManager {
         tab.isLoading = false;
         this.extensionTabs.update(tab.id, { status: "complete" });
         updateNavigationState();
+        this.scheduleReaderDetection(tab);
       }
     });
     contents.on("did-start-navigation", (details) => {
       if (details.isMainFrame && !details.isSameDocument) {
         if (details.url !== tab.url) tab.faviconDataUrl = null;
         tab.documentEpoch += 1;
+        this.invalidateSmartReader(tab);
         if (this.pendingHtmlFullscreen?.tabId === tab.id)
           this.pendingHtmlFullscreen = null;
         if (this.htmlFullscreenTabId === tab.id)
@@ -2731,6 +3128,7 @@ export class TabManager {
       this.recordHistory(tab);
       const loadedUrl = contents.getURL();
       void this.refreshWebStoreListingMetadata(tab, contents);
+      this.scheduleReaderDetection(tab);
       void contents
         .executeJavaScript(
           "(() => { const entry = performance.getEntriesByType('navigation')[0]; return { transferSize: Number(entry?.transferSize ?? -1), activationStart: Number(entry?.activationStart ?? 0) }; })()",
@@ -2760,7 +3158,22 @@ export class TabManager {
       updateNavigationState();
     });
     contents.on("did-navigate-in-page", (_event, url) => {
+      const previousUrl = tab.url;
       this.updateNavigatedUrl(tab, url);
+      try {
+        const previous = new URL(previousUrl);
+        const next = new URL(url);
+        if (
+          previous.origin !== next.origin ||
+          previous.pathname !== next.pathname ||
+          previous.search !== next.search
+        ) {
+          this.invalidateSmartReader(tab);
+          this.scheduleReaderDetection(tab);
+        }
+      } catch {
+        this.invalidateSmartReader(tab);
+      }
       updateNavigationState();
       this.recordHistory(tab);
     });
@@ -2830,6 +3243,7 @@ export class TabManager {
           errorDescription,
         );
         tab.isLoading = false;
+        this.invalidateSmartReader(tab);
         tab.nextHistoryEntryTyped = false;
         tab.error = errorDescription;
         tab.title = "Page unavailable";
@@ -2854,6 +3268,7 @@ export class TabManager {
         if (this.htmlFullscreenTabId === tab.id)
           this.exitWebsiteFullscreen(tab);
         this.onWebsiteDocumentInvalidated?.(contents);
+        this.invalidateSmartReader(tab);
         tab.isLoading = false;
         tab.crashed = true;
         tab.error = `The page process stopped (${details.reason}).`;
@@ -3192,6 +3607,9 @@ export class TabManager {
       } else if (key === "f11") {
         event.preventDefault();
         this.setFullscreen(!this.window.isFullScreen());
+      } else if (key === "escape" && active?.reader.active) {
+        event.preventDefault();
+        this.exitSmartReader(active);
       } else if (key === "escape" && active?.id === this.htmlFullscreenTabId) {
         // Let Chromium leave HTML fullscreen, pointer lock, and keyboard lock
         // together so the page receives the standard fullscreenchange event.
@@ -3206,6 +3624,450 @@ export class TabManager {
         event.preventDefault();
       }
     });
+  }
+
+  private smartReaderSnapshot(tab: TabRecord): SmartReaderViewSnapshot {
+    return {
+      tabId: tab.id,
+      ...tab.reader,
+      article: null,
+      error: tab.readerError,
+    };
+  }
+
+  private isValidReaderArticle(
+    value: unknown,
+    expectedUrl: string,
+  ): value is SmartReaderArticle {
+    if (!value || typeof value !== "object") return false;
+    const article = value as Partial<SmartReaderArticle>;
+    return (
+      article.sourceUrl === expectedUrl &&
+      typeof article.title === "string" &&
+      article.title.length > 0 &&
+      article.title.length <= 1_000 &&
+      typeof article.content === "string" &&
+      article.content.length > 0 &&
+      article.content.length <= 5 * 1024 * 1024 &&
+      typeof article.textLength === "number" &&
+      article.textLength >= 80 &&
+      article.textLength <= 10_000_000 &&
+      [
+        article.byline,
+        article.publishedTime,
+        article.siteName,
+        article.excerpt,
+      ].every(
+        (item) =>
+          item === null || item === undefined || typeof item === "string",
+      )
+    );
+  }
+
+  private requestSmartReaderExtraction(
+    tab: TabRecord,
+    force: boolean,
+  ): Promise<SmartReaderViewSnapshot> {
+    const contents = tab.view?.webContents;
+    if (
+      !contents ||
+      contents.isDestroyed() ||
+      !isAllowedWebUrl(tab.url) ||
+      tab.crashed
+    ) {
+      tab.reader.availability = "unavailable";
+      return Promise.resolve(this.smartReaderSnapshot(tab));
+    }
+    if (tab.readerPendingRequestId) {
+      this.cancelReaderExtraction(tab, "A newer Reader check started.");
+    }
+    const requestId = randomUUID();
+    const revision = tab.reader.revision;
+    tab.readerPendingRequestId = requestId;
+    tab.reader.availability = "checking";
+    tab.readerError = null;
+    this.scheduleSnapshot();
+
+    return new Promise<SmartReaderViewSnapshot>((resolve) => {
+      const timer = setTimeout(() => {
+        const current = this.pendingReaderExtractions.get(requestId);
+        if (!current) return;
+        this.pendingReaderExtractions.delete(requestId);
+        if (tab.readerPendingRequestId === requestId) {
+          tab.readerPendingRequestId = null;
+          tab.reader.availability = "error";
+          tab.readerError = "Smart Reader could not finish checking this page.";
+          this.scheduleSnapshot();
+        }
+        resolve(this.smartReaderSnapshot(tab));
+      }, 12_000);
+      this.pendingReaderExtractions.set(requestId, {
+        tabId: tab.id,
+        revision,
+        resolve,
+        timer,
+      });
+      contents.send(channels.smartReaderExtract, {
+        requestId,
+        expectedUrl: tab.url,
+        revision,
+        force,
+      });
+    });
+  }
+
+  private finishReaderExtraction(requestId: string, tab?: TabRecord): void {
+    const pending = this.pendingReaderExtractions.get(requestId);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    this.pendingReaderExtractions.delete(requestId);
+    if (tab?.readerPendingRequestId === requestId) {
+      tab.readerPendingRequestId = null;
+    }
+    pending.resolve(
+      tab && this.tabs.has(tab.id)
+        ? this.smartReaderSnapshot(tab)
+        : {
+            tabId: pending.tabId,
+            availability: "unavailable",
+            active: false,
+            revision: pending.revision,
+            article: null,
+            error: "The page changed before Smart Reader finished.",
+          },
+    );
+  }
+
+  private cancelReaderExtraction(tab: TabRecord, message: string): void {
+    const requestId = tab.readerPendingRequestId;
+    tab.readerPendingRequestId = null;
+    if (!requestId) return;
+    const pending = this.pendingReaderExtractions.get(requestId);
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    this.pendingReaderExtractions.delete(requestId);
+    pending.resolve({
+      ...this.smartReaderSnapshot(tab),
+      error: message,
+    });
+  }
+
+  private scheduleReaderDetection(tab: TabRecord): void {
+    this.clearReaderTimers(tab);
+    if (!isAllowedWebUrl(tab.url) || tab.crashed) return;
+    const revision = tab.reader.revision;
+    for (const delay of [100, 700, 1_800, 4_000, 8_000]) {
+      const timer = setTimeout(() => {
+        tab.readerTimers.delete(timer);
+        if (
+          !this.tabs.has(tab.id) ||
+          tab.reader.revision !== revision ||
+          tab.reader.availability === "available" ||
+          tab.readerPendingRequestId
+        ) {
+          return;
+        }
+        void this.requestSmartReaderExtraction(tab, false);
+      }, delay);
+      tab.readerTimers.add(timer);
+    }
+  }
+
+  private scheduleReaderMutationDetection(tab: TabRecord, delay = 250): void {
+    if (
+      tab.readerMutationTimer ||
+      tab.reader.active ||
+      tab.reader.availability === "available" ||
+      !isAllowedWebUrl(tab.url) ||
+      tab.crashed
+    ) {
+      return;
+    }
+    const revision = tab.reader.revision;
+    const timer = setTimeout(() => {
+      tab.readerTimers.delete(timer);
+      if (tab.readerMutationTimer === timer) tab.readerMutationTimer = null;
+      if (
+        !this.tabs.has(tab.id) ||
+        tab.reader.revision !== revision ||
+        tab.reader.active ||
+        tab.reader.availability === "available" ||
+        tab.readerPendingRequestId
+      ) {
+        return;
+      }
+      void this.requestSmartReaderExtraction(tab, false);
+    }, delay);
+    tab.readerMutationTimer = timer;
+    tab.readerTimers.add(timer);
+  }
+
+  private clearReaderTimers(tab: TabRecord): void {
+    for (const timer of tab.readerTimers) clearTimeout(timer);
+    tab.readerTimers.clear();
+    tab.readerMutationTimer = null;
+  }
+
+  private invalidateSmartReader(tab: TabRecord): void {
+    this.clearReaderTimers(tab);
+    this.cancelReaderExtraction(tab, "The page changed.");
+    tab.reader.revision += 1;
+    tab.reader.availability = isAllowedWebUrl(tab.url)
+      ? "checking"
+      : "unavailable";
+    tab.reader.active = false;
+    tab.readerError = null;
+    this.smartReaderDocuments.removeUrl(tab.readerDocumentUrl);
+    tab.readerDocumentUrl = null;
+    this.destroyReaderView(tab);
+  }
+
+  private readerDocumentIsAvailable(tab: TabRecord): boolean {
+    return Boolean(
+      tab.readerDocumentUrl &&
+      this.smartReaderDocuments.get(new URL(tab.readerDocumentUrl).hostname) !==
+        null,
+    );
+  }
+
+  private async enterSmartReader(
+    tab: TabRecord,
+    appearance: SmartReaderAppearance,
+  ): Promise<void> {
+    if (!tab.readerDocumentUrl || !this.readerDocumentIsAvailable(tab)) {
+      const result = await this.requestSmartReaderExtraction(tab, true);
+      if (result.availability !== "available" || !tab.readerDocumentUrl) return;
+    }
+    const revision = tab.reader.revision;
+    const view = this.ensureReaderView(tab);
+    if (view.webContents.getURL() !== tab.readerDocumentUrl) {
+      await view.webContents.loadURL(tab.readerDocumentUrl);
+    }
+    if (
+      !this.tabs.has(tab.id) ||
+      tab.reader.revision !== revision ||
+      tab.readerView !== view
+    ) {
+      return;
+    }
+    await this.applySmartReaderAppearance(tab, appearance);
+    if (
+      !this.tabs.has(tab.id) ||
+      tab.reader.revision !== revision ||
+      tab.readerView !== view ||
+      view.webContents.isDestroyed()
+    ) {
+      return;
+    }
+    tab.reader.active = true;
+    tab.reader.availability = "available";
+    if (tab.id === this.activeTabId) {
+      this.layoutActiveView();
+      view.webContents.focus();
+    }
+    this.emitSnapshot();
+  }
+
+  private exitSmartReader(tab: TabRecord): void {
+    if (!tab.reader.active) return;
+    tab.reader.active = false;
+    if (tab.id === this.activeTabId) {
+      this.layoutActiveView();
+      tab.view?.webContents.focus();
+    }
+    this.emitSnapshot();
+  }
+
+  private ensureReaderView(tab: TabRecord): WebContentsView {
+    if (tab.readerView && !tab.readerView.webContents.isDestroyed()) {
+      return tab.readerView;
+    }
+    const view = new WebContentsView({
+      webPreferences: {
+        session: this.browserSession,
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: true,
+        webSecurity: true,
+        allowRunningInsecureContent: false,
+        safeDialogs: true,
+        spellcheck: false,
+        backgroundThrottling: true,
+      },
+    });
+    tab.readerView = view;
+    this.window.contentView.addChildView(view);
+    view.setBounds(this.currentPageBounds());
+    view.setVisible(false);
+    this.attachShortcutHandler(view);
+    const contents = view.webContents;
+    contents.on("focus", () => {
+      if (
+        this.tabs.has(tab.id) &&
+        tab.id !== this.activeTabId &&
+        this.splitView.pairForTab(tab.id)
+      ) {
+        this.activateTab(tab.id);
+      }
+    });
+    contents.setWindowOpenHandler(({ url }) => {
+      if (isAllowedWebUrl(url)) {
+        this.runNativeTabTopologyAction(() => this.createTab(url));
+      }
+      return { action: "deny" };
+    });
+    contents.on("context-menu", (_event, params) => {
+      if (
+        !this.tabs.has(tab.id) ||
+        contents.isDestroyed() ||
+        this.window.isDestroyed()
+      ) {
+        return;
+      }
+      this.extensionPopup?.close();
+      const sourceContents = tab.view?.webContents;
+      const withLiveReader = (action: () => void) => () => {
+        if (!this.tabs.has(tab.id) || contents.isDestroyed()) return;
+        action();
+      };
+      const menu = Menu.buildFromTemplate(
+        buildPageContextMenu(
+          params,
+          {
+            canGoBack: sourceContents?.navigationHistory.canGoBack() ?? false,
+            canGoForward:
+              sourceContents?.navigationHistory.canGoForward() ?? false,
+          },
+          {
+            goBack: withLiveReader(() => this.goBack(tab.id)),
+            goForward: withLiveReader(() => this.goForward(tab.id)),
+            reload: withLiveReader(() => this.reload(tab.id)),
+            openInNewTab: (url) =>
+              withLiveReader(() =>
+                this.runNativeTabTopologyAction(() => this.createTab(url)),
+              )(),
+            download: (url) => {
+              if (!contents.isDestroyed()) contents.downloadURL(url);
+            },
+            copyText: (text) =>
+              clipboard
+                .writeText(text)
+                .catch((error: unknown) =>
+                  console.warn(
+                    "Could not copy Reader context-menu text.",
+                    error,
+                  ),
+                ),
+            copyImageAt: (x, y) => {
+              if (!contents.isDestroyed()) contents.copyImageAt(x, y);
+            },
+            inspectAt: (x, y) => {
+              if (!contents.isDestroyed()) contents.inspectElement(x, y);
+            },
+          },
+        ),
+      );
+      menu.popup({
+        window: this.window,
+        frame: params.frame ?? undefined,
+        sourceType: params.menuSourceType,
+      });
+    });
+    contents.on("will-navigate", (event, url) => {
+      if (url.startsWith(`${tab.readerDocumentUrl ?? ""}#`)) return;
+      event.preventDefault();
+      if (!isAllowedWebUrl(url) || !this.tabs.has(tab.id)) return;
+      this.exitSmartReader(tab);
+      void this.navigateToUrl(tab, url, false, tab.id !== this.activeTabId);
+    });
+    contents.on("render-process-gone", () => {
+      this.recoverFromReaderViewLoss(tab, view);
+    });
+    contents.once("destroyed", () => {
+      this.recoverFromReaderViewLoss(tab, view);
+    });
+    return view;
+  }
+
+  private recoverFromReaderViewLoss(
+    tab: TabRecord,
+    view: WebContentsView,
+  ): void {
+    if (tab.readerView !== view) return;
+    tab.readerView = null;
+    tab.readerAppearanceCssKey = null;
+    tab.readerAppearanceRevision += 1;
+    const wasActive = tab.reader.active;
+    tab.reader.active = false;
+    if (!this.tabs.has(tab.id) || !wasActive) return;
+    if (tab.id === this.activeTabId) {
+      this.layoutActiveView();
+      tab.view?.webContents.focus();
+    }
+    this.emitSnapshot();
+  }
+
+  private smartReaderAppearanceCss(appearance: SmartReaderAppearance): string {
+    const themes = {
+      light: ["#fffdfa", "#24221f", "#68635c", "#ddd8ce", "#155ab6", "#f1eee8"],
+      warm: ["#f4ecd8", "#302b23", "#716758", "#d7c9ad", "#75521b", "#e9ddc3"],
+      dark: ["#171717", "#e7e1d7", "#aaa39a", "#45413c", "#a8c7fa", "#242321"],
+    } as const;
+    const theme =
+      appearance.theme === "system" ? null : themes[appearance.theme];
+    const variables = theme
+      ? `--paper:${theme[0]}!important;--ink:${theme[1]}!important;--muted:${theme[2]}!important;--line:${theme[3]}!important;--link:${theme[4]}!important;--code:${theme[5]}!important;`
+      : "";
+    const family =
+      appearance.font === "sans" ? "var(--font-sans)" : "var(--font-serif)";
+    return `:root{${variables}--reader-scale:${appearance.textScale}!important}body,h1,.article-body h2,.article-body h3,.article-body h4{font-family:${family}!important}`;
+  }
+
+  private async applySmartReaderAppearance(
+    tab: TabRecord,
+    appearance: SmartReaderAppearance,
+  ): Promise<void> {
+    const view = tab.readerView;
+    const contents = view?.webContents;
+    if (!contents || contents.isDestroyed()) return;
+    const revision = ++tab.readerAppearanceRevision;
+    const previousKey = tab.readerAppearanceCssKey;
+    let nextKey: string;
+    try {
+      nextKey = await contents.insertCSS(
+        this.smartReaderAppearanceCss(appearance),
+      );
+    } catch {
+      return;
+    }
+    if (
+      tab.readerAppearanceRevision !== revision ||
+      tab.readerView !== view ||
+      contents.isDestroyed()
+    ) {
+      if (!contents.isDestroyed()) {
+        await contents.removeInsertedCSS(nextKey).catch(() => undefined);
+      }
+      return;
+    }
+    tab.readerAppearanceCssKey = nextKey;
+    if (previousKey && previousKey !== nextKey) {
+      await contents.removeInsertedCSS(previousKey).catch(() => undefined);
+    }
+  }
+
+  private destroyReaderView(tab: TabRecord): void {
+    const view = tab.readerView;
+    tab.readerView = null;
+    tab.readerAppearanceCssKey = null;
+    tab.readerAppearanceRevision += 1;
+    if (!view) return;
+    try {
+      this.window.contentView.removeChildView(view);
+    } catch {
+      // Window is closing.
+    }
+    if (!view.webContents.isDestroyed()) view.webContents.close();
   }
 
   private attachShellContextMenuHandler(): void {
@@ -3331,7 +4193,38 @@ export class TabManager {
     const { width, height } = this.window.getContentBounds();
     this.shellView.setBounds({ x: 0, y: 0, width, height });
     this.shellView.setVisible(this.htmlFullscreenTabId !== this.activeTabId);
-    this.tabs.get(this.activeTabId)?.view?.setBounds(this.currentPageBounds());
+    const presentation = this.splitView.presentation(
+      this.activeTabId,
+      this.currentPageBounds(),
+      this.htmlFullscreenTabId,
+    );
+    const panes = new Map(
+      presentation.panes.map((pane) => [pane.tabId, pane.bounds] as const),
+    );
+    for (const tab of this.tabs.values()) {
+      const view = tab.view;
+      const bounds = panes.get(tab.id);
+      const showPage = Boolean(
+        bounds && !tab.isNewTab && !isShellInternalUrl(tab.url),
+      );
+      if (view && !view.webContents.isDestroyed()) {
+        if (showPage && !tab.reader.active) {
+          view.setBounds(bounds!);
+          view.setVisible(true);
+        } else {
+          view.setVisible(false);
+        }
+      }
+      const readerView = tab.readerView;
+      if (readerView && !readerView.webContents.isDestroyed()) {
+        if (showPage && tab.reader.active) {
+          readerView.setBounds(bounds!);
+          readerView.setVisible(true);
+        } else {
+          readerView.setVisible(false);
+        }
+      }
+    }
     this.fullscreenHint.layout();
   }
 
@@ -3410,6 +4303,7 @@ export class TabManager {
 
   private closeTabWithoutHistory(tabId: TabId): void {
     const tab = this.requireTab(tabId);
+    this.splitView.removeTab(tabId);
     this.tabs.delete(tabId);
     this.order.splice(this.order.indexOf(tabId), 1);
     this.selectedTabIds.delete(tabId);
@@ -3421,6 +4315,11 @@ export class TabManager {
   }
 
   private destroyView(tab: TabRecord): void {
+    this.clearReaderTimers(tab);
+    this.cancelReaderExtraction(tab, "The tab closed.");
+    this.smartReaderDocuments.removeUrl(tab.readerDocumentUrl);
+    tab.readerDocumentUrl = null;
+    this.destroyReaderView(tab);
     const view = tab.view;
     tab.view = null;
     if (!view) return;
@@ -3456,6 +4355,7 @@ export class TabManager {
       isAudible: this.isTabAudible(tab),
       memoryBytes: this.tabMemoryBytes(tab, memoryByProcessId),
       thumbnailDataUrl: tab.thumbnailDataUrl,
+      reader: { ...tab.reader },
     };
   }
 
@@ -3805,6 +4705,24 @@ export class TabManager {
       isOfflineArchiveUrl(url) ||
       (origin && url.startsWith(`${origin}/`)) ||
       this.extensions?.isAllowedExtensionUrl(url),
+    );
+  }
+
+  private isSplitEligibleTab(tab: TabRecord): boolean {
+    return Boolean(
+      !tab.isNewTab &&
+      tab.url &&
+      !isShellInternalUrl(tab.url) &&
+      (isAllowedWebUrl(tab.url) || this.isAllowedInternalUrl(tab.url)),
+    );
+  }
+
+  private splitEligibleTabIds(): Set<TabId> {
+    return new Set(
+      this.order.filter((tabId) => {
+        const tab = this.tabs.get(tabId);
+        return Boolean(tab && this.isSplitEligibleTab(tab));
+      }),
     );
   }
 

@@ -32,6 +32,8 @@ import type {
   HyperdriveSnapshot,
   NewTabTheme,
   SmartDownloadsSnapshot,
+  SplitViewPairSnapshot,
+  SplitViewSide,
   ToolbarAction,
   UblockSnapshot,
   WebsiteControlSnapshot,
@@ -42,6 +44,7 @@ import { resolveNavigationInput } from "../shared/navigation";
 import {
   selectSidebarTool,
   sidebarMenuActionLabel,
+  sidebarWidth,
   type SidebarTool,
 } from "../shared/sidebar";
 import { parseChromeWebStoreListingUrl } from "../shared/web-store-listing";
@@ -62,6 +65,8 @@ import { YouTubeDownloadProgress } from "./YouTubeDownloadProgress";
 import { GalleryPage } from "./GalleryPage";
 import { OfflinePagesPage } from "./OfflinePagesPage";
 import { PageActionsPanel } from "./PageActionsPanel";
+import { SmartReaderControls } from "./SmartReaderControls";
+import { readSmartReaderAppearance } from "./smart-reader-appearance";
 import { AiAssistantPanel } from "./AiAssistantPanel";
 import { StaticAssistantAvatar } from "./AssistantAvatar";
 import { OrganiseTabsPanel } from "./OrganiseTabsPanel";
@@ -259,12 +264,15 @@ type IconName =
   | "pause"
   | "pin"
   | "play"
+  | "reader"
   | "reload"
   | "search"
   | "settings"
   | "shield"
   | "speed"
+  | "split"
   | "stop"
+  | "swap"
   | "tabSearch"
   | "tune"
   | "warning"
@@ -304,12 +312,15 @@ const iconSymbols: Record<IconName, string> = {
   pause: "pause",
   pin: "push_pin",
   play: "play_arrow",
+  reader: "chrome_reader_mode",
   reload: "refresh",
   search: "search",
   settings: "settings",
   shield: "shield",
   speed: "speed",
+  split: "vertical_split",
   stop: "stop",
+  swap: "swap_horiz",
   tabSearch: "tab_search",
   tune: "tune",
   warning: "warning",
@@ -674,6 +685,32 @@ function hostLabel(url: string): string {
   }
 }
 
+export function isSplitViewEligibleTab(tab: BrowserTabSnapshot): boolean {
+  if (tab.isNewTab || !tab.url) return false;
+  try {
+    const protocol = new URL(tab.url).protocol;
+    return [
+      "http:",
+      "https:",
+      "chrome-extension:",
+      "chromecraft-offline:",
+    ].includes(protocol);
+  } catch {
+    return false;
+  }
+}
+
+function splitPairForTab(
+  snapshot: BrowserSnapshot,
+  tabId: string,
+): SplitViewPairSnapshot | null {
+  return (
+    snapshot.splitView?.pairs.find(
+      (pair) => pair.leftTabId === tabId || pair.rightTabId === tabId,
+    ) ?? null
+  );
+}
+
 function internalTabIcon(url: string): IconName | null {
   try {
     const parsed = new URL(url);
@@ -983,6 +1020,7 @@ const TabButton = memo(function TabButton({
   settings,
   dragging,
   concealed,
+  splitLinked,
   onMenu,
   onDragStart,
   onDragEnd,
@@ -997,6 +1035,7 @@ const TabButton = memo(function TabButton({
   settings: boolean;
   dragging: boolean;
   concealed: boolean;
+  splitLinked: boolean;
   onMenu: (event: MouseEvent, tab: BrowserTabSnapshot) => void;
   onDragStart: (
     event: ReactDragEvent<HTMLDivElement>,
@@ -1032,7 +1071,7 @@ const TabButton = memo(function TabButton({
   };
   return (
     <div
-      className={`tab ${active ? "active" : ""} ${selected ? "selected" : ""} ${dragging ? "dragging" : ""} ${concealed ? "concealed" : ""} ${dropSide ? `drop-${dropSide}` : ""} ${(tab as OrganisedTabSnapshot).pinned ? "pinned" : ""}`}
+      className={`tab ${active ? "active" : ""} ${selected ? "selected" : ""} ${dragging ? "dragging" : ""} ${concealed ? "concealed" : ""} ${splitLinked ? "split-linked" : ""} ${dropSide ? `drop-${dropSide}` : ""} ${(tab as OrganisedTabSnapshot).pinned ? "pinned" : ""}`}
       data-tab-id={tab.id}
       draggable={!concealed}
       aria-hidden={concealed || undefined}
@@ -1074,6 +1113,12 @@ const TabButton = memo(function TabButton({
           <TabFavicon tab={tab} settings={settings} />
         )}
         <span className="tab-title">{label}</span>
+        {splitLinked && (
+          <span className="tab-split-marker" title="Shown in Split View">
+            <Icon name="split" />
+            <span className="visually-hidden">Shown in Split View</span>
+          </span>
+        )}
         {tab.isMuted && (
           <span className="tab-muted" title="Muted">
             <Icon name="volumeOff" />
@@ -1778,6 +1823,7 @@ export function TabStrip({
   aiTools,
   onOpenOrganiseTabs,
   onHoverCardOpenChange,
+  onSplitDragChange,
 }: {
   snapshot: BrowserSnapshot;
   data: BrowserDataSnapshot;
@@ -1792,6 +1838,7 @@ export function TabStrip({
   aiTools: AiToolsSnapshot;
   onOpenOrganiseTabs: () => void;
   onHoverCardOpenChange: (open: boolean) => void;
+  onSplitDragChange: (tab: BrowserTabSnapshot | null) => void;
 }) {
   const sidebarAttached = snapshot.preferences.sidebarAttached;
   const sidebarAction = sidebarMenuActionLabel(sidebarAttached);
@@ -1971,8 +2018,16 @@ export function TabStrip({
     setHoverPreview(null);
     writeTabDragPayload(event.dataTransfer, ids);
     setCompactDragPreview(event.dataTransfer, event.currentTarget, "tab");
+    onSplitDragChange(
+      ids.length === 1 &&
+        tab.id !== snapshot.activeTabId &&
+        isSplitViewEligibleTab(tab)
+        ? tab
+        : null,
+    );
   };
   const finishTabDrag = () => {
+    onSplitDragChange(null);
     draggedTabIdsRef.current = [];
     draggedWholeGroupIdRef.current = null;
     setDraggedTabIds([]);
@@ -2029,6 +2084,7 @@ export function TabStrip({
           settings={tab.id === settingsTabId}
           dragging={draggedTabIds.includes(tab.id)}
           concealed={false}
+          splitLinked={Boolean(splitPairForTab(snapshot, tab.id))}
           onMenu={onMenu}
           onDragStart={startTabDrag}
           onDragEnd={finishTabDrag}
@@ -2139,6 +2195,7 @@ export function TabStrip({
           tabCount={groupTabs.length}
           active={groupTabs.some((item) => item.id === snapshot.activeTabId)}
           onDragStart={(event) => {
+            onSplitDragChange(null);
             const ids = groupTabs.map((item) => item.id);
             draggedTabIdsRef.current = ids;
             draggedWholeGroupIdRef.current = group.id;
@@ -2172,6 +2229,7 @@ export function TabStrip({
             settings={item.id === settingsTabId}
             dragging={draggedTabIds.includes(item.id)}
             concealed={group.collapsed}
+            splitLinked={Boolean(splitPairForTab(snapshot, item.id))}
             onMenu={onMenu}
             onDragStart={startTabDrag}
             onDragEnd={finishTabDrag}
@@ -2975,6 +3033,11 @@ function Toolbar({
   onToggleSiteControls,
   onManageSiteSettings,
   onOmniboxExpandedChange,
+  splitPair,
+  splitControlsOpen,
+  onToggleSplitControls,
+  onSplitCommand,
+  onReaderPopoverOpenChange,
 }: {
   tab: BrowserTabSnapshot;
   snapshot: BrowserSnapshot;
@@ -2995,6 +3058,19 @@ function Toolbar({
   onToggleSiteControls: () => void;
   onManageSiteSettings: () => void;
   onOmniboxExpandedChange: (expanded: boolean) => void;
+  splitPair: SplitViewPairSnapshot | null;
+  splitControlsOpen: boolean;
+  onToggleSplitControls: () => void;
+  onSplitCommand: (
+    action:
+      | "focus-left"
+      | "focus-right"
+      | "swap"
+      | "exit"
+      | "close-left"
+      | "close-right",
+  ) => void;
+  onReaderPopoverOpenChange: (open: boolean) => void;
 }) {
   const canBookmark = /^https?:\/\//.test(tab.url);
   const actionExtensions = extensions.items.filter(
@@ -3108,7 +3184,114 @@ function Toolbar({
         onManageSiteSettings={onManageSiteSettings}
         onExpandedChange={onOmniboxExpandedChange}
       />
+      <SmartReaderControls
+        tab={tab}
+        onPopoverOpenChange={onReaderPopoverOpenChange}
+      />
       <div className="toolbar-actions">
+        {splitPair && (
+          <div className="split-controls-anchor">
+            <button
+              type="button"
+              className={`tool-button split-controls-trigger ${splitControlsOpen ? "selected" : ""}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                onToggleSplitControls();
+              }}
+              aria-label="Split View controls"
+              aria-haspopup="menu"
+              aria-expanded={splitControlsOpen}
+              title="Split View controls"
+            >
+              <Icon name="split" />
+            </button>
+            {splitControlsOpen && (
+              <section
+                className="split-controls-menu"
+                role="menu"
+                aria-label="Split View controls"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <header>
+                  <span aria-hidden="true">
+                    <Icon name="split" />
+                  </span>
+                  <span>
+                    <strong>Split View</strong>
+                    <small>Choose which pane browser controls target</small>
+                  </span>
+                </header>
+                <div
+                  className="split-focus-controls"
+                  role="group"
+                  aria-label="Focus pane"
+                >
+                  <button
+                    type="button"
+                    className={
+                      splitPair.focusedTabId === splitPair.leftTabId
+                        ? "selected"
+                        : ""
+                    }
+                    aria-pressed={
+                      splitPair.focusedTabId === splitPair.leftTabId
+                    }
+                    onClick={() => onSplitCommand("focus-left")}
+                  >
+                    Focus left
+                  </button>
+                  <button
+                    type="button"
+                    className={
+                      splitPair.focusedTabId === splitPair.rightTabId
+                        ? "selected"
+                        : ""
+                    }
+                    aria-pressed={
+                      splitPair.focusedTabId === splitPair.rightTabId
+                    }
+                    onClick={() => onSplitCommand("focus-right")}
+                  >
+                    Focus right
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => onSplitCommand("swap")}
+                >
+                  <Icon name="swap" />
+                  Swap sides
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => onSplitCommand("close-left")}
+                >
+                  <Icon name="close" />
+                  Close left tab
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => onSplitCommand("close-right")}
+                >
+                  <Icon name="close" />
+                  Close right tab
+                </button>
+                <div className="tab-menu-divider" role="separator" />
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => onSplitCommand("exit")}
+                >
+                  <Icon name="split" />
+                  Exit Split View
+                </button>
+              </section>
+            )}
+          </div>
+        )}
         {!hiddenToolbarActions.has("bookmark") && (
           <button
             type="button"
@@ -7608,6 +7791,280 @@ function CommandPalette({
   );
 }
 
+function SplitViewTabPicker({
+  snapshot,
+  baseTabId,
+  close,
+  choose,
+}: {
+  snapshot: BrowserSnapshot;
+  baseTabId: string;
+  close: () => void;
+  choose: (tab: BrowserTabSnapshot) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const groups = getTabGroups(snapshot);
+  const needle = query.trim().toLocaleLowerCase();
+  const candidates = snapshot.tabs.filter((tab) => {
+    if (
+      tab.id === baseTabId ||
+      !isSplitViewEligibleTab(tab) ||
+      splitPairForTab(snapshot, tab.id)
+    ) {
+      return false;
+    }
+    return `${tabLabel(tab)} ${hostLabel(tab.url)}`
+      .toLocaleLowerCase()
+      .includes(needle);
+  });
+  return (
+    <div className="split-picker-backdrop" onPointerDown={close}>
+      <section
+        className="split-picker"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="split-picker-title"
+        onPointerDown={(event) => event.stopPropagation()}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") close();
+        }}
+      >
+        <header>
+          <span className="split-picker-icon" aria-hidden="true">
+            <Icon name="split" />
+          </span>
+          <span>
+            <strong id="split-picker-title">Create Split View</strong>
+            <small>Choose the tab to show on the right</small>
+          </span>
+          <button type="button" onClick={close} aria-label="Close tab picker">
+            <Icon name="close" />
+          </button>
+        </header>
+        <label className="split-picker-search">
+          <Icon name="search" />
+          <input
+            autoFocus
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search open tabs"
+            aria-label="Search open tabs"
+          />
+        </label>
+        <div className="split-picker-results" role="listbox">
+          {candidates.map((tab) => {
+            const groupId = (tab as OrganisedTabSnapshot).groupId;
+            const group = groups.find((item) => item.id === groupId);
+            return (
+              <button
+                type="button"
+                role="option"
+                aria-selected="false"
+                key={tab.id}
+                onClick={() => choose(tab)}
+              >
+                <TabFavicon tab={tab} />
+                <span className="split-picker-copy">
+                  <strong>{tabLabel(tab)}</strong>
+                  <small>{hostLabel(tab.url)}</small>
+                </span>
+                {group && (
+                  <span className={`split-picker-group group-${group.color}`}>
+                    {group.name || "Tab group"}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+          {candidates.length === 0 && (
+            <div className="split-picker-empty">
+              <Icon name="search" />
+              <strong>No eligible tabs found</strong>
+              <small>
+                Open another website, then choose Create Split View again.
+              </small>
+            </div>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function SplitViewDropTargets({
+  tab,
+  create,
+  cancel,
+}: {
+  tab: BrowserTabSnapshot;
+  create: (side: SplitViewSide) => void;
+  cancel: () => void;
+}) {
+  const [candidate, setCandidate] = useState<SplitViewSide | null>(null);
+  const [armed, setArmed] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const enter = (side: SplitViewSide) => {
+    if (candidate === side && (armed || timer.current)) return;
+    if (timer.current) clearTimeout(timer.current);
+    setCandidate(side);
+    setArmed(false);
+    timer.current = setTimeout(() => {
+      timer.current = null;
+      setArmed(true);
+    }, 180);
+  };
+  const leave = (side: SplitViewSide, event: ReactDragEvent) => {
+    const nextTarget = event.relatedTarget;
+    if (
+      nextTarget instanceof Node &&
+      event.currentTarget.contains(nextTarget)
+    ) {
+      return;
+    }
+    if (candidate !== side) return;
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = null;
+    setCandidate(null);
+    setArmed(false);
+  };
+  useEffect(
+    () => () => {
+      if (timer.current) clearTimeout(timer.current);
+    },
+    [],
+  );
+  return (
+    <div className="split-drop-layer" aria-hidden="true">
+      {(["left", "right"] as const).map((side) => (
+        <div
+          key={side}
+          className={`split-drop-zone ${side} ${candidate === side ? "candidate" : ""} ${candidate === side && armed ? "armed" : ""}`}
+          onDragEnter={(event) => {
+            event.preventDefault();
+            enter(side);
+          }}
+          onDragOver={(event) => {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = "move";
+            enter(side);
+          }}
+          onDragLeave={(event) => leave(side, event)}
+          onDrop={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (candidate === side && armed) create(side);
+            else cancel();
+          }}
+        >
+          <span className="split-drop-preview">
+            <span className="split-drop-preview-title">
+              <Icon name="split" />
+              Drop to split {side}
+            </span>
+            <span>{tabLabel(tab)}</span>
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SplitViewDivider({
+  pair,
+  chromeHeight,
+  leftInset,
+  rightInset,
+  resize,
+}: {
+  pair: SplitViewPairSnapshot;
+  chromeHeight: number;
+  leftInset: number;
+  rightInset: number;
+  resize: (ratio: number) => void;
+}) {
+  const [viewportWidth, setViewportWidth] = useState(window.innerWidth);
+  const [dragging, setDragging] = useState(false);
+  const frame = useRef<number | null>(null);
+  const availableWidth = Math.max(0, viewportWidth - leftInset - rightInset);
+  const paneWidth = Math.max(1, availableWidth - 12);
+  const compact = availableWidth < 492;
+  const minimumRatio = Math.min(0.5, 240 / paneWidth);
+  const effectiveRatio = Math.min(
+    1 - minimumRatio,
+    Math.max(minimumRatio, pair.ratio),
+  );
+  const ratioFromPointer = (clientX: number) =>
+    Math.max(0.15, Math.min(0.85, (clientX - leftInset) / paneWidth));
+  const scheduleResize = (ratio: number) => {
+    if (frame.current !== null) cancelAnimationFrame(frame.current);
+    frame.current = requestAnimationFrame(() => {
+      frame.current = null;
+      resize(ratio);
+    });
+  };
+  useEffect(() => {
+    const onResize = () => setViewportWidth(window.innerWidth);
+    addEventListener("resize", onResize);
+    return () => removeEventListener("resize", onResize);
+  }, []);
+  useEffect(
+    () => () => {
+      if (frame.current !== null) cancelAnimationFrame(frame.current);
+    },
+    [],
+  );
+  if (compact) return null;
+  return (
+    <div
+      className={`split-divider ${dragging ? "dragging" : ""} ${pair.focusedTabId === pair.leftTabId ? "focus-left" : "focus-right"}`}
+      role="separator"
+      aria-label="Resize Split View panes"
+      aria-orientation="vertical"
+      aria-valuemin={15}
+      aria-valuemax={85}
+      aria-valuenow={Math.round(effectiveRatio * 100)}
+      tabIndex={0}
+      title="Drag to resize · double-click to reset"
+      style={{
+        left: leftInset + Math.round(paneWidth * effectiveRatio),
+        top: chromeHeight,
+      }}
+      onDoubleClick={() => resize(0.5)}
+      onKeyDown={(event) => {
+        if (event.key === "Home") {
+          event.preventDefault();
+          resize(0.5);
+          return;
+        }
+        if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+        event.preventDefault();
+        const direction = event.key === "ArrowLeft" ? -1 : 1;
+        resize(effectiveRatio + direction * (event.shiftKey ? 0.1 : 0.025));
+      }}
+      onPointerDown={(event) => {
+        event.preventDefault();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        setDragging(true);
+      }}
+      onPointerMove={(event) => {
+        if (!event.currentTarget.hasPointerCapture(event.pointerId)) return;
+        scheduleResize(ratioFromPointer(event.clientX));
+      }}
+      onPointerUp={(event) => {
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        }
+        setDragging(false);
+        resize(ratioFromPointer(event.clientX));
+      }}
+      onPointerCancel={() => setDragging(false)}
+    >
+      <span className="split-divider-line" />
+      <span className="split-divider-handle" />
+    </div>
+  );
+}
+
 export function App() {
   const [snapshot, setSnapshot] = useState<BrowserSnapshot | null>(null);
   const [hyperdrive, setHyperdrive] = useState<HyperdriveSnapshot | null>(null);
@@ -7649,6 +8106,7 @@ export function App() {
   const [tabHoverCardOpen, setTabHoverCardOpen] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
   const [omniboxExpanded, setOmniboxExpanded] = useState(false);
+  const [readerPopoverOpen, setReaderPopoverOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [youtubeProgressExpanded, setYouTubeProgressExpanded] = useState(false);
   const [dialog, setDialog] = useState<BrowserDialogState | null>(null);
@@ -7660,6 +8118,15 @@ export function App() {
     y: number;
     tab: BrowserTabSnapshot;
   } | null>(null);
+  const [splitPickerBaseTabId, setSplitPickerBaseTabId] = useState<
+    string | null
+  >(null);
+  const [splitDragTab, setSplitDragTab] = useState<BrowserTabSnapshot | null>(
+    null,
+  );
+  const [splitControlsOpen, setSplitControlsOpen] = useState(false);
+  const [splitError, setSplitError] = useState<string | null>(null);
+  const [readerTryError, setReaderTryError] = useState<string | null>(null);
   useEffect(() => {
     const openScout = () => {
       setTool("assistant");
@@ -7769,6 +8236,11 @@ export function App() {
     () => snapshot?.tabs.find((tab) => tab.id === snapshot.activeTabId) ?? null,
     [snapshot],
   );
+  const activeSplitPair = useMemo(
+    () =>
+      snapshot && activeTab ? splitPairForTab(snapshot, activeTab.id) : null,
+    [activeTab, snapshot],
+  );
   useEffect(() => {
     setSiteControlsOpen(false);
   }, [activeTab?.id, activeTab?.url]);
@@ -7809,6 +8281,19 @@ export function App() {
   }, [fullSettingsTabId, snapshot]);
   useEffect(() => setFindOpen(false), [activeTab?.id]);
   useEffect(() => {
+    if (!activeSplitPair) setSplitControlsOpen(false);
+  }, [activeSplitPair]);
+  useEffect(() => {
+    if (!splitError) return;
+    const timer = setTimeout(() => setSplitError(null), 4200);
+    return () => clearTimeout(timer);
+  }, [splitError]);
+  useEffect(() => {
+    if (!readerTryError) return;
+    const timer = setTimeout(() => setReaderTryError(null), 5_000);
+    return () => clearTimeout(timer);
+  }, [readerTryError]);
+  useEffect(() => {
     const open = Boolean(
       omniboxExpanded ||
       findOpen ||
@@ -7822,7 +8307,11 @@ export function App() {
       extensionsMenuOpen ||
       tabHoverCardOpen ||
       siteControlsOpen ||
+      readerPopoverOpen ||
       tabMenu ||
+      splitPickerBaseTabId ||
+      splitDragTab ||
+      splitControlsOpen ||
       dialog,
     );
     void window.chromecraft.setChromeOverlayOpen(open);
@@ -7842,7 +8331,11 @@ export function App() {
     youtubeProgressExpanded,
     tabHoverCardOpen,
     siteControlsOpen,
+    readerPopoverOpen,
     tabMenu,
+    splitPickerBaseTabId,
+    splitDragTab,
+    splitControlsOpen,
     tool,
     updatesOpen,
   ]);
@@ -7871,6 +8364,9 @@ export function App() {
         setPaletteOpen(false);
         setSiteControlsOpen(false);
         setTabMenu(null);
+        setSplitPickerBaseTabId(null);
+        setSplitDragTab(null);
+        setSplitControlsOpen(false);
       }
     };
     addEventListener("keydown", key);
@@ -8073,9 +8569,67 @@ export function App() {
       // The controller publishes a specific failure state for the panel.
     }
   };
+  const updateSplitView = async (
+    command: Parameters<typeof window.chromecraft.updateSplitView>[0],
+  ) => {
+    try {
+      await window.chromecraft.updateSplitView(command);
+      setSplitError(null);
+    } catch (error) {
+      setSplitError(
+        error instanceof Error && error.message
+          ? error.message
+          : "Split View could not be changed. Your tabs are unchanged.",
+      );
+    }
+  };
+  const handleSplitControl = (
+    action:
+      | "focus-left"
+      | "focus-right"
+      | "swap"
+      | "exit"
+      | "close-left"
+      | "close-right",
+  ) => {
+    if (!activeSplitPair) return;
+    if (action === "close-left" || action === "close-right") {
+      const tabId =
+        action === "close-left"
+          ? activeSplitPair.leftTabId
+          : activeSplitPair.rightTabId;
+      void window.chromecraft
+        .closeTab(tabId)
+        .catch(() =>
+          setSplitError(
+            "That tab could not be closed. It remains in Split View.",
+          ),
+        );
+      setSplitControlsOpen(false);
+      return;
+    }
+    if (action === "focus-left" || action === "focus-right") {
+      void updateSplitView({
+        type: "focus",
+        pairId: activeSplitPair.id,
+        tabId:
+          action === "focus-left"
+            ? activeSplitPair.leftTabId
+            : activeSplitPair.rightTabId,
+      });
+      return;
+    }
+    void updateSplitView({ type: action, pairId: activeSplitPair.id });
+    setSplitControlsOpen(false);
+  };
+  const leftInset = sidebarWidth(
+    snapshot.preferences.sidebarAttached,
+    snapshot.preferences.sidebarOpen,
+  );
+  const rightInset = snapshot.preferences.hyperdriveMonitorOpen ? 372 : 0;
   return (
     <div
-      className={`app-shell ${browserThemeClass(snapshot.preferences.newTabTheme)} ${!snapshot.preferences.sidebarAttached ? "sidebar-detached" : tool ? "sidebar-panel-open" : "sidebar-rail-only"} ${snapshot.preferences.hyperdriveMonitorOpen ? "hyperdrive-monitor-open" : ""}`}
+      className={`app-shell ${browserThemeClass(snapshot.preferences.newTabTheme)} ${!snapshot.preferences.sidebarAttached ? "sidebar-detached" : tool ? "sidebar-panel-open" : "sidebar-rail-only"} ${snapshot.preferences.hyperdriveMonitorOpen ? "hyperdrive-monitor-open" : ""} ${activeSplitPair ? "split-view-active" : ""}`}
       style={
         {
           "--base-chrome-height": `${snapshot.baseChromeHeight}px`,
@@ -8092,6 +8646,7 @@ export function App() {
         setExtensionsMenuOpen(false);
         setSiteControlsOpen(false);
         setTabMenu(null);
+        setSplitControlsOpen(false);
       }}
     >
       <header className="browser-chrome">
@@ -8107,6 +8662,7 @@ export function App() {
             setBrandMenuOpen((open) => !open);
           }}
           onHoverCardOpenChange={setTabHoverCardOpen}
+          onSplitDragChange={setSplitDragTab}
           onSetSidebarAttached={(attached) => {
             void window.chromecraft.setSidebarAttached(attached);
             setBrandMenuOpen(false);
@@ -8117,13 +8673,13 @@ export function App() {
             setUpdatesOpen(true);
             setBrandMenuOpen(false);
           }}
-          onOpenToolbarManager={() => {
-            setBrandMenuOpen(false);
-            setToolbarManagerOpen(true);
-          }}
           onOpenPerformanceCentre={() => {
             setBrandMenuOpen(false);
             void window.chromecraft.openPerformanceCentre();
+          }}
+          onOpenToolbarManager={() => {
+            setBrandMenuOpen(false);
+            setToolbarManagerOpen(true);
           }}
           onOpenOrganiseTabs={openOrganiseTabs}
           onMenu={(event, tab) => {
@@ -8171,6 +8727,14 @@ export function App() {
           onToggleSiteControls={() => setSiteControlsOpen((open) => !open)}
           onManageSiteSettings={openWebsitePermissions}
           onOmniboxExpandedChange={setOmniboxExpanded}
+          onReaderPopoverOpenChange={setReaderPopoverOpen}
+          splitPair={activeSplitPair}
+          splitControlsOpen={splitControlsOpen}
+          onToggleSplitControls={() => {
+            setExtensionsMenuOpen(false);
+            setSplitControlsOpen((open) => !open);
+          }}
+          onSplitCommand={handleSplitControl}
         />
         {snapshot.preferences.showDownloadProgressInToolbar && (
           <YouTubeDownloadProgress
@@ -8298,6 +8862,35 @@ export function App() {
         )}
         {findOpen && <FindBar tabId={activeTab.id} onClose={closeFind} />}
       </header>
+      {splitDragTab && splitDragTab.id !== activeTab.id && (
+        <SplitViewDropTargets
+          tab={splitDragTab}
+          cancel={() => setSplitDragTab(null)}
+          create={(side) => {
+            void updateSplitView({
+              type: "create",
+              tabId: splitDragTab.id,
+              side,
+            });
+            setSplitDragTab(null);
+          }}
+        />
+      )}
+      {activeSplitPair && (
+        <SplitViewDivider
+          pair={activeSplitPair}
+          chromeHeight={snapshot.chromeHeight}
+          leftInset={leftInset}
+          rightInset={rightInset}
+          resize={(ratio) =>
+            void updateSplitView({
+              type: "resize",
+              pairId: activeSplitPair.id,
+              ratio,
+            })
+          }
+        />
+      )}
       {toolbarManagerOpen && (
         <ToolbarManager
           snapshot={snapshot}
@@ -8461,6 +9054,47 @@ export function App() {
           close={() => setPaletteOpen(false)}
         />
       )}
+      {splitPickerBaseTabId && (
+        <SplitViewTabPicker
+          snapshot={snapshot}
+          baseTabId={splitPickerBaseTabId}
+          close={() => setSplitPickerBaseTabId(null)}
+          choose={(tab) => {
+            void updateSplitView({
+              type: "create",
+              tabId: tab.id,
+              side: "right",
+            });
+            setSplitPickerBaseTabId(null);
+          }}
+        />
+      )}
+      {splitError && (
+        <div className="split-error-toast" role="status" aria-live="polite">
+          <Icon name="warning" />
+          <span>{splitError}</span>
+          <button
+            type="button"
+            onClick={() => setSplitError(null)}
+            aria-label="Dismiss Split View error"
+          >
+            <Icon name="close" />
+          </button>
+        </div>
+      )}
+      {readerTryError && (
+        <div className="split-error-toast" role="status" aria-live="polite">
+          <Icon name="reader" />
+          <span>{readerTryError}</span>
+          <button
+            type="button"
+            onClick={() => setReaderTryError(null)}
+            aria-label="Dismiss Smart Reader message"
+          >
+            <Icon name="close" />
+          </button>
+        </div>
+      )}
       {tabMenu && (
         <div
           className="tab-menu"
@@ -8486,6 +9120,60 @@ export function App() {
               ? "Remove from selection"
               : "Select tab"}
           </button>
+          {tabMenu.tab.id === activeTab.id &&
+            isSplitViewEligibleTab(tabMenu.tab) &&
+            !activeSplitPair && (
+              <button
+                role="menuitem"
+                onClick={() => {
+                  setSplitPickerBaseTabId(tabMenu.tab.id);
+                  setTabMenu(null);
+                }}
+              >
+                <Icon name="split" />
+                Create Split View
+              </button>
+            )}
+          {tabMenu.tab.id !== activeTab.id &&
+            isSplitViewEligibleTab(activeTab) &&
+            isSplitViewEligibleTab(tabMenu.tab) && (
+              <button
+                role="menuitem"
+                disabled={Boolean(
+                  activeSplitPair || splitPairForTab(snapshot, tabMenu.tab.id),
+                )}
+                title={
+                  activeSplitPair || splitPairForTab(snapshot, tabMenu.tab.id)
+                    ? "A tab can belong to only one Split View"
+                    : undefined
+                }
+                onClick={() => {
+                  void updateSplitView({
+                    type: "create",
+                    tabId: tabMenu.tab.id,
+                    side: "right",
+                  });
+                  setTabMenu(null);
+                }}
+              >
+                <Icon name="split" />
+                Add tab to Split View
+              </button>
+            )}
+          {splitPairForTab(snapshot, tabMenu.tab.id) && (
+            <button
+              role="menuitem"
+              onClick={() => {
+                const pair = splitPairForTab(snapshot, tabMenu.tab.id);
+                if (pair)
+                  void updateSplitView({ type: "exit", pairId: pair.id });
+                setTabMenu(null);
+              }}
+            >
+              <Icon name="split" />
+              Exit Split View
+            </button>
+          )}
           <button
             role="menuitem"
             onClick={() => {
@@ -8526,6 +9214,31 @@ export function App() {
               : " tab"}
           </button>
           <div className="tab-menu-divider" role="separator" />
+          {/^https?:\/\//.test(tabMenu.tab.url) && (
+            <button
+              role="menuitem"
+              onClick={() => {
+                void window.chromecraft
+                  .trySmartReader(tabMenu.tab.id, readSmartReaderAppearance())
+                  .then((result) => {
+                    if (!result.active) {
+                      setReaderTryError(
+                        result.error ??
+                          "No readable article was found. The page was left unchanged.",
+                      );
+                    }
+                  })
+                  .catch(() => {
+                    setReaderTryError(
+                      "Smart Reader couldn't prepare this page. Try again after it finishes loading.",
+                    );
+                  });
+                setTabMenu(null);
+              }}
+            >
+              Try Smart Reader
+            </button>
+          )}
           <button
             role="menuitem"
             onClick={() => void window.chromecraft.reload(tabMenu.tab.id)}

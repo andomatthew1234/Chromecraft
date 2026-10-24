@@ -221,6 +221,126 @@ describe("BrowserDataStore", () => {
     expect(store.loadSession()).toBeNull();
   });
 
+  it("persists split-view session relationships and defaults legacy sessions safely", async () => {
+    const store = createStore();
+    await store.load();
+    await store.saveSession(
+      [
+        {
+          id: "tab-left",
+          title: "Left",
+          url: "https://left.example",
+          isNewTab: false,
+        },
+        {
+          id: "tab-right",
+          title: "Right",
+          url: "https://right.example",
+          isNewTab: false,
+        },
+      ],
+      "tab-right",
+      [],
+      [
+        {
+          id: "split-one",
+          leftTabId: "tab-left",
+          rightTabId: "tab-right",
+          ratio: 0.4,
+          focusedTabId: "tab-right",
+        },
+      ],
+    );
+
+    const reloaded = createStore();
+    await reloaded.load();
+    expect(reloaded.loadSession()?.splitViewPairs).toEqual([
+      {
+        id: "split-one",
+        leftTabId: "tab-left",
+        rightTabId: "tab-right",
+        ratio: 0.4,
+        focusedTabId: "tab-right",
+      },
+    ]);
+
+    const persisted = JSON.parse(await fs.readFile(filePath, "utf8")) as {
+      session: Record<string, unknown>;
+    };
+    delete persisted.session.splitViewPairs;
+    await fs.writeFile(filePath, JSON.stringify(persisted), "utf8");
+    const legacy = createStore();
+    await legacy.load();
+    expect(legacy.loadSession()?.splitViewPairs).toEqual([]);
+  });
+
+  it("discards malformed split-view pairs individually", async () => {
+    const store = createStore();
+    await store.load();
+    const tabs = ["a", "b", "c", "d", "e", "f"].map((id) => ({
+      id: `tab-${id}`,
+      title: `Tab ${id}`,
+      url: `https://${id}.example`,
+      isNewTab: false,
+    }));
+    await store.saveSession(tabs, "tab-a");
+
+    const persisted = JSON.parse(await fs.readFile(filePath, "utf8")) as {
+      session: Record<string, unknown>;
+    };
+    persisted.session.splitViewPairs = [
+      {
+        id: "valid-one",
+        leftTabId: "tab-a",
+        rightTabId: "tab-b",
+        ratio: 0.3,
+        focusedTabId: "tab-a",
+      },
+      {
+        id: "reuses-tab",
+        leftTabId: "tab-b",
+        rightTabId: "tab-c",
+        ratio: 0.5,
+        focusedTabId: "tab-c",
+      },
+      {
+        id: "missing-tab",
+        leftTabId: "tab-c",
+        rightTabId: "tab-missing",
+        ratio: 0.5,
+        focusedTabId: "tab-c",
+      },
+      {
+        id: "bad-ratio",
+        leftTabId: "tab-c",
+        rightTabId: "tab-d",
+        ratio: 2,
+        focusedTabId: "tab-c",
+      },
+      {
+        id: "valid-two",
+        leftTabId: "tab-c",
+        rightTabId: "tab-d",
+        ratio: 0.7,
+        focusedTabId: "tab-d",
+      },
+      {
+        id: "valid-two",
+        leftTabId: "tab-e",
+        rightTabId: "tab-f",
+        ratio: 0.5,
+        focusedTabId: "tab-e",
+      },
+    ];
+    await fs.writeFile(filePath, JSON.stringify(persisted), "utf8");
+
+    const reloaded = createStore();
+    await reloaded.load();
+    expect(
+      reloaded.loadSession()?.splitViewPairs.map((pair) => pair.id),
+    ).toEqual(["valid-one", "valid-two"]);
+  });
+
   it("caps recently closed tabs and consumes them newest-first", async () => {
     const store = createStore({ maxRecentlyClosedTabs: 2 });
     await store.load();
@@ -269,6 +389,13 @@ describe("BrowserDataStore", () => {
           isNewTab: false,
           groupId: "saved-group",
         },
+        {
+          id: "tab-b",
+          title: "Board",
+          url: "https://example.com/board",
+          isNewTab: false,
+          groupId: "saved-group",
+        },
       ],
       tabGroups: [
         {
@@ -280,11 +407,21 @@ describe("BrowserDataStore", () => {
           createdAt: 1_760_486_400_000,
         },
       ],
+      splitViewPairs: [
+        {
+          id: "closed-split",
+          leftTabId: "tab-a",
+          rightTabId: "tab-b",
+          ratio: 0.6,
+          focusedTabId: "tab-a",
+        },
+      ],
       activeTabId: "tab-a",
     });
 
     expect(store.snapshot.savedTabGroups[0]?.tabs).toHaveLength(2);
     expect(store.snapshot.recentlyClosedWindows[0]?.activeTabId).toBe("tab-a");
+    expect(closed.splitViewPairs[0]?.id).toBe("closed-split");
     const reloaded = createStore();
     await reloaded.load();
     expect(reloaded.listSavedTabGroups()[0]?.name).toBe("Project");

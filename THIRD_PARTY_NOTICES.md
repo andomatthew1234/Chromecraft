@@ -1,5 +1,21 @@
 # Third-party notices
 
+## Mozilla Readability 0.6.0
+
+Chromecraft uses Mozilla Readability to identify and extract the primary article content for Smart Reader.
+
+- Copyright: Mozilla Foundation and contributors
+- License: Apache License 2.0
+- Source: <https://github.com/mozilla/readability>
+
+## DOMPurify 3.4.17
+
+Chromecraft uses DOMPurify to sanitize Smart Reader output before it enters the browser-owned reading surface.
+
+- Copyright: Mario Heiderich and contributors
+- License: Mozilla Public License 2.0 OR Apache License 2.0
+- Source: <https://github.com/cure53/DOMPurify>
+
 ## uBlock Origin 1.75.0
 
 Chromecraft includes the unpacked Chromium distribution of uBlock Origin 1.75.0 by Raymond Hill and contributors. Chromecraft adds `js/chromecraft-compat.js` and loads it from `background.html` to provide conservative no-op fallbacks for Chrome UI/privacy APIs absent from Electron; the upstream request-filtering implementation is unchanged.

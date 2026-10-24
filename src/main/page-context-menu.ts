@@ -16,6 +16,7 @@ export interface PageContextMenuActions {
   copyText(text: string): void | Promise<void>;
   copyImageAt(x: number, y: number): void;
   inspectAt(x: number, y: number): void;
+  trySmartReader?(): void;
 }
 
 type MenuGroup = MenuItemConstructorOptions[];
@@ -55,6 +56,15 @@ export function buildPageContextMenu(
 
   const textItems = buildTextContextMenu(params);
   if (textItems.length > 0) groups.push(textItems);
+
+  if (actions.trySmartReader) {
+    groups.push([
+      {
+        label: "Try Smart Reader",
+        click: actions.trySmartReader,
+      },
+    ]);
+  }
 
   groups.push([
     {

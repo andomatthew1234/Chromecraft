@@ -7,6 +7,7 @@ import type {
   OfflinePagesSnapshot,
 } from "../shared/offline-pages";
 import { SiteControlsPanel } from "./SiteControlsPanel";
+import { readSmartReaderAppearance } from "./smart-reader-appearance";
 import "./page-actions.css";
 
 type PageActionView = "menu" | "security" | "save" | "share" | "qr";
@@ -94,6 +95,9 @@ export function PageActionsPanel({
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [qrError, setQrError] = useState<string | null>(null);
   const [copyLabel, setCopyLabel] = useState("Copy link");
+  const [readerState, setReaderState] = useState<
+    "idle" | "checking" | "unavailable"
+  >("idle");
 
   useEffect(() => {
     const sync = (snapshot: OfflinePagesSnapshot) => {
@@ -225,6 +229,36 @@ export function PageActionsPanel({
               <span>
                 <strong>Page Security</strong>
                 <small>Connection, permissions and site data</small>
+              </span>
+              <MaterialIcon name="chevron_right" />
+            </button>
+            <button
+              type="button"
+              className="page-action-row"
+              disabled={readerState === "checking"}
+              onClick={() => {
+                setReaderState("checking");
+                void window.chromecraft
+                  .trySmartReader(tabId, readSmartReaderAppearance())
+                  .then((result) => {
+                    if (result.active) close();
+                    else setReaderState("unavailable");
+                  })
+                  .catch(() => setReaderState("unavailable"));
+              }}
+            >
+              <span className="page-action-row-icon">
+                <MaterialIcon name="chrome_reader_mode" />
+              </span>
+              <span>
+                <strong>Try Smart Reader</strong>
+                <small>
+                  {readerState === "checking"
+                    ? "Preparing a focused reading view…"
+                    : readerState === "unavailable"
+                      ? "No readable article was found"
+                      : "Open a clean, distraction-free article"}
+                </small>
               </span>
               <MaterialIcon name="chevron_right" />
             </button>

@@ -908,6 +908,29 @@ input::placeholder {
     sans-serif;
 }
 
+.tab-split-marker {
+  width: 16px;
+  height: 16px;
+  display: grid;
+  flex: 0 0 16px;
+  place-items: center;
+  border-radius: 5px;
+  color: var(--md-primary);
+  background: color-mix(in srgb, var(--md-primary-container) 72%, transparent);
+}
+
+.tab-split-marker .material-icon {
+  width: 13px;
+  height: 13px;
+  flex-basis: 13px;
+  font-size: 13px;
+}
+
+.tab.split-linked:not(.active) {
+  box-shadow: inset 0 -2px 0
+    color-mix(in srgb, var(--md-primary) 52%, transparent);
+}
+
 .tab-close {
   z-index: 2;
   width: 22px;
@@ -2052,6 +2075,113 @@ input::placeholder {
   flex: 0 0 auto;
   align-items: center;
   gap: var(--space-1);
+}
+
+.split-controls-anchor {
+  position: relative;
+}
+
+.split-controls-trigger.selected {
+  color: var(--md-on-primary-container);
+  background: var(--md-primary-container);
+}
+
+.split-controls-menu {
+  position: absolute;
+  z-index: 30;
+  top: 44px;
+  right: 0;
+  width: 292px;
+  display: grid;
+  gap: 2px;
+  padding: var(--space-2);
+  border: 1px solid var(--md-outline-variant);
+  border-radius: 20px;
+  color: var(--md-on-surface);
+  background: var(--md-surface-container-high);
+  box-shadow: var(--elevation-3);
+  animation: split-menu-in 160ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+
+@keyframes split-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-5px) scale(0.98);
+  }
+}
+
+.split-controls-menu header {
+  min-width: 0;
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  padding: var(--space-2) var(--space-2) var(--space-3);
+}
+
+.split-controls-menu header > span:first-child {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  flex: 0 0 40px;
+  place-items: center;
+  border-radius: var(--shape-md);
+  color: var(--md-on-primary-container);
+  background: var(--md-primary-container);
+}
+
+.split-controls-menu header > span:last-child {
+  min-width: 0;
+  display: grid;
+}
+
+.split-controls-menu header strong {
+  font: var(--type-title-small);
+}
+
+.split-controls-menu header small {
+  color: var(--md-on-surface-variant);
+  font: var(--type-body-small);
+}
+
+.split-controls-menu > button {
+  min-height: 42px;
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  padding: 0 var(--space-3);
+  border-radius: var(--shape-md);
+  background: transparent;
+  text-align: left;
+}
+
+.split-controls-menu > button:hover {
+  background: var(--md-hover);
+}
+
+.split-focus-controls {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 14px;
+  background: var(--md-surface-container-lowest);
+}
+
+.split-focus-controls button {
+  min-height: 36px;
+  border-radius: 11px;
+  color: var(--md-on-surface-variant);
+  background: transparent;
+  font: var(--type-label-medium);
+}
+
+.split-focus-controls button:hover {
+  background: var(--md-hover);
+}
+
+.split-focus-controls button.selected {
+  color: var(--md-on-secondary-container);
+  background: var(--md-secondary-container);
 }
 
 .tool-button {
@@ -5989,6 +6119,417 @@ input::placeholder {
   background: var(--md-error-container);
 }
 
+/* Split View lives in the shell's reserved divider gap. Native page views are
+   kept on either side; opening a picker or drop preview temporarily raises the
+   shell through the existing chrome-overlay lifecycle. */
+.split-divider {
+  position: fixed;
+  z-index: 3;
+  bottom: 0;
+  width: 12px;
+  display: grid;
+  place-items: center;
+  touch-action: none;
+  cursor: col-resize;
+  user-select: none;
+  outline: 0;
+}
+
+.split-divider-line {
+  width: 1px;
+  height: 100%;
+  background: var(--md-outline-variant);
+  transition:
+    width var(--motion-standard),
+    background-color var(--motion-standard);
+}
+
+.split-divider::after {
+  content: "";
+  position: absolute;
+  top: 12px;
+  width: 3px;
+  height: 28px;
+  border-radius: var(--shape-full);
+  background: var(--md-primary);
+  opacity: 0.58;
+}
+
+.split-divider.focus-left::after {
+  left: 1px;
+}
+
+.split-divider.focus-right::after {
+  right: 1px;
+}
+
+.split-divider-handle {
+  position: absolute;
+  width: 4px;
+  height: 44px;
+  border-radius: var(--shape-full);
+  background: var(--md-outline);
+  opacity: 0;
+  transform: scaleY(0.72);
+  transition:
+    opacity var(--motion-standard),
+    transform var(--motion-standard),
+    background-color var(--motion-standard);
+}
+
+.split-divider:hover .split-divider-line,
+.split-divider:focus-visible .split-divider-line,
+.split-divider.dragging .split-divider-line {
+  width: 3px;
+  background: color-mix(
+    in srgb,
+    var(--md-primary) 58%,
+    var(--md-outline-variant)
+  );
+}
+
+.split-divider:hover .split-divider-handle,
+.split-divider:focus-visible .split-divider-handle,
+.split-divider.dragging .split-divider-handle {
+  opacity: 1;
+  transform: scaleY(1);
+}
+
+.split-divider.focus-left .split-divider-handle {
+  transform-origin: right center;
+}
+
+.split-divider.focus-right .split-divider-handle {
+  transform-origin: left center;
+}
+
+.split-divider.dragging .split-divider-handle {
+  color: var(--md-on-primary);
+  background: var(--md-primary);
+}
+
+.split-drop-layer {
+  position: fixed;
+  z-index: 35;
+  inset: var(--chrome-height) var(--hyperdrive-monitor-width, 0px) 0
+    var(--sidebar-width);
+  pointer-events: none;
+}
+
+.sidebar-rail-only .split-drop-layer {
+  left: var(--rail-width);
+}
+
+.sidebar-detached .split-drop-layer {
+  left: 0;
+}
+
+.split-drop-zone {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: max(92px, 20%);
+  pointer-events: auto;
+}
+
+.split-drop-zone.left {
+  left: 0;
+}
+
+.split-drop-zone.right {
+  right: 0;
+}
+
+.split-drop-preview {
+  position: absolute;
+  top: var(--space-3);
+  bottom: var(--space-3);
+  width: calc(50vw - 12px);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  justify-content: center;
+  padding: var(--space-6);
+  border: 2px dashed color-mix(in srgb, var(--md-primary) 38%, transparent);
+  border-radius: var(--shape-xl);
+  color: var(--md-on-primary-container);
+  background: color-mix(in srgb, var(--md-primary-container) 82%, transparent);
+  box-shadow: var(--elevation-1);
+  opacity: 0;
+  transform: scale(0.96);
+  transition:
+    opacity 140ms cubic-bezier(0.2, 0, 0, 1),
+    transform 180ms cubic-bezier(0.2, 0, 0, 1),
+    border-color var(--motion-standard),
+    background-color var(--motion-standard);
+}
+
+.split-drop-zone.left .split-drop-preview {
+  left: var(--space-3);
+}
+
+.split-drop-zone.right .split-drop-preview {
+  right: var(--space-3);
+}
+
+.split-drop-zone.candidate .split-drop-preview {
+  opacity: 1;
+  transform: scale(0.985);
+}
+
+.split-drop-zone.armed .split-drop-preview {
+  border-style: solid;
+  border-color: var(--md-primary);
+  background: var(--md-primary-container);
+  transform: scale(1);
+}
+
+.split-drop-preview-title {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  font: var(--type-title-medium);
+}
+
+.split-drop-preview > span:last-child {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font: var(--type-body-medium);
+}
+
+.split-picker-backdrop {
+  position: fixed;
+  z-index: 35;
+  inset: var(--chrome-height) var(--hyperdrive-monitor-width, 0px) 0
+    var(--sidebar-width);
+  display: grid;
+  place-items: start center;
+  padding: 20px;
+  background: rgb(0 0 0 / 22%);
+  animation: scrim-in var(--motion-standard) both;
+}
+
+.sidebar-rail-only .split-picker-backdrop {
+  left: var(--rail-width);
+}
+
+.sidebar-detached .split-picker-backdrop {
+  left: 0;
+}
+
+.split-picker {
+  width: min(460px, 100%);
+  max-height: min(560px, calc(100vh - var(--chrome-height) - 40px));
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: var(--space-2);
+  border: 1px solid var(--md-outline-variant);
+  border-radius: 24px;
+  color: var(--md-on-surface);
+  background: var(--md-surface-container-high);
+  box-shadow: var(--elevation-3);
+  animation: palette-in var(--motion-emphasized) both;
+}
+
+.split-picker > header {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  padding: var(--space-2);
+}
+
+.split-picker-icon {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  flex: 0 0 42px;
+  place-items: center;
+  border-radius: 14px;
+  color: var(--md-on-primary-container);
+  background: var(--md-primary-container);
+}
+
+.split-picker > header > span:nth-child(2) {
+  min-width: 0;
+  display: grid;
+  flex: 1;
+}
+
+.split-picker > header strong {
+  font: var(--type-title-small);
+}
+
+.split-picker > header small,
+.split-picker-empty small {
+  color: var(--md-on-surface-variant);
+  font: var(--type-body-small);
+}
+
+.split-picker > header > button {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  flex: 0 0 36px;
+  place-items: center;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.split-picker > header > button:hover {
+  background: var(--md-hover);
+}
+
+.split-picker-search {
+  height: 48px;
+  display: flex;
+  flex: 0 0 48px;
+  gap: var(--space-3);
+  align-items: center;
+  margin: var(--space-1);
+  padding: 0 var(--space-4);
+  border-radius: var(--shape-lg);
+  color: var(--md-on-surface-variant);
+  background: var(--md-surface-container-lowest);
+}
+
+.split-picker-search:focus-within {
+  box-shadow: inset 0 0 0 2px var(--md-primary);
+}
+
+.split-picker-search input {
+  min-width: 0;
+  height: 100%;
+  flex: 1;
+  border: 0;
+  outline: 0;
+  color: var(--md-on-surface);
+  background: transparent;
+}
+
+.split-picker-results {
+  min-height: 96px;
+  overflow-y: auto;
+  padding: var(--space-1);
+}
+
+.split-picker-results > button {
+  width: 100%;
+  min-height: 58px;
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--shape-lg);
+  background: transparent;
+  text-align: left;
+}
+
+.split-picker-results > button:hover,
+.split-picker-results > button:focus-visible {
+  outline: 0;
+  background: var(--md-hover);
+}
+
+.split-picker-copy {
+  min-width: 0;
+  display: grid;
+  flex: 1;
+}
+
+.split-picker-copy strong,
+.split-picker-copy small {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.split-picker-copy strong {
+  font: var(--type-label-large);
+}
+
+.split-picker-copy small {
+  color: var(--md-on-surface-variant);
+  font: var(--type-body-small);
+}
+
+.split-picker-group {
+  max-width: 120px;
+  overflow: hidden;
+  padding: 3px 8px;
+  border-radius: var(--shape-full);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font: var(--type-label-small);
+  color: var(--tab-group-color, var(--md-primary));
+  background: color-mix(
+    in srgb,
+    var(--tab-group-color, var(--md-primary)) 14%,
+    transparent
+  );
+}
+
+.split-picker-empty {
+  min-height: 132px;
+  display: grid;
+  gap: var(--space-1);
+  place-content: center;
+  justify-items: center;
+  padding: var(--space-4);
+  color: var(--md-on-surface-variant);
+  text-align: center;
+}
+
+.split-picker-empty strong {
+  color: var(--md-on-surface);
+  font: var(--type-title-small);
+}
+
+.split-error-toast {
+  position: fixed;
+  z-index: 50;
+  right: var(--space-4);
+  bottom: var(--space-4);
+  max-width: min(440px, calc(100vw - 32px));
+  min-height: 52px;
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-4);
+  border-radius: var(--shape-lg);
+  color: var(--md-inverse-on-surface);
+  background: var(--md-inverse-surface);
+  box-shadow: var(--elevation-3);
+  animation: toast-in var(--motion-emphasized) both;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+
+.split-error-toast > span:nth-child(2) {
+  flex: 1;
+}
+
+.split-error-toast > button {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  flex: 0 0 36px;
+  place-items: center;
+  border-radius: 50%;
+  color: inherit;
+  background: transparent;
+}
+
+.split-error-toast > button:hover {
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
 /* Command palette and context menu */
 .palette-backdrop {
   position: fixed;
@@ -6125,6 +6666,9 @@ input::placeholder {
 
 .tab-menu button {
   min-height: 40px;
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
   padding: 0 var(--space-3);
   border-radius: var(--shape-sm);
   color: var(--md-on-surface);
@@ -6132,6 +6676,18 @@ input::placeholder {
   font: var(--type-body-medium);
   text-align: left;
   transition: background-color var(--motion-standard);
+}
+
+.tab-menu button:disabled {
+  color: var(--md-disabled-content);
+  pointer-events: none;
+}
+
+.tab-menu button .material-icon {
+  width: 18px;
+  height: 18px;
+  flex-basis: 18px;
+  font-size: 18px;
 }
 
 .tab-menu button:hover {

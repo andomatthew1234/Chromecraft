@@ -7,6 +7,7 @@ import {
   TabManager,
   type ExtensionTabTransition,
 } from "./tab-manager";
+import { SplitViewState } from "./split-view-state";
 
 describe("website fullscreen permissions", () => {
   it("allows only user-initiated fullscreen on HTTP and HTTPS pages", () => {
@@ -181,6 +182,7 @@ describe("Offline Pages tabs", () => {
       tabs,
       order: [first.id],
       activeTabId: first.id,
+      smartReaderDocuments: { removeUrl() {} },
       activateTab(tabId: string) {
         Object.assign(manager as unknown as Record<string, unknown>, {
           activeTabId: tabId,
@@ -229,6 +231,8 @@ describe("tab organization", () => {
       tabTopologyMutationOperations: 0,
       selectionAnchorId: "a",
       activeTabId: "a",
+      splitView: new SplitViewState(),
+      getRendererMemoryByProcessId: () => new Map(),
       browserData: {
         searchRecentlyClosedTabs: () => [],
         listSavedTabGroups: () => [],
@@ -385,6 +389,7 @@ describe("tab organization", () => {
       tabGroups: new Map(),
       selectedTabIds: new Set(),
       activeTabId: "",
+      splitView: new SplitViewState(),
       tabTopologyMutationOperations: 0,
       aiTabOrganizationMutationInProgress: false,
       browserData: {

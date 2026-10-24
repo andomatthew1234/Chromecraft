@@ -17,6 +17,7 @@ const snapshot: BrowserSnapshot = {
   tabGroups: [],
   selectedTabIds: [],
   activeTabId: "tab-1",
+  splitView: { pairs: [], activePairId: null },
   baseChromeHeight: 104,
   chromeHeight: 104,
   webStoreListing: null,

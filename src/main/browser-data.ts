@@ -5,11 +5,12 @@ import path from "node:path";
 import type {
   BookmarkEntry,
   BrowserDataSnapshot,
-  ClosedWindowEntry,
+  ClosedWindowEntry as SharedClosedWindowEntry,
   ClosedTabEntry,
   HistoryEntry,
   QuickLinkEntry,
   SavedTabGroupEntry,
+  SplitViewPairSnapshot,
   TabGroupColor,
   TabGroupSnapshot,
 } from "../shared/browser";
@@ -17,14 +18,18 @@ import type {
 export type {
   BookmarkEntry,
   BrowserDataSnapshot,
-  ClosedWindowEntry,
   ClosedTabEntry,
   HistoryEntry,
   QuickLinkEntry,
   SavedTabGroupEntry,
+  SplitViewPairSnapshot,
   TabGroupColor,
   TabGroupSnapshot,
 } from "../shared/browser";
+
+export interface ClosedWindowEntry extends SharedClosedWindowEntry {
+  splitViewPairs: SplitViewPairSnapshot[];
+}
 
 const DATA_VERSION = 1;
 const DEFAULT_MAX_HISTORY_ENTRIES = 10_000;
@@ -40,6 +45,8 @@ const MAX_FOLDER_LENGTH = 256;
 const MAX_URL_LENGTH = 8_192;
 const MAX_GROUP_NAME_LENGTH = 128;
 const MAX_SAVED_GROUP_TABS = 500;
+const MIN_SPLIT_VIEW_RATIO = 0.15;
+const MAX_SPLIT_VIEW_RATIO = 0.85;
 const TAB_GROUP_COLORS = new Set<TabGroupColor>([
   "grey",
   "blue",
@@ -87,6 +94,7 @@ export interface SessionTab extends SessionTabInput {
 export interface BrowserSessionSnapshot {
   tabs: SessionTab[];
   tabGroups: TabGroupSnapshot[];
+  splitViewPairs: SplitViewPairSnapshot[];
   activeTabId: string | null;
   savedAt: number;
 }
@@ -112,6 +120,7 @@ export interface SavedTabGroupInput {
 export interface ClosedWindowInput {
   tabs: SessionTabInput[];
   tabGroups: TabGroupSnapshot[];
+  splitViewPairs?: SplitViewPairSnapshot[];
   activeTabId: string | null;
   closedAt?: Date;
 }
@@ -309,6 +318,49 @@ function validateTabGroup(value: unknown): TabGroupSnapshot | null {
     : null;
 }
 
+function validateSplitViewPairs(
+  value: unknown,
+  validTabIds: ReadonlySet<string>,
+): SplitViewPairSnapshot[] {
+  if (!Array.isArray(value)) return [];
+
+  const pairIds = new Set<string>();
+  const pairedTabIds = new Set<string>();
+  const pairs: SplitViewPairSnapshot[] = [];
+  for (const candidate of value.slice(0, MAX_SESSION_TABS)) {
+    if (!isRecord(candidate)) continue;
+    const id = cleanId(candidate.id);
+    const leftTabId = cleanId(candidate.leftTabId);
+    const rightTabId = cleanId(candidate.rightTabId);
+    const focusedTabId = cleanId(candidate.focusedTabId);
+    const ratio = candidate.ratio;
+    if (
+      !id ||
+      !leftTabId ||
+      !rightTabId ||
+      !focusedTabId ||
+      leftTabId === rightTabId ||
+      (focusedTabId !== leftTabId && focusedTabId !== rightTabId) ||
+      typeof ratio !== "number" ||
+      !Number.isFinite(ratio) ||
+      ratio < MIN_SPLIT_VIEW_RATIO ||
+      ratio > MAX_SPLIT_VIEW_RATIO ||
+      !validTabIds.has(leftTabId) ||
+      !validTabIds.has(rightTabId) ||
+      pairIds.has(id) ||
+      pairedTabIds.has(leftTabId) ||
+      pairedTabIds.has(rightTabId)
+    ) {
+      continue;
+    }
+    pairs.push({ id, leftTabId, rightTabId, ratio, focusedTabId });
+    pairIds.add(id);
+    pairedTabIds.add(leftTabId);
+    pairedTabIds.add(rightTabId);
+  }
+  return pairs;
+}
+
 function cleanGalleryUrl(value: string | null): string | null {
   if (value === null) return null;
   try {
@@ -410,9 +462,15 @@ function validateSession(value: unknown): BrowserSessionSnapshot | null {
   const activeTabId = tabs.some((tab) => tab.id === requestedActiveId)
     ? requestedActiveId
     : (tabs[0]?.id ?? null);
+  const splitViewPairs = validateSplitViewPairs(
+    value.splitViewPairs,
+    new Set(tabs.map((tab) => tab.id)),
+  );
   const savedAt = cleanTimestamp(value.savedAt);
 
-  return savedAt !== null ? { tabs, tabGroups, activeTabId, savedAt } : null;
+  return savedAt !== null
+    ? { tabs, tabGroups, splitViewPairs, activeTabId, savedAt }
+    : null;
 }
 
 function validateRecentlyClosedTab(value: unknown): ClosedTabEntry | null {
@@ -491,8 +549,12 @@ function validateClosedWindow(value: unknown): ClosedWindowEntry | null {
   const activeTabId = tabs.some((tab) => tab.id === requestedActiveId)
     ? requestedActiveId
     : (tabs[0]?.id ?? null);
+  const splitViewPairs = validateSplitViewPairs(
+    value.splitViewPairs,
+    new Set(tabs.map((tab) => tab.id)),
+  );
   return id && closedAt !== null && tabs.length > 0
-    ? { id, tabs, tabGroups, activeTabId, closedAt }
+    ? { id, tabs, tabGroups, splitViewPairs, activeTabId, closedAt }
     : null;
 }
 
@@ -716,6 +778,7 @@ export class BrowserDataStore {
     tabs: SessionTabInput[],
     activeTabId: string | null,
     tabGroups: TabGroupSnapshot[] = [],
+    splitViewPairs: SplitViewPairSnapshot[] = [],
   ): Promise<BrowserSessionSnapshot> {
     if (tabs.length > MAX_SESSION_TABS) {
       throw new RangeError(`Sessions are limited to ${MAX_SESSION_TABS} tabs.`);
@@ -753,6 +816,7 @@ export class BrowserDataStore {
       tabGroups: cleanedGroups.filter((group) =>
         cleanedTabs.some((tab) => tab.groupId === group.id),
       ),
+      splitViewPairs: validateSplitViewPairs(splitViewPairs, seenIds),
       activeTabId: cleanedActiveId,
       savedAt: this.timestamp(),
     };
@@ -942,6 +1006,10 @@ export class BrowserDataStore {
       tabs,
       tabGroups: tabGroups.filter((group) =>
         tabs.some((tab) => tab.groupId === group.id),
+      ),
+      splitViewPairs: validateSplitViewPairs(
+        input.splitViewPairs ?? [],
+        seenIds,
       ),
       activeTabId,
       closedAt: this.timestamp(input.closedAt),

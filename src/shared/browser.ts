@@ -18,6 +18,11 @@ import type {
   AssistantMessageResponse,
   AssistantPageContext,
 } from "./ai-assistant";
+import type {
+  SmartReaderAppearance,
+  SmartReaderTabSnapshot,
+  SmartReaderViewSnapshot,
+} from "./smart-reader";
 
 export type TabId = string;
 
@@ -85,7 +90,30 @@ export interface BrowserTabSnapshot {
   memoryBytes: number | null;
   /** Ephemeral, low-resolution preview captured while the page was visible. */
   thumbnailDataUrl: string | null;
+  reader: SmartReaderTabSnapshot;
 }
+
+export type SplitViewSide = "left" | "right";
+
+export interface SplitViewPairSnapshot {
+  id: string;
+  leftTabId: TabId;
+  rightTabId: TabId;
+  ratio: number;
+  focusedTabId: TabId;
+}
+
+export interface SplitViewSnapshot {
+  pairs: SplitViewPairSnapshot[];
+  activePairId: string | null;
+}
+
+export type SplitViewCommand =
+  | { type: "create"; tabId: TabId; side: SplitViewSide }
+  | { type: "focus"; pairId: string; tabId: TabId }
+  | { type: "resize"; pairId: string; ratio: number }
+  | { type: "swap"; pairId: string }
+  | { type: "exit"; pairId: string };
 
 export interface WebStoreListingSnapshot {
   extensionId: string;
@@ -555,6 +583,7 @@ export interface BrowserSnapshot {
   tabGroups: TabGroupSnapshot[];
   selectedTabIds: TabId[];
   activeTabId: TabId;
+  splitView: SplitViewSnapshot;
   ublock: UblockSnapshot;
   preferences: BrowserPreferencesSnapshot;
   baseChromeHeight: number;
@@ -720,11 +749,25 @@ export interface ChromecraftApi {
   createTab(input?: string): Promise<TabId>;
   activateTab(tabId: TabId): Promise<void>;
   closeTab(tabId: TabId): Promise<void>;
+  updateSplitView(command: SplitViewCommand): Promise<void>;
   navigate(tabId: TabId, input: string, typed?: boolean): Promise<void>;
   goBack(tabId: TabId): Promise<void>;
   goForward(tabId: TabId): Promise<void>;
   reload(tabId: TabId): Promise<void>;
   stop(tabId: TabId): Promise<void>;
+  getSmartReader(tabId: TabId): Promise<SmartReaderViewSnapshot>;
+  toggleSmartReader(
+    tabId: TabId,
+    appearance: SmartReaderAppearance,
+  ): Promise<SmartReaderViewSnapshot>;
+  trySmartReader(
+    tabId: TabId,
+    appearance: SmartReaderAppearance,
+  ): Promise<SmartReaderViewSnapshot>;
+  setSmartReaderAppearance(
+    tabId: TabId,
+    appearance: SmartReaderAppearance,
+  ): Promise<SmartReaderViewSnapshot>;
   duplicateTab(tabId: TabId): Promise<TabId>;
   reopenClosedTab(id?: string): Promise<TabId | null>;
   createTabGroup(

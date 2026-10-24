@@ -1,6 +1,11 @@
 import { ipcRenderer } from "electron";
 
 import { channels } from "../shared/channels";
+import type {
+  SmartReaderExtractionRequest,
+  SmartReaderExtractionResult,
+} from "../shared/smart-reader";
+import { extractSmartReaderArticleFromDocument } from "./smart-reader-extraction";
 
 interface LinkCandidate {
   url: string;
@@ -24,6 +29,7 @@ const MAX_DOM_LINKS = 320;
 const MAX_VISIBLE_CANDIDATES = 80;
 const MIN_EMIT_INTERVAL_MS = 60;
 const GEOMETRY_DEBOUNCE_MS = 120;
+const SMART_READER_MUTATION_DEBOUNCE_MS = 750;
 
 let candidates: LinkCandidate[] = [];
 let geometryDirty = true;
@@ -33,6 +39,7 @@ let clickedUrl: string | null = null;
 let lastEmitAt = 0;
 let scheduled = false;
 let geometryTimer: number | null = null;
+let smartReaderMutationTimer: number | null = null;
 const speculativeLinks = new Map<string, HTMLLinkElement>();
 let observedVideo: HTMLVideoElement | null = null;
 let observedVideoLastTime = 0;
@@ -214,6 +221,17 @@ function markGeometryDirty(): void {
     geometryTimer = null;
     scheduleEmit(true);
   }, GEOMETRY_DEBOUNCE_MS);
+}
+
+function scheduleSmartReaderContentChanged(): void {
+  if (window.top !== window) return;
+  if (smartReaderMutationTimer !== null) return;
+  smartReaderMutationTimer = window.setTimeout(() => {
+    smartReaderMutationTimer = null;
+    ipcRenderer.send(channels.smartReaderContentChanged, {
+      url: location.href,
+    });
+  }, SMART_READER_MUTATION_DEBOUNCE_MS);
 }
 
 function anchorFromTarget(
@@ -557,11 +575,15 @@ function initialize(): void {
       scheduleEmit(true);
     }
   });
-  new MutationObserver(markGeometryDirty).observe(document.documentElement, {
+  new MutationObserver(() => {
+    markGeometryDirty();
+    scheduleSmartReaderContentChanged();
+  }).observe(document.documentElement, {
     childList: true,
     subtree: true,
+    characterData: true,
     attributes: true,
-    attributeFilter: ["href", "hidden", "aria-hidden"],
+    attributeFilter: ["href", "src", "hidden", "aria-hidden"],
   });
   initializeYouTubePlaybackObserver();
   scheduleEmit(true);
@@ -689,6 +711,47 @@ ipcRenderer.on(channels.assistantStartSelection, (_event, value: unknown) => {
 
 ipcRenderer.on(channels.assistantCancelSelection, () => {
   clearAssistantSelection();
+});
+
+ipcRenderer.on(channels.smartReaderExtract, (_event, value: unknown) => {
+  if (!value || typeof value !== "object" || window.top !== window) return;
+  const candidate = value as Partial<SmartReaderExtractionRequest>;
+  if (
+    typeof candidate.requestId !== "string" ||
+    candidate.requestId.length > 128 ||
+    typeof candidate.expectedUrl !== "string" ||
+    typeof candidate.revision !== "number" ||
+    typeof candidate.force !== "boolean"
+  ) {
+    return;
+  }
+  const sourceUrl = location.href;
+  const result: SmartReaderExtractionResult = {
+    requestId: candidate.requestId,
+    sourceUrl,
+    revision: candidate.revision,
+    available: false,
+    article: null,
+    error: null,
+  };
+  if (sourceUrl !== candidate.expectedUrl) {
+    ipcRenderer.send(channels.smartReaderExtractionResult, result);
+    return;
+  }
+  try {
+    result.article = extractSmartReaderArticleFromDocument(
+      document,
+      sourceUrl,
+      candidate.force,
+    );
+    result.available = result.article !== null;
+  } catch (error) {
+    result.error =
+      error instanceof Error
+        ? error.message.slice(0, 500)
+        : "Extraction failed.";
+  }
+  ipcRenderer.send(channels.smartReaderExtractionResult, result);
 });
 
 if (document.readyState === "loading") {

@@ -12,6 +12,7 @@ import {
   getSelectedTabIds,
   getTabGroups,
   groupBoundaryDropIndex,
+  isSplitViewEligibleTab,
   performTabGroupDrop,
   tabDropIndex,
   TabOverview,
@@ -101,6 +102,7 @@ function tab(
     isAudible: false,
     memoryBytes: null,
     thumbnailDataUrl: null,
+    reader: { availability: "unavailable", active: false, revision: 0 },
     ...overrides,
   };
 }
@@ -131,6 +133,7 @@ function snapshot(): BrowserSnapshot {
     ],
     selectedTabIds: ["docs", "repo"],
     activeTabId: "docs",
+    splitView: { pairs: [], activePairId: null },
     baseChromeHeight: 104,
     chromeHeight: 104,
     webStoreListing: null,
@@ -249,15 +252,56 @@ function renderTabStrip(current: BrowserSnapshot): string {
       onToggleBrandMenu={vi.fn()}
       onSetSidebarAttached={vi.fn()}
       onOpenUpdates={vi.fn()}
+      onOpenPerformanceCentre={vi.fn()}
       onOpenToolbarManager={vi.fn()}
       aiTools={aiTools}
       onOpenOrganiseTabs={vi.fn()}
       onHoverCardOpenChange={vi.fn()}
+      onSplitDragChange={vi.fn()}
     />,
   );
 }
 
 describe("tab organisation renderer", () => {
+  it("only offers native website tabs to Split View", () => {
+    expect(
+      isSplitViewEligibleTab(tab("web", "Example", "https://example.com/")),
+    ).toBe(true);
+    expect(
+      isSplitViewEligibleTab(
+        tab("extension", "Extension", "chrome-extension://abc/page.html"),
+      ),
+    ).toBe(true);
+    expect(
+      isSplitViewEligibleTab(
+        tab("gallery", "Gallery", "chromecraft://gallery/"),
+      ),
+    ).toBe(false);
+    expect(
+      isSplitViewEligibleTab(tab("new", "New Tab", "", { isNewTab: true })),
+    ).toBe(false);
+  });
+
+  it("marks both paired tabs without applying active geometry to both", () => {
+    const current = snapshot();
+    current.splitView = {
+      activePairId: "pair-1",
+      pairs: [
+        {
+          id: "pair-1",
+          leftTabId: "docs",
+          rightTabId: "repo",
+          focusedTabId: "docs",
+          ratio: 0.5,
+        },
+      ],
+    };
+    const markup = renderTabStrip(current);
+    expect(markup.match(/split-linked/g)).toHaveLength(2);
+    expect(markup.match(/tab-split-marker/g)).toHaveLength(2);
+    expect(markup.match(/tab active/g)).toHaveLength(1);
+  });
+
   it.each(["docs", "repo", "loose"])(
     "renders only %s as active while several group members are selected for actions",
     (activeTabId) => {
@@ -366,10 +410,12 @@ describe("tab organisation renderer", () => {
         onToggleBrandMenu={vi.fn()}
         onSetSidebarAttached={vi.fn()}
         onOpenUpdates={vi.fn()}
+        onOpenPerformanceCentre={vi.fn()}
         onOpenToolbarManager={vi.fn()}
         aiTools={aiTools}
         onOpenOrganiseTabs={vi.fn()}
         onHoverCardOpenChange={vi.fn()}
+        onSplitDragChange={vi.fn()}
       />,
     );
 
@@ -403,10 +449,12 @@ describe("tab organisation renderer", () => {
         onToggleBrandMenu={vi.fn()}
         onSetSidebarAttached={vi.fn()}
         onOpenUpdates={vi.fn()}
+        onOpenPerformanceCentre={vi.fn()}
         onOpenToolbarManager={vi.fn()}
         aiTools={aiTools}
         onOpenOrganiseTabs={vi.fn()}
         onHoverCardOpenChange={vi.fn()}
+        onSplitDragChange={vi.fn()}
       />,
     );
     expect(markup).toContain('draggable="true"');
@@ -437,10 +485,12 @@ describe("tab organisation renderer", () => {
         onToggleBrandMenu={vi.fn()}
         onSetSidebarAttached={vi.fn()}
         onOpenUpdates={vi.fn()}
+        onOpenPerformanceCentre={vi.fn()}
         onOpenToolbarManager={vi.fn()}
         aiTools={aiTools}
         onOpenOrganiseTabs={vi.fn()}
         onHoverCardOpenChange={vi.fn()}
+        onSplitDragChange={vi.fn()}
       />,
     );
 
