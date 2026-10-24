@@ -18,6 +18,12 @@ import type {
   AssistantMessageRequest,
   AssistantMessageResponse,
 } from "../../shared/ai-assistant";
+import type {
+  SmartReaderArticle,
+  SmartReaderSummaryResult,
+  SmartReaderSummarySnapshot,
+} from "../../shared/smart-reader";
+import { summarizeArticle } from "./article-summary";
 import { GeminiClient } from "./gemini-client";
 import { GeminiCredentialStore } from "./gemini-credential-store";
 import {
@@ -195,6 +201,12 @@ export class AiToolsController {
     ollama: null,
     gemini: null,
   };
+  private summaryProvider: AiProviderId | null = null;
+  private summaryModels: Record<AiProviderId, string | null> = {
+    ollama: null,
+    gemini: null,
+  };
+  private summaryCloudConsentGranted = false;
   private preferredGroupingMode: AiGroupingMode = "smart";
   private ollamaState: AiProviderSnapshot = emptyProvider();
   private geminiState: GeminiProviderSnapshot;
@@ -202,6 +214,7 @@ export class AiToolsController {
   private abortController: AbortController | null = null;
   private assistantAbortController: AbortController | null = null;
   private assistantMessageId: string | null = null;
+  private readonly summaryAbortControllers = new Map<string, AbortController>();
   private prepared: InternalOrganiseTabsProposal | null = null;
   private disposed = false;
   private writeCounter = 0;
@@ -250,6 +263,10 @@ export class AiToolsController {
       if (stored && validGrouping(stored.preferredGroupingMode)) {
         this.preferredGroupingMode = stored.preferredGroupingMode;
       }
+      this.summaryProvider =
+        stored && validProvider(stored.summaryProvider)
+          ? stored.summaryProvider
+          : null;
       if (stored && typeof stored.ollamaModel === "string") {
         this.ollamaState.selectedModel = stored.ollamaModel.slice(0, 256);
       }
@@ -264,6 +281,16 @@ export class AiToolsController {
         stored && typeof stored.organiserGeminiModel === "string"
           ? stored.organiserGeminiModel.slice(0, 128)
           : this.geminiState.selectedModel;
+      this.summaryModels.ollama =
+        stored && typeof stored.summaryOllamaModel === "string"
+          ? stored.summaryOllamaModel.slice(0, 256)
+          : null;
+      this.summaryModels.gemini =
+        stored && typeof stored.summaryGeminiModel === "string"
+          ? stored.summaryGeminiModel.slice(0, 128)
+          : null;
+      this.summaryCloudConsentGranted =
+        stored?.summaryCloudConsentGranted === true;
       this.geminiState.cloudConsentGranted =
         stored?.cloudConsentGranted === true;
     } catch (error) {
@@ -478,6 +505,114 @@ export class AiToolsController {
     await this.persist();
     this.emit();
     return this.snapshot;
+  }
+
+  getSmartReaderSummaryConfiguration(): Pick<
+    SmartReaderSummarySnapshot,
+    "provider" | "model" | "providers"
+  > {
+    const provider = this.summaryProvider ?? this.provider;
+    const selectedState =
+      provider === "ollama" ? this.ollamaState : this.geminiState;
+    return structuredClone({
+      provider,
+      model: this.summaryModels[provider] ?? selectedState.selectedModel,
+      providers: {
+        ollama: this.ollamaState,
+        gemini: {
+          ...this.geminiState,
+          cloudConsentGranted: this.summaryCloudConsentGranted,
+        },
+      },
+    });
+  }
+
+  async setSmartReaderSummaryPreference(
+    provider: AiProviderId,
+    model: string,
+  ): Promise<
+    Pick<SmartReaderSummarySnapshot, "provider" | "model" | "providers">
+  > {
+    const state = provider === "ollama" ? this.ollamaState : this.geminiState;
+    if (!state.models.some((candidate) => candidate.name === model)) {
+      throw new TypeError("Choose an available Scout model.");
+    }
+    this.summaryProvider = provider;
+    this.summaryModels[provider] = model;
+    await this.persist();
+    return this.getSmartReaderSummaryConfiguration();
+  }
+
+  async summarizeSmartReaderArticle(
+    requestId: string,
+    article: SmartReaderArticle,
+    providerId: AiProviderId,
+    model: string,
+    cloudConsent: boolean,
+  ): Promise<SmartReaderSummaryResult> {
+    this.assertAvailable();
+    if (this.summaryAbortControllers.has(requestId)) {
+      throw new Error("Scout is already reading this article.");
+    }
+    let state = providerId === "ollama" ? this.ollamaState : this.geminiState;
+    if (
+      state.connection !== "connected" ||
+      !state.models.some((candidate) => candidate.name === model)
+    ) {
+      const refreshed = await this.refreshModels(providerId);
+      state = providerId === "ollama" ? refreshed.ollama : refreshed.gemini;
+    }
+    if (
+      state.connection !== "connected" ||
+      !state.models.some((candidate) => candidate.name === model)
+    ) {
+      throw new Error(
+        state.error ?? "The selected Scout model is unavailable.",
+      );
+    }
+    if (providerId === "gemini" && !this.summaryCloudConsentGranted) {
+      if (!cloudConsent) {
+        throw new Error("Confirm sending this article to Google Gemini first.");
+      }
+      this.summaryCloudConsentGranted = true;
+    }
+    const apiKey =
+      providerId === "gemini" ? await this.credentials.get() : null;
+    const provider =
+      providerId === "ollama"
+        ? this.ollama
+        : apiKey
+          ? new GeminiClient(apiKey)
+          : null;
+    if (!provider) throw new Error("Add a Gemini API key in Settings first.");
+
+    this.summaryProvider = providerId;
+    this.summaryModels[providerId] = model;
+    await this.persist();
+    const controller = new AbortController();
+    this.summaryAbortControllers.set(requestId, controller);
+    try {
+      const result = await summarizeArticle(
+        provider,
+        model,
+        article,
+        controller.signal,
+      );
+      return {
+        ...result,
+        provider: providerId,
+        model,
+        generatedAt: Date.now(),
+      };
+    } catch (error) {
+      throw new Error(assistantError(error, providerId));
+    } finally {
+      this.summaryAbortControllers.delete(requestId);
+    }
+  }
+
+  cancelSmartReaderSummary(requestId: string): void {
+    this.summaryAbortControllers.get(requestId)?.abort();
   }
 
   async setOrganiserModel(
@@ -804,6 +939,10 @@ export class AiToolsController {
     this.assistantAbortController?.abort();
     this.assistantAbortController = null;
     this.assistantMessageId = null;
+    for (const controller of this.summaryAbortControllers.values()) {
+      controller.abort();
+    }
+    this.summaryAbortControllers.clear();
     this.prepared = null;
   }
 
@@ -837,7 +976,11 @@ export class AiToolsController {
   }
 
   private assertNotBusy(): void {
-    if (this.abortController || this.assistantAbortController) {
+    if (
+      this.abortController ||
+      this.assistantAbortController ||
+      this.summaryAbortControllers.size > 0
+    ) {
       throw new Error("Another AI operation is already running.");
     }
     if (
@@ -866,6 +1009,10 @@ export class AiToolsController {
       geminiModel: this.geminiState.selectedModel,
       organiserOllamaModel: this.organiserModels.ollama,
       organiserGeminiModel: this.organiserModels.gemini,
+      summaryProvider: this.summaryProvider,
+      summaryOllamaModel: this.summaryModels.ollama,
+      summaryGeminiModel: this.summaryModels.gemini,
+      summaryCloudConsentGranted: this.summaryCloudConsentGranted,
       cloudConsentGranted: this.geminiState.cloudConsentGranted,
     };
     await fs.writeFile(temporary, `${JSON.stringify(preferences, null, 2)}\n`, {

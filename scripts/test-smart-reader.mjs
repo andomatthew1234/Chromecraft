@@ -278,7 +278,7 @@ try {
   const articleState = await poll(
     () =>
       reader.evaluate(
-        `(()=>({title:document.querySelector('h1')?.textContent,table:Boolean(document.querySelector('table')),code:Boolean(document.querySelector('pre code')),image:Boolean(document.querySelector('img')),fragmentTarget:Boolean(document.querySelector('#details')),fragmentLink:document.querySelector('a[href^="#"]')?.getAttribute('href'),scriptCount:document.scripts.length,overflow:document.documentElement.scrollWidth>innerWidth}))()`,
+        `(()=>({title:document.querySelector('h1')?.textContent,table:Boolean(document.querySelector('table')),code:Boolean(document.querySelector('pre code')),image:Boolean(document.querySelector('img')),fragmentTarget:Boolean(document.querySelector('#details')),fragmentLink:document.querySelector('a[href^="#"]')?.getAttribute('href'),summaryButton:document.querySelector('[data-action="generate"]')?.textContent?.trim(),scriptCount:document.scripts.length,overflow:document.documentElement.scrollWidth>innerWidth}))()`,
       ),
     (value) => value.title === "Reader fixture",
     "rendered Reader article",
@@ -289,11 +289,20 @@ try {
     !articleState.image ||
     !articleState.fragmentTarget ||
     articleState.fragmentLink !== "#details" ||
+    articleState.summaryButton !== "✦Summarise with Scout" ||
     articleState.scriptCount ||
     articleState.overflow
   ) {
     throw new Error(
       `Reader content regression: ${JSON.stringify(articleState)}`,
+    );
+  }
+  const summarySettings = await reader.evaluate(
+    `(()=>{document.querySelector('[data-action="settings"]')?.click();return {ollama:[...document.querySelectorAll('[data-provider]')].some(button=>button.textContent==='Local Ollama'),gemini:[...document.querySelectorAll('[data-provider]')].some(button=>button.textContent==='Google Gemini'),cloudDisclosure:document.querySelector('.scout-cloud-note')?.textContent}})()`,
+  );
+  if (!summarySettings.ollama || !summarySettings.gemini) {
+    throw new Error(
+      `Reader summary settings regression: ${JSON.stringify(summarySettings)}`,
     );
   }
   await poll(

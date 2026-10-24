@@ -38,6 +38,9 @@ import type {
   SmartReaderAppearance,
   SmartReaderArticle,
   SmartReaderExtractionResult,
+  SmartReaderSummaryGenerateRequest,
+  SmartReaderSummaryResult,
+  SmartReaderSummarySnapshot,
   SmartReaderTabSnapshot,
   SmartReaderViewSnapshot,
 } from "../shared/smart-reader";
@@ -184,6 +187,13 @@ interface TabRecord {
   readerAppearanceRevision: number;
   readerMutationTimer: ReturnType<typeof setTimeout> | null;
   readerTimers: Set<ReturnType<typeof setTimeout>>;
+  readerArticle: SmartReaderArticle | null;
+  readerSummary: {
+    stage: SmartReaderSummarySnapshot["stage"];
+    requestId: string | null;
+    result: SmartReaderSummaryResult | null;
+    error: string | null;
+  };
 }
 
 interface PendingReaderExtraction {
@@ -191,6 +201,21 @@ interface PendingReaderExtraction {
   revision: number;
   resolve: (snapshot: SmartReaderViewSnapshot) => void;
   timer: ReturnType<typeof setTimeout>;
+}
+
+export interface SmartReaderSummaryBridge {
+  configuration(): Pick<
+    SmartReaderSummarySnapshot,
+    "provider" | "model" | "providers"
+  >;
+  refresh(provider: "ollama" | "gemini"): Promise<void>;
+  setPreference(provider: "ollama" | "gemini", model: string): Promise<void>;
+  generate(
+    requestId: string,
+    article: SmartReaderArticle,
+    request: SmartReaderSummaryGenerateRequest,
+  ): Promise<SmartReaderSummaryResult>;
+  cancel(requestId: string): void;
 }
 
 export interface AiTabOrganizationCandidate {
@@ -478,6 +503,7 @@ export class TabManager {
       number,
       number
     > = () => new Map(),
+    private readonly smartReaderSummary?: SmartReaderSummaryBridge,
   ) {
     this.extensionPopup = extensions
       ? new ExtensionPopupController(window, browserSession, extensions, {
@@ -2274,6 +2300,129 @@ export class TabManager {
     return this.smartReaderSnapshot(tab);
   }
 
+  getSmartReaderSummary(source: WebContents): SmartReaderSummarySnapshot {
+    return this.smartReaderSummarySnapshot(this.requireReaderTab(source));
+  }
+
+  async refreshSmartReaderSummaryModels(
+    source: WebContents,
+    provider: unknown,
+  ): Promise<SmartReaderSummarySnapshot> {
+    const tab = this.requireReaderTab(source);
+    const selected = this.requireSummaryProvider(provider);
+    if (!this.smartReaderSummary) throw new Error("Scout is unavailable.");
+    await this.smartReaderSummary.refresh(selected);
+    return this.smartReaderSummarySnapshot(tab);
+  }
+
+  async setSmartReaderSummaryPreference(
+    source: WebContents,
+    value: unknown,
+  ): Promise<SmartReaderSummarySnapshot> {
+    const tab = this.requireReaderTab(source);
+    const request = this.requireSummaryRequest(value, false);
+    if (!this.smartReaderSummary) throw new Error("Scout is unavailable.");
+    await this.smartReaderSummary.setPreference(
+      request.provider,
+      request.model,
+    );
+    this.sendSmartReaderSummary(tab);
+    return this.smartReaderSummarySnapshot(tab);
+  }
+
+  async generateSmartReaderSummary(
+    source: WebContents,
+    value: unknown,
+  ): Promise<SmartReaderSummarySnapshot> {
+    const tab = this.requireReaderTab(source);
+    const request = this.requireSummaryRequest(value, true);
+    const article = tab.readerArticle;
+    if (!article || !this.smartReaderSummary) {
+      throw new Error("This Reader article is no longer available.");
+    }
+    if (tab.readerSummary.requestId) {
+      this.smartReaderSummary.cancel(tab.readerSummary.requestId);
+    }
+    const requestId = randomUUID();
+    const revision = tab.reader.revision;
+    const previousResult = tab.readerSummary.result;
+    tab.readerSummary = {
+      stage: "loading",
+      requestId,
+      result: previousResult,
+      error: null,
+    };
+    this.sendSmartReaderSummary(tab);
+    try {
+      const result = await this.smartReaderSummary.generate(
+        requestId,
+        article,
+        request,
+      );
+      if (
+        !this.tabs.has(tab.id) ||
+        tab.reader.revision !== revision ||
+        tab.readerArticle !== article ||
+        tab.readerSummary.requestId !== requestId
+      ) {
+        return this.smartReaderSummarySnapshot(tab);
+      }
+      tab.readerSummary = {
+        stage: "ready",
+        requestId: null,
+        result,
+        error: null,
+      };
+    } catch (error) {
+      if (
+        this.tabs.has(tab.id) &&
+        tab.reader.revision === revision &&
+        tab.readerArticle === article &&
+        tab.readerSummary.requestId === requestId
+      ) {
+        tab.readerSummary = {
+          stage: previousResult ? "ready" : "error",
+          requestId: null,
+          result: previousResult,
+          error: previousResult
+            ? null
+            : error instanceof Error
+              ? error.message
+              : "Scout could not finish this summary.",
+        };
+      }
+    }
+    this.sendSmartReaderSummary(tab);
+    return this.smartReaderSummarySnapshot(tab);
+  }
+
+  cancelSmartReaderSummary(source: WebContents): SmartReaderSummarySnapshot {
+    const tab = this.requireReaderTab(source);
+    this.cancelSummaryForTab(tab);
+    this.sendSmartReaderSummary(tab);
+    return this.smartReaderSummarySnapshot(tab);
+  }
+
+  dismissSmartReaderSummary(source: WebContents): SmartReaderSummarySnapshot {
+    const tab = this.requireReaderTab(source);
+    this.cancelSummaryForTab(tab);
+    tab.readerSummary = {
+      stage: "idle",
+      requestId: null,
+      result: null,
+      error: null,
+    };
+    this.sendSmartReaderSummary(tab);
+    return this.smartReaderSummarySnapshot(tab);
+  }
+
+  async copySmartReaderSummary(source: WebContents): Promise<void> {
+    const tab = this.requireReaderTab(source);
+    const points = tab.readerSummary.result?.points;
+    if (!points?.length) return;
+    await clipboard.writeText(points.map((point) => `• ${point}`).join("\n"));
+  }
+
   handleSmartReaderExtractionResult(source: WebContents, value: unknown): void {
     if (!value || typeof value !== "object") return;
     const result = value as Partial<SmartReaderExtractionResult>;
@@ -2329,6 +2478,8 @@ export class TabManager {
             normalizeSmartReaderAppearance(null),
           ),
         );
+        tab.readerArticle = structuredClone(result.article);
+        this.resetSummaryForTab(tab);
         tab.reader.availability = "available";
         tab.readerError = null;
         this.clearReaderTimers(tab);
@@ -2772,6 +2923,13 @@ export class TabManager {
       readerAppearanceRevision: 0,
       readerMutationTimer: null,
       readerTimers: new Set(),
+      readerArticle: null,
+      readerSummary: {
+        stage: "idle",
+        requestId: null,
+        result: null,
+        error: null,
+      },
     };
     return tab;
   }
@@ -3635,6 +3793,110 @@ export class TabManager {
     };
   }
 
+  private smartReaderSummarySnapshot(
+    tab: TabRecord,
+  ): SmartReaderSummarySnapshot {
+    const configuration = this.smartReaderSummary?.configuration() ?? {
+      provider: "ollama" as const,
+      model: null,
+      providers: {
+        ollama: {
+          connection: "unavailable" as const,
+          models: [],
+          selectedModel: null,
+          error: "Scout is unavailable.",
+        },
+        gemini: {
+          connection: "unavailable" as const,
+          models: [],
+          selectedModel: null,
+          error: "Scout is unavailable.",
+          apiKeyConfigured: false,
+          cloudConsentGranted: false,
+        },
+      },
+    };
+    return structuredClone({
+      tabId: tab.id,
+      revision: tab.reader.revision,
+      sourceUrl: tab.readerArticle?.sourceUrl ?? tab.url,
+      ...tab.readerSummary,
+      ...configuration,
+    });
+  }
+
+  private requireReaderTab(source: WebContents): TabRecord {
+    for (const tab of this.tabs.values()) {
+      if (
+        tab.readerView?.webContents === source &&
+        !source.isDestroyed() &&
+        tab.readerArticle !== null
+      ) {
+        return tab;
+      }
+    }
+    throw new Error("Rejected Smart Reader request from an untrusted page.");
+  }
+
+  private requireSummaryProvider(value: unknown): "ollama" | "gemini" {
+    if (value !== "ollama" && value !== "gemini") {
+      throw new TypeError("Choose Local Ollama or Google Gemini.");
+    }
+    return value;
+  }
+
+  private requireSummaryRequest(
+    value: unknown,
+    includeConsent: boolean,
+  ): SmartReaderSummaryGenerateRequest {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new TypeError("Choose a Scout provider and model.");
+    }
+    const candidate = value as Record<string, unknown>;
+    const provider = this.requireSummaryProvider(candidate.provider);
+    const model =
+      typeof candidate.model === "string" ? candidate.model.trim() : "";
+    if (!model || model.length > 256 || /[\u0000-\u001f\u007f]/u.test(model)) {
+      throw new TypeError("Choose a valid Scout model.");
+    }
+    return {
+      provider,
+      model,
+      cloudConsent: includeConsent && candidate.cloudConsent === true,
+    };
+  }
+
+  private sendSmartReaderSummary(tab: TabRecord): void {
+    const contents = tab.readerView?.webContents;
+    if (!contents || contents.isDestroyed()) return;
+    contents.send(
+      channels.smartReaderSummaryChanged,
+      this.smartReaderSummarySnapshot(tab),
+    );
+  }
+
+  private cancelSummaryForTab(tab: TabRecord): void {
+    const requestId = tab.readerSummary.requestId;
+    if (requestId) this.smartReaderSummary?.cancel(requestId);
+    tab.readerSummary = {
+      stage: tab.readerSummary.result ? "ready" : "idle",
+      requestId: null,
+      result: tab.readerSummary.result,
+      error: null,
+    };
+  }
+
+  private resetSummaryForTab(tab: TabRecord): void {
+    const requestId = tab.readerSummary.requestId;
+    if (requestId) this.smartReaderSummary?.cancel(requestId);
+    tab.readerSummary = {
+      stage: "idle",
+      requestId: null,
+      result: null,
+      error: null,
+    };
+  }
+
   private isValidReaderArticle(
     value: unknown,
     expectedUrl: string,
@@ -3649,6 +3911,14 @@ export class TabManager {
       typeof article.content === "string" &&
       article.content.length > 0 &&
       article.content.length <= 5 * 1024 * 1024 &&
+      typeof article.textContent === "string" &&
+      article.textContent.length > 0 &&
+      article.textContent.length <= 1_000_000 &&
+      Array.isArray(article.headings) &&
+      article.headings.length <= 100 &&
+      article.headings.every(
+        (heading) => typeof heading === "string" && heading.length <= 500,
+      ) &&
       typeof article.textLength === "number" &&
       article.textLength >= 80 &&
       article.textLength <= 10_000_000 &&
@@ -3817,6 +4087,8 @@ export class TabManager {
       : "unavailable";
     tab.reader.active = false;
     tab.readerError = null;
+    tab.readerArticle = null;
+    this.resetSummaryForTab(tab);
     this.smartReaderDocuments.removeUrl(tab.readerDocumentUrl);
     tab.readerDocumentUrl = null;
     this.destroyReaderView(tab);
@@ -3871,6 +4143,7 @@ export class TabManager {
   private exitSmartReader(tab: TabRecord): void {
     if (!tab.reader.active) return;
     tab.reader.active = false;
+    this.cancelSummaryForTab(tab);
     if (tab.id === this.activeTabId) {
       this.layoutActiveView();
       tab.view?.webContents.focus();
@@ -3884,6 +4157,7 @@ export class TabManager {
     }
     const view = new WebContentsView({
       webPreferences: {
+        preload: path.join(__dirname, "smart-reader-preload.cjs"),
         session: this.browserSession,
         nodeIntegration: false,
         contextIsolation: true,
@@ -4319,6 +4593,8 @@ export class TabManager {
     this.cancelReaderExtraction(tab, "The tab closed.");
     this.smartReaderDocuments.removeUrl(tab.readerDocumentUrl);
     tab.readerDocumentUrl = null;
+    tab.readerArticle = null;
+    this.resetSummaryForTab(tab);
     this.destroyReaderView(tab);
     const view = tab.view;
     tab.view = null;

@@ -14,6 +14,8 @@ const article = {
   siteName: "Example",
   excerpt: "A concise introduction.",
   content: "<p>Already sanitized content.</p>",
+  textContent: "Already sanitized content.",
+  headings: [],
   textLength: 320,
   sourceUrl: "https://example.com/article",
 };
@@ -53,6 +55,9 @@ describe("Smart Reader protocol", () => {
     const html = await response.text();
     expect(html).toContain('data-theme="warm"');
     expect(html).toContain("A &lt;safe&gt; article");
+    expect(html.indexOf("data-scout-summary-host")).toBeLessThan(
+      html.indexOf("data-smart-reader-article"),
+    );
   });
 
   it("rejects malformed tokens and write methods", async () => {

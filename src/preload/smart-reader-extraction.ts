@@ -271,6 +271,14 @@ export function extractSmartReaderArticleFromDocument(
     siteName: cleanText(parsed.siteName, 300),
     excerpt: cleanText(parsed.excerpt, 1_000),
     content,
+    textContent: (qualityProbe.textContent ?? "")
+      .replace(/\s+/gu, " ")
+      .trim()
+      .slice(0, 1_000_000),
+    headings: [...qualityProbe.querySelectorAll("h1, h2, h3, h4, h5, h6")]
+      .map((heading) => cleanText(heading.textContent, 500))
+      .filter((heading): heading is string => Boolean(heading))
+      .slice(0, 100),
     textLength,
     sourceUrl,
   };

@@ -9,6 +9,7 @@ import type {
   OrganiseTabsRequest,
 } from "../../shared/ai-tools";
 import type { AssistantMessageRequest } from "../../shared/ai-assistant";
+import type { SmartReaderArticle } from "../../shared/smart-reader";
 import { AiToolsController } from "./controller";
 import type { GeminiCredentialStore } from "./gemini-credential-store";
 import type { OllamaClient } from "./ollama-client";
@@ -21,6 +22,7 @@ const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   await Promise.all(
     temporaryDirectories
       .splice(0)
@@ -144,6 +146,21 @@ function assistantRequest(
     ],
     history: [{ role: "user", text: "Earlier question" }],
     ...overrides,
+  };
+}
+
+function readerArticle(): SmartReaderArticle {
+  return {
+    title: "Verified launch report",
+    byline: "Ada Reporter",
+    publishedTime: "2026-10-24",
+    siteName: "Example News",
+    excerpt: null,
+    content: "<p>The launch reached 42 participants.</p>",
+    textContent: "The launch reached 42 participants.",
+    headings: ["Launch results"],
+    textLength: 35,
+    sourceUrl: "https://example.com/launch",
   };
 }
 
@@ -510,5 +527,144 @@ describe("AiToolsController", () => {
       controller.sendAssistantMessage(assistantRequest()),
     ).rejects.toThrow("Scout could not reach Ollama");
     expect(JSON.stringify(controller.snapshot)).not.toContain("secret-token");
+  });
+
+  it("summarises Reader content with the exact selected local model", async () => {
+    const file = await statePath();
+    const chatStructured = vi.fn().mockResolvedValue({
+      points: [
+        "The launch reached 42 participants.",
+        "Ada Reporter documented the result.",
+        "The report was published by Example News.",
+      ],
+    });
+    const controller = new AiToolsController({
+      stateFilePath: file,
+      ollama: {
+        listModels: vi.fn().mockResolvedValue([
+          {
+            name: "qwen3:4b",
+            size: 2_000,
+            modifiedAt: null,
+            family: "qwen3",
+            parameterSize: "4B",
+          },
+        ]),
+        chatStructured,
+      } as unknown as OllamaClient,
+      credentials: credentials(),
+      organiseTabs: organiser(),
+    });
+    await controller.refreshModels("ollama");
+    await controller.setSmartReaderSummaryPreference("ollama", "qwen3:4b");
+
+    await expect(
+      controller.summarizeSmartReaderArticle(
+        "summary-1",
+        readerArticle(),
+        "ollama",
+        "qwen3:4b",
+        false,
+      ),
+    ).resolves.toMatchObject({
+      provider: "ollama",
+      model: "qwen3:4b",
+      coverage: "full",
+    });
+    expect(chatStructured).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "qwen3:4b",
+        prompt: expect.stringContaining("42 participants"),
+      }),
+    );
+    expect(JSON.parse(await readFile(file, "utf8"))).toMatchObject({
+      summaryProvider: "ollama",
+      summaryOllamaModel: "qwen3:4b",
+    });
+  });
+
+  it("requires separate article consent before Gemini summarisation", async () => {
+    const file = await statePath();
+    await writeFile(
+      file,
+      JSON.stringify({
+        provider: "gemini",
+        geminiModel: "gemini-flash-latest",
+        summaryProvider: "gemini",
+        summaryGeminiModel: "gemini-flash-latest",
+        cloudConsentGranted: true,
+      }),
+    );
+    const controller = new AiToolsController({
+      stateFilePath: file,
+      ollama: { listModels: vi.fn() } as unknown as OllamaClient,
+      credentials: credentials("secret"),
+      organiseTabs: organiser(),
+    });
+    await controller.initialize();
+    expect(
+      controller.getSmartReaderSummaryConfiguration().providers.gemini
+        .cloudConsentGranted,
+    ).toBe(false);
+  });
+
+  it("summarises with configured Gemini only after explicit article consent", async () => {
+    const file = await statePath();
+    const request = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.includes("pageSize=1")) {
+        return new Response("{}", {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    text: JSON.stringify({
+                      points: ["Gemini point one", "Point two", "Point three"],
+                    }),
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+    vi.stubGlobal("fetch", request);
+    const controller = new AiToolsController({
+      stateFilePath: file,
+      ollama: { listModels: vi.fn() } as unknown as OllamaClient,
+      credentials: credentials("secret"),
+      organiseTabs: organiser(),
+    });
+    await controller.initialize();
+    await controller.refreshModels("gemini");
+
+    await expect(
+      controller.summarizeSmartReaderArticle(
+        "summary-gemini",
+        readerArticle(),
+        "gemini",
+        "gemini-flash-latest",
+        true,
+      ),
+    ).resolves.toMatchObject({
+      provider: "gemini",
+      model: "gemini-flash-latest",
+      points: ["Gemini point one", "Point two", "Point three"],
+    });
+    expect(request).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(await readFile(file, "utf8"))).toMatchObject({
+      summaryCloudConsentGranted: true,
+      summaryProvider: "gemini",
+      summaryGeminiModel: "gemini-flash-latest",
+    });
   });
 });

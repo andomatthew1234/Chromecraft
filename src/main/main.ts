@@ -1448,6 +1448,43 @@ function registerIpc(): void {
         appearance,
       ),
   );
+  ipcMain.handle(channels.getSmartReaderSummary, (event) => {
+    if (!tabManager) throw new Error("The browser window is unavailable.");
+    return tabManager.getSmartReaderSummary(event.sender);
+  });
+  ipcMain.handle(
+    channels.refreshSmartReaderSummaryModels,
+    (event, provider: unknown) => {
+      if (!tabManager) throw new Error("The browser window is unavailable.");
+      return tabManager.refreshSmartReaderSummaryModels(event.sender, provider);
+    },
+  );
+  ipcMain.handle(
+    channels.setSmartReaderSummaryPreference,
+    (event, request: unknown) => {
+      if (!tabManager) throw new Error("The browser window is unavailable.");
+      return tabManager.setSmartReaderSummaryPreference(event.sender, request);
+    },
+  );
+  ipcMain.handle(
+    channels.generateSmartReaderSummary,
+    (event, request: unknown) => {
+      if (!tabManager) throw new Error("The browser window is unavailable.");
+      return tabManager.generateSmartReaderSummary(event.sender, request);
+    },
+  );
+  ipcMain.handle(channels.cancelSmartReaderSummary, (event) => {
+    if (!tabManager) throw new Error("The browser window is unavailable.");
+    return tabManager.cancelSmartReaderSummary(event.sender);
+  });
+  ipcMain.handle(channels.dismissSmartReaderSummary, (event) => {
+    if (!tabManager) throw new Error("The browser window is unavailable.");
+    return tabManager.dismissSmartReaderSummary(event.sender);
+  });
+  ipcMain.handle(channels.copySmartReaderSummary, async (event) => {
+    if (!tabManager) throw new Error("The browser window is unavailable.");
+    await tabManager.copySmartReaderSummary(event.sender);
+  });
   ipcMain.handle(channels.duplicateTab, async (event, tabId: unknown) =>
     requireManager(event).duplicateTab(requireString(tabId, "tabId", 128)),
   );
@@ -3111,6 +3148,35 @@ async function createMainWindow(): Promise<void> {
     },
     () => void performanceCentre.openOrFocus(),
     () => metrics.memoryByProcessId(),
+    {
+      configuration: () => {
+        if (!aiToolsController) throw new Error("Scout is unavailable.");
+        return aiToolsController.getSmartReaderSummaryConfiguration();
+      },
+      refresh: async (provider) => {
+        if (!aiToolsController) throw new Error("Scout is unavailable.");
+        await aiToolsController.refreshModels(provider);
+      },
+      setPreference: async (provider, model) => {
+        if (!aiToolsController) throw new Error("Scout is unavailable.");
+        await aiToolsController.setSmartReaderSummaryPreference(
+          provider,
+          model,
+        );
+      },
+      generate: (requestId, article, request) => {
+        if (!aiToolsController) throw new Error("Scout is unavailable.");
+        return aiToolsController.summarizeSmartReaderArticle(
+          requestId,
+          article,
+          request.provider,
+          request.model,
+          request.cloudConsent,
+        );
+      },
+      cancel: (requestId) =>
+        aiToolsController?.cancelSmartReaderSummary(requestId),
+    },
   );
   tabManager = manager;
   const organiseTabs = new OrganiseTabsTool(manager);

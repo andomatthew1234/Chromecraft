@@ -17,8 +17,58 @@ export interface SmartReaderArticle {
   siteName: string | null;
   excerpt: string | null;
   content: string;
+  textContent: string;
+  headings: string[];
   textLength: number;
   sourceUrl: string;
+}
+
+export type SmartReaderSummaryStage = "idle" | "loading" | "ready" | "error";
+
+export interface SmartReaderSummaryProvider {
+  connection: "unknown" | "connected" | "unavailable";
+  models: Array<{
+    name: string;
+    displayName?: string | null;
+    size: number | null;
+    family: string | null;
+    parameterSize: string | null;
+    recommended?: boolean;
+  }>;
+  selectedModel: string | null;
+  error: string | null;
+  apiKeyConfigured?: boolean;
+  cloudConsentGranted?: boolean;
+}
+
+export interface SmartReaderSummaryResult {
+  points: string[];
+  coverage: "full" | "partial";
+  provider: "ollama" | "gemini";
+  model: string;
+  generatedAt: number;
+}
+
+export interface SmartReaderSummarySnapshot {
+  tabId: string;
+  revision: number;
+  sourceUrl: string;
+  stage: SmartReaderSummaryStage;
+  requestId: string | null;
+  provider: "ollama" | "gemini";
+  model: string | null;
+  providers: {
+    ollama: SmartReaderSummaryProvider;
+    gemini: SmartReaderSummaryProvider;
+  };
+  result: SmartReaderSummaryResult | null;
+  error: string | null;
+}
+
+export interface SmartReaderSummaryGenerateRequest {
+  provider: "ollama" | "gemini";
+  model: string;
+  cloudConsent: boolean;
 }
 
 export interface SmartReaderViewSnapshot extends SmartReaderTabSnapshot {

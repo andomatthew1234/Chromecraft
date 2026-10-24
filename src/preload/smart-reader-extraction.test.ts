@@ -34,6 +34,8 @@ describe("Smart Reader extraction", () => {
     expect(article?.content).toContain('href="https://example.com/next"');
     expect(article?.content).toContain('id="details"');
     expect(article?.content).toContain('href="#details"');
+    expect(article?.textContent).toContain("Smart Reader keeps the original");
+    expect(article?.headings).toContain("Details");
     dom.window.close();
   });
 
