@@ -323,7 +323,7 @@ describe("tab organisation renderer", () => {
       /\.tab\.active\s*\{[\s\S]*?border-radius:\s*var\(--shape-md\) var\(--shape-md\) 0 0;/,
     );
     expect(stylesheet).toMatch(
-      /\.brand\.menu-open\s*\{[\s\S]*?box-shadow:\s*inset/,
+      /\.brand\.menu-open\s*\{[\s\S]*?border-radius:\s*var\(--shape-md\);[\s\S]*?box-shadow:\s*inset/,
     );
   });
 
