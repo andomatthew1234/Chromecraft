@@ -18,7 +18,7 @@
       href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0..1,0"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="./styles.css?v=20261024-flavours" />
+    <link rel="stylesheet" href="./styles.css?v=20261024-flavour-tabs" />
   </head>
   <body>
     <div class="scroll-progress" aria-hidden="true"><span></span></div>
@@ -1179,60 +1179,219 @@
           role="region"
           aria-label="Choose your flavour of Chromecraft"
         >
-          <div
-            class="flavour-overview"
-            id="flavour-overview"
-            role="tabpanel"
-            aria-labelledby="flavour-tab-overview"
-          >
-            <div class="flavour-copy">
-              <p class="section-kicker">
-                07 / Choose your flavour of Chromecraft
-              </p>
-              <h2 id="flavour-showcase-title">
-                One browser. One engine. <span>Three energies.</span>
-              </h2>
-              <p>
-                Choose your flavour of Chromecraft to curate your dream
-                experience.
-              </p>
+          <div class="flavour-panels">
+            <div
+              class="flavour-panel flavour-overview is-active"
+              id="flavour-overview"
+              role="tabpanel"
+              aria-labelledby="flavour-tab-overview"
+              aria-hidden="false"
+              data-flavour-panel="0"
+            >
+              <div class="flavour-copy">
+                <p class="section-kicker">
+                  07 / Choose your flavour of Chromecraft
+                </p>
+                <h2 id="flavour-showcase-title">
+                  One browser. One engine. <span>Three energies.</span>
+                </h2>
+                <p>
+                  Choose your flavour of Chromecraft to curate your dream
+                  experience.
+                </p>
+              </div>
+
+              <div
+                class="flavour-material-preview"
+                aria-label="Material 3 illustration of Chromecraft's three editions"
+              >
+                <div class="flavour-preview-toolbar">
+                  <span class="flavour-preview-logo" aria-hidden="true">C</span>
+                  <span class="flavour-preview-search">
+                    <i aria-hidden="true"></i>
+                    Search or enter an address
+                  </span>
+                  <span
+                    class="material-symbols-rounded flavour-preview-settings"
+                    aria-hidden="true"
+                    >tune</span
+                  >
+                </div>
+                <div class="flavour-preview-content">
+                  <div class="flavour-preview-heading">
+                    <p>YOUR BROWSER, YOUR WAY</p>
+                    <strong>Pick the energy that fits today.</strong>
+                  </div>
+                  <div class="flavour-preview-options" aria-hidden="true">
+                    <span class="flavour-preview-option is-vanilla">
+                      <i></i><b>Vanilla</b><small>Balanced</small>
+                    </span>
+                    <span class="flavour-preview-option is-nitro">
+                      <i></i><b>Nitro</b><small>Focused</small>
+                    </span>
+                    <span class="flavour-preview-option is-mint">
+                      <i></i><b>Mint</b><small>Productive</small>
+                    </span>
+                  </div>
+                  <div class="flavour-preview-actions" aria-hidden="true">
+                    <span>Personalise</span>
+                    <span class="material-symbols-rounded">arrow_forward</span>
+                  </div>
+                </div>
+              </div>
             </div>
 
             <div
-              class="flavour-material-preview"
-              aria-label="Material 3 illustration of Chromecraft's three editions"
+              class="flavour-panel flavour-edition flavour-edition--vanilla"
+              id="flavour-vanilla"
+              role="tabpanel"
+              aria-labelledby="flavour-tab-vanilla"
+              aria-hidden="true"
+              data-flavour-panel="1"
             >
-              <div class="flavour-preview-toolbar">
-                <span class="flavour-preview-logo" aria-hidden="true">C</span>
-                <span class="flavour-preview-search">
-                  <i aria-hidden="true"></i>
-                  Search or enter an address
-                </span>
-                <span
-                  class="material-symbols-rounded flavour-preview-settings"
-                  aria-hidden="true"
-                  >tune</span
+              <div class="flavour-copy flavour-edition-copy">
+                <p class="section-kicker">Chromecraft Vanilla</p>
+                <h2>Ready for your everyday, <span>every way.</span></h2>
+                <p>
+                  Chromecraft Vanilla is fast, runs on potatoes, and is the most
+                  optimised browser for everybody. Customize your browser with
+                  color themes and endless tweaks.
+                </p>
+                <a
+                  class="flavour-download flavour-download--vanilla"
+                  href="./download/vanilla/index.html"
                 >
+                  Download Vanilla
+                  <span class="material-symbols-rounded" aria-hidden="true"
+                    >arrow_forward</span
+                  >
+                </a>
               </div>
-              <div class="flavour-preview-content">
-                <div class="flavour-preview-heading">
-                  <p>YOUR BROWSER, YOUR WAY</p>
-                  <strong>Pick the energy that fits today.</strong>
+              <div class="flavour-edition-visual flavour-vanilla-visual">
+                <div class="vanilla-canvas" aria-hidden="true">
+                  <div class="vanilla-canvas-bar">
+                    <span></span><i></i><b>tune</b>
+                  </div>
+                  <div class="vanilla-canvas-body">
+                    <p>MAKE IT YOURS</p>
+                    <strong>Your browser, in your colours.</strong>
+                    <div class="vanilla-swatches">
+                      <span></span><span></span><span></span><span></span>
+                    </div>
+                    <div class="vanilla-control">
+                      <span>Colour intensity</span><b>68%</b><i></i>
+                    </div>
+                    <div class="vanilla-setting">
+                      <span
+                        ><b>Dynamic colour</b
+                        ><small>Adapt every surface</small></span
+                      >
+                      <i></i>
+                    </div>
+                  </div>
+                  <span class="vanilla-canvas-fab material-symbols-rounded"
+                    >edit</span
+                  >
                 </div>
-                <div class="flavour-preview-options" aria-hidden="true">
-                  <span class="flavour-preview-option is-vanilla">
-                    <i></i><b>Vanilla</b><small>Balanced</small>
-                  </span>
-                  <span class="flavour-preview-option is-nitro">
-                    <i></i><b>Nitro</b><small>Focused</small>
-                  </span>
-                  <span class="flavour-preview-option is-mint">
-                    <i></i><b>Mint</b><small>Productive</small>
-                  </span>
+              </div>
+            </div>
+
+            <div
+              class="flavour-panel flavour-edition flavour-edition--nitro"
+              id="flavour-nitro"
+              role="tabpanel"
+              aria-labelledby="flavour-tab-nitro"
+              aria-hidden="true"
+              data-flavour-panel="2"
+            >
+              <div class="flavour-copy flavour-edition-copy">
+                <p class="section-kicker">Chromecraft Nitro</p>
+                <h2>Ready for <span>endless play.</span></h2>
+                <p>
+                  Chromecraft Nitro maximises your FPS and performance in games.
+                  You'll also love the gaming aesthetic.
+                </p>
+                <p class="flavour-coming-soon">
+                  Coming soon to a gaming PC near you.
+                </p>
+                <a
+                  class="flavour-download flavour-download--nitro"
+                  href="./download/nitro/index.html"
+                >
+                  Download Nitro
+                  <span class="material-symbols-rounded" aria-hidden="true"
+                    >arrow_forward</span
+                  >
+                </a>
+              </div>
+              <div class="flavour-edition-visual flavour-nitro-visual">
+                <div class="nitro-grid" aria-hidden="true">
+                  <div class="nitro-hud-top">
+                    <span>NITRO // PERFORMANCE</span><b>LIVE</b>
+                  </div>
+                  <div class="nitro-stat-block">
+                    <span>FRAME RATE</span><strong>144</strong><b>FPS</b>
+                  </div>
+                  <div class="nitro-meter">
+                    <span><b>CPU</b><i></i><em>32%</em></span>
+                    <span><b>GPU</b><i></i><em>71%</em></span>
+                    <span><b>RAM</b><i></i><em>4.2 GB</em></span>
+                  </div>
+                  <div class="nitro-status">
+                    <span>GAME MODE</span><b>MAX PERFORMANCE</b>
+                  </div>
                 </div>
-                <div class="flavour-preview-actions" aria-hidden="true">
-                  <span>Personalise</span>
-                  <span class="material-symbols-rounded">arrow_forward</span>
+              </div>
+            </div>
+
+            <div
+              class="flavour-panel flavour-edition flavour-edition--mint"
+              id="flavour-mint"
+              role="tabpanel"
+              aria-labelledby="flavour-tab-mint"
+              aria-hidden="true"
+              data-flavour-panel="3"
+            >
+              <div class="flavour-copy flavour-edition-copy">
+                <p class="section-kicker">Chromecraft Mint</p>
+                <h2>A new era of <span>support.</span></h2>
+                <p>
+                  If you're on Linux, or want a portable browser that is as tiny
+                  and lightweight as a feather, try Chromecraft Mint. You'll
+                  lose AI and some other groundbreaking browser features, but
+                  gain an unparalleled portable browser in 2026.
+                </p>
+                <p class="flavour-coming-soon">
+                  Coming soon to a 2001 office PC near you.
+                </p>
+                <a
+                  class="flavour-download flavour-download--mint"
+                  href="./download/mint/index.html"
+                >
+                  Download Mint
+                  <span class="material-symbols-rounded" aria-hidden="true"
+                    >arrow_forward</span
+                  >
+                </a>
+              </div>
+              <div class="flavour-edition-visual flavour-mint-visual">
+                <div class="mint-window" aria-hidden="true">
+                  <div class="mint-window-top">
+                    <span>CHROMECRAFT MINT</span><b>READY</b>
+                  </div>
+                  <div class="mint-score">
+                    <i>✓</i
+                    ><span
+                      ><strong>Lightweight</strong
+                      ><small>Made to travel</small></span
+                    >
+                  </div>
+                  <div class="mint-detail-list">
+                    <span><b>MEMORY</b><i></i><em>LOW</em></span>
+                    <span><b>STORAGE</b><i></i><em>TINY</em></span>
+                    <span><b>PORTABLE</b><i></i><em>YES</em></span>
+                  </div>
+                  <p>THE BROWSER THAT LEAVES ROOM FOR EVERYTHING ELSE.</p>
                 </div>
               </div>
             </div>
@@ -1251,6 +1410,7 @@
                 role="tab"
                 aria-selected="true"
                 aria-controls="flavour-overview"
+                data-flavour-slide="0"
               >
                 <span
                   class="flavour-tab-home material-symbols-rounded"
@@ -1263,11 +1423,13 @@
               </button>
               <button
                 class="flavour-tab flavour-tab--vanilla"
+                id="flavour-tab-vanilla"
                 type="button"
                 role="tab"
                 aria-selected="false"
-                aria-disabled="true"
-                disabled
+                aria-controls="flavour-vanilla"
+                tabindex="-1"
+                data-flavour-slide="1"
               >
                 <span
                   class="flavour-tab-art flavour-tab-art--vanilla"
@@ -1284,11 +1446,13 @@
               </button>
               <button
                 class="flavour-tab flavour-tab--nitro"
+                id="flavour-tab-nitro"
                 type="button"
                 role="tab"
                 aria-selected="false"
-                aria-disabled="true"
-                disabled
+                aria-controls="flavour-nitro"
+                tabindex="-1"
+                data-flavour-slide="2"
               >
                 <span
                   class="flavour-tab-art flavour-tab-art--nitro"
@@ -1305,11 +1469,13 @@
               </button>
               <button
                 class="flavour-tab flavour-tab--mint"
+                id="flavour-tab-mint"
                 type="button"
                 role="tab"
                 aria-selected="false"
-                aria-disabled="true"
-                disabled
+                aria-controls="flavour-mint"
+                tabindex="-1"
+                data-flavour-slide="3"
               >
                 <span
                   class="flavour-tab-art flavour-tab-art--mint"
@@ -1321,11 +1487,14 @@
                 </span>
                 <span
                   ><strong>Chromecraft Mint</strong
-                  ><small>For productivity</small></span
+                  ><small>The most lightweight browser</small></span
                 >
               </button>
             </div>
           </div>
+          <p class="sr-only flavour-status" aria-live="polite">
+            Overview, slide 1 of 4
+          </p>
         </div>
       </section>
 
@@ -1430,6 +1599,6 @@
       </section>
     </main>
 
-    <script src="./script.js?v=20261024-compare-fix"></script>
+    <script src="./script.js?v=20261024-flavour-tabs"></script>
   </body>
 </html>

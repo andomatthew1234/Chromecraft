@@ -907,6 +907,72 @@ if (agenticShowcase && agenticPanels.length && agenticTabs.length) {
   showAgenticSlide(0);
 }
 
+const flavourShowcase = document.querySelector(".flavour-showcase");
+const flavourPanels = [...document.querySelectorAll("[data-flavour-panel]")];
+const flavourTabs = [...document.querySelectorAll("[data-flavour-slide]")];
+const flavourStatus = document.querySelector(".flavour-status");
+let activeFlavourSlide = 0;
+
+function showFlavourSlide(index, { focus = false, announce = false } = {}) {
+  if (!flavourPanels.length || !flavourTabs.length) return;
+  activeFlavourSlide = (index + flavourPanels.length) % flavourPanels.length;
+  flavourShowcase?.setAttribute(
+    "data-flavour-active",
+    String(activeFlavourSlide),
+  );
+
+  flavourPanels.forEach((panel, panelIndex) => {
+    const active = panelIndex === activeFlavourSlide;
+    panel.classList.toggle("is-active", active);
+    panel.setAttribute("aria-hidden", String(!active));
+  });
+
+  flavourTabs.forEach((tab, tabIndex) => {
+    const active = tabIndex === activeFlavourSlide;
+    tab.classList.toggle("is-active", active);
+    tab.setAttribute("aria-selected", String(active));
+    tab.tabIndex = active ? 0 : -1;
+  });
+
+  if (focus) flavourTabs[activeFlavourSlide]?.focus();
+  if (announce && flavourStatus) {
+    const name =
+      flavourTabs[activeFlavourSlide]
+        ?.querySelector("strong")
+        ?.textContent?.trim() ?? "Edition";
+    flavourStatus.textContent = `${name}, slide ${activeFlavourSlide + 1} of ${flavourPanels.length}`;
+  }
+}
+
+function handleFlavourKeydown(event) {
+  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+  event.preventDefault();
+
+  if (event.key === "Home") {
+    showFlavourSlide(0, { focus: true, announce: true });
+  } else if (event.key === "End") {
+    showFlavourSlide(flavourPanels.length - 1, {
+      focus: true,
+      announce: true,
+    });
+  } else {
+    showFlavourSlide(
+      activeFlavourSlide + (event.key === "ArrowRight" ? 1 : -1),
+      { focus: true, announce: true },
+    );
+  }
+}
+
+if (flavourShowcase && flavourPanels.length && flavourTabs.length) {
+  flavourTabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+      showFlavourSlide(Number(tab.dataset.flavourSlide), { announce: true });
+    });
+    tab.addEventListener("keydown", handleFlavourKeydown);
+  });
+  showFlavourSlide(0);
+}
+
 if (tabsComparison && tabsComparisonRange) {
   const updateTabsComparison = () => {
     tabsComparison.style.setProperty(
