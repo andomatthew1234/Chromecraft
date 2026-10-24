@@ -69,7 +69,8 @@ class CdpClient {
     });
     if (result.exceptionDetails) {
       throw new Error(
-        result.exceptionDetails.exception?.description ?? result.exceptionDetails.text,
+        result.exceptionDetails.exception?.description ??
+          result.exceptionDetails.text,
       );
     }
     return result.result.value;
@@ -123,7 +124,9 @@ let shellClient;
 let performanceClient;
 try {
   const listTargets = () =>
-    fetch(`http://127.0.0.1:${port}/json/list`).then((response) => response.json());
+    fetch(`http://127.0.0.1:${port}/json/list`).then((response) =>
+      response.json(),
+    );
   const shellTarget = await poll(
     listTargets,
     (targets) =>
@@ -178,7 +181,9 @@ try {
         target.webSocketDebuggerUrl,
     ),
   );
-  performanceClient = await CdpClient.connect(performanceTarget.webSocketDebuggerUrl);
+  performanceClient = await CdpClient.connect(
+    performanceTarget.webSocketDebuggerUrl,
+  );
   const snapshot = await poll(
     () =>
       performanceClient.evaluate(`(() => ({
@@ -187,7 +192,11 @@ try {
         cpu: document.querySelector('.summary-metric strong')?.textContent,
         api: Boolean(window.performanceCentre)
       }))()`),
-    (value) => value.api && value.title === "Performance Centre" && value.processCount > 0 && value.cpu !== "—",
+    (value) =>
+      value.api &&
+      value.title === "Performance Centre" &&
+      value.processCount > 0 &&
+      value.cpu !== "—",
     "a real second process sample",
   );
 
@@ -208,7 +217,10 @@ try {
   const singletonCount = (await listTargets()).filter((target) =>
     target.url.includes("performance-centre.html"),
   ).length;
-  assert(singletonCount === 1, "Shift + Esc created more than one Performance Centre window.");
+  assert(
+    singletonCount === 1,
+    "Shift + Esc created more than one Performance Centre window.",
+  );
 
   await shellClient.evaluate(
     "document.querySelector('button[aria-label=\"Chromecraft menu\"]')?.click()",
@@ -218,11 +230,17 @@ try {
       .find((entry) => entry.textContent?.includes('Performance Centre'));
     return item?.textContent?.replace(/\\s+/g, ' ').trim() ?? '';
   })()`);
-  assert(menuEntry.includes("Shift + Esc"), "The C menu entry or shortcut label is missing.");
+  assert(
+    menuEntry.includes("Shift + Esc"),
+    "The C menu entry or shortcut label is missing.",
+  );
   await shellClient.evaluate(`([...document.querySelectorAll('[role="menuitem"]')]
     .find((entry) => entry.textContent?.includes('Performance Centre')))?.click()`);
 
-  for (const [width, height] of [[850, 580], [640, 420]]) {
+  for (const [width, height] of [
+    [850, 580],
+    [640, 420],
+  ]) {
     await performanceClient.send("Emulation.setDeviceMetricsOverride", {
       width,
       height,
@@ -235,8 +253,14 @@ try {
       height: document.documentElement.scrollHeight,
       viewportHeight: document.documentElement.clientHeight
     }))()`);
-    assert(layout.width <= layout.viewport, `Performance Centre overflowed horizontally at ${width}px.`);
-    assert(layout.height <= layout.viewportHeight, `Performance Centre overflowed vertically at ${height}px.`);
+    assert(
+      layout.width <= layout.viewport,
+      `Performance Centre overflowed horizontally at ${width}px.`,
+    );
+    assert(
+      layout.height <= layout.viewportHeight,
+      `Performance Centre overflowed vertically at ${height}px.`,
+    );
   }
 
   await performanceClient.evaluate(`(() => {
@@ -246,7 +270,10 @@ try {
     input.dispatchEvent(new Event('input', { bubbles: true }));
   })()`);
   await poll(
-    () => performanceClient.evaluate("Boolean(document.querySelector('.empty-state'))"),
+    () =>
+      performanceClient.evaluate(
+        "Boolean(document.querySelector('.empty-state'))",
+      ),
     Boolean,
     "the search empty state",
   );
@@ -264,13 +291,18 @@ try {
   const screenshotPath = path.join(artifactDir, "performance-centre.png");
   await fs.writeFile(screenshotPath, Buffer.from(screenshot.data, "base64"));
 
-  await performanceClient.evaluate("void window.performanceCentre.close(); true");
+  await performanceClient.evaluate(
+    "void window.performanceCentre.close(); true",
+  );
   await poll(
     listTargets,
-    (targets) => !targets.some((target) => target.url.includes("performance-centre.html")),
+    (targets) =>
+      !targets.some((target) => target.url.includes("performance-centre.html")),
     "Performance Centre to close",
   );
-  const shellStillOpen = (await listTargets()).some((target) => target.id === shellTarget.id);
+  const shellStillOpen = (await listTargets()).some(
+    (target) => target.id === shellTarget.id,
+  );
   assert(shellStillOpen, "Closing Performance Centre also closed Chromecraft.");
 
   console.log(
@@ -295,5 +327,12 @@ try {
   shellClient?.socket.close();
   performanceClient?.socket.close();
   await stop(child);
-  await fs.rm(profile, { recursive: true, force: true, maxRetries: 4, retryDelay: 200 }).catch(() => undefined);
+  await fs
+    .rm(profile, {
+      recursive: true,
+      force: true,
+      maxRetries: 4,
+      retryDelay: 200,
+    })
+    .catch(() => undefined);
 }

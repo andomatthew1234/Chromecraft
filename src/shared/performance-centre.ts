@@ -147,8 +147,15 @@ export function buildPerformanceRows(
         ? associatedTabs[0]!.title || "Untitled tab"
         : associatedTabs.length > 1
           ? `${associatedTabs.length} shared tabs`
-          : PROCESS_LABELS[process.type] ?? process.name ?? `${process.type} process`;
-    const title = kind === "renderer" ? rendererTitle : PROCESS_LABELS[process.type] ?? process.name ?? `${process.type} process`;
+          : (PROCESS_LABELS[process.type] ??
+            process.name ??
+            `${process.type} process`);
+    const title =
+      kind === "renderer"
+        ? rendererTitle
+        : (PROCESS_LABELS[process.type] ??
+          process.name ??
+          `${process.type} process`);
     const protectedProcess = kind !== "renderer" || associatedTabs.length === 0;
 
     return {
@@ -159,7 +166,10 @@ export function buildPerformanceRows(
       title,
       subtitle:
         associatedTabs.length > 0
-          ? associatedTabs.map((tab) => tab.hostname).filter(Boolean).join(" · ")
+          ? associatedTabs
+              .map((tab) => tab.hostname)
+              .filter(Boolean)
+              .join(" · ")
           : `Chromecraft ${process.type.toLowerCase()} infrastructure`,
       cpuPercent: safeNumber(process.cpuPercent),
       memoryBytes: safeNumber(process.memoryBytes),
@@ -177,18 +187,24 @@ export function buildPerformanceRows(
 export function isPerformanceRefreshInterval(
   value: unknown,
 ): value is PerformanceRefreshInterval {
-  return value === null || value === 1_000 || value === 2_000 || value === 5_000;
+  return (
+    value === null || value === 1_000 || value === 2_000 || value === 5_000
+  );
 }
 
-export function isPerformanceAction(value: unknown): value is PerformanceAction {
+export function isPerformanceAction(
+  value: unknown,
+): value is PerformanceAction {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const action = value as Record<string, unknown>;
   if (
-    ["switch-to-tab", "close-tab", "reload-tab"].includes(
-      String(action.type),
-    )
+    ["switch-to-tab", "close-tab", "reload-tab"].includes(String(action.type))
   ) {
-    return typeof action.tabId === "string" && action.tabId.length > 0 && action.tabId.length <= 128;
+    return (
+      typeof action.tabId === "string" &&
+      action.tabId.length > 0 &&
+      action.tabId.length <= 128
+    );
   }
   return (
     action.type === "end-process" &&

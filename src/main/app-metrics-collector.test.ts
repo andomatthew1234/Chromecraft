@@ -13,11 +13,19 @@ describe("AppMetricsCollector", () => {
             creationTime: 10,
             type: "Tab",
             cpu: { percentCPUUsage: 145.2, idleWakeupsPerSecond: 0 },
-            memory: { workingSetSize: 20, peakWorkingSetSize: 25, privateBytes: 10 },
+            memory: {
+              workingSetSize: 20,
+              peakWorkingSetSize: 25,
+              privateBytes: 10,
+            },
           },
         ] as Electron.ProcessMetric[],
     );
-    const collector = new AppMetricsCollector(read, () => now, () => 1_000_000);
+    const collector = new AppMetricsCollector(
+      read,
+      () => now,
+      () => 1_000_000,
+    );
     expect(collector.sample().processes[0]).toMatchObject({
       cpuPercent: null,
       memoryBytes: 10 * 1_024,
@@ -30,7 +38,11 @@ describe("AppMetricsCollector", () => {
   it("shares a cached sample with browser snapshots", () => {
     let now = 1_000;
     const read = vi.fn(() => [] as Electron.ProcessMetric[]);
-    const collector = new AppMetricsCollector(read, () => now, () => 0);
+    const collector = new AppMetricsCollector(
+      read,
+      () => now,
+      () => 0,
+    );
     collector.memoryByProcessId();
     now += 200;
     collector.memoryByProcessId();

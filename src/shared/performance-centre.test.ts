@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { buildPerformanceRows, isPerformanceAction } from "./performance-centre";
+import {
+  buildPerformanceRows,
+  isPerformanceAction,
+} from "./performance-centre";
 
 describe("Performance Centre process model", () => {
   it("groups shared tabs beneath one renderer without duplicating memory", () => {
@@ -15,8 +18,24 @@ describe("Performance Centre process model", () => {
         },
       ],
       [
-        { id: "a", title: "A", hostname: "a.test", faviconDataUrl: null, processId: 42, active: true, crashed: false },
-        { id: "b", title: "B", hostname: "b.test", faviconDataUrl: null, processId: 42, active: false, crashed: false },
+        {
+          id: "a",
+          title: "A",
+          hostname: "a.test",
+          faviconDataUrl: null,
+          processId: 42,
+          active: true,
+          crashed: false,
+        },
+        {
+          id: "b",
+          title: "B",
+          hostname: "b.test",
+          faviconDataUrl: null,
+          processId: 42,
+          active: false,
+          crashed: false,
+        },
       ],
     );
     expect(rows).toHaveLength(1);
@@ -32,8 +51,20 @@ describe("Performance Centre process model", () => {
   it("protects main and unattributed renderer processes", () => {
     const rows = buildPerformanceRows(
       [
-        { pid: 1, creationTime: 1, type: "Browser", cpuPercent: 1, memoryBytes: 10 },
-        { pid: 2, creationTime: 2, type: "Tab", cpuPercent: 1, memoryBytes: 10 },
+        {
+          pid: 1,
+          creationTime: 1,
+          type: "Browser",
+          cpuPercent: 1,
+          memoryBytes: 10,
+        },
+        {
+          pid: 2,
+          creationTime: 2,
+          type: "Tab",
+          cpuPercent: 1,
+          memoryBytes: 10,
+        },
       ],
       [],
     );
@@ -41,7 +72,9 @@ describe("Performance Centre process model", () => {
   });
 
   it("accepts only narrow action shapes and opaque process identities", () => {
-    expect(isPerformanceAction({ type: "end-process", processId: "process:42:100" })).toBe(true);
+    expect(
+      isPerformanceAction({ type: "end-process", processId: "process:42:100" }),
+    ).toBe(true);
     expect(isPerformanceAction({ type: "end-process", pid: 42 })).toBe(false);
     expect(isPerformanceAction({ type: "close-tab", tabId: "a" })).toBe(true);
   });

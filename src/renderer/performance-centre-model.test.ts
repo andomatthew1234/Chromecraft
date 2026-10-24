@@ -55,8 +55,12 @@ describe("Performance Centre view model", () => {
   });
 
   it("searches process and child tab identity", () => {
-    expect(filterPerformanceRows([row("p1", 20, 1)], "CHILD.TEST")).toHaveLength(1);
-    expect(filterPerformanceRows([row("p1", 20, 1)], "missing")).toHaveLength(0);
+    expect(
+      filterPerformanceRows([row("p1", 20, 1)], "CHILD.TEST"),
+    ).toHaveLength(1);
+    expect(filterPerformanceRows([row("p1", 20, 1)], "missing")).toHaveLength(
+      0,
+    );
   });
 
   it("formats process metrics without clamping multicore CPU", () => {

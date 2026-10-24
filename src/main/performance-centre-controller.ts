@@ -43,8 +43,8 @@ export class PerformanceCentreController {
   isTrustedSender(sender: Electron.WebContents): boolean {
     return Boolean(
       this.window &&
-        !this.window.isDestroyed() &&
-        sender === this.window.webContents,
+      !this.window.isDestroyed() &&
+      sender === this.window.webContents,
     );
   }
 
@@ -96,7 +96,10 @@ export class PerformanceCentreController {
       if (!window.isDestroyed()) window.show();
     });
     if (this.options.developmentUrl) {
-      const url = new URL("performance-centre.html", this.options.developmentUrl);
+      const url = new URL(
+        "performance-centre.html",
+        this.options.developmentUrl,
+      );
       await window.loadURL(url.toString());
     } else {
       await window.loadFile(this.options.packagedHtmlPath);
@@ -172,10 +175,14 @@ export class PerformanceCentreController {
       const sample = this.options.metrics.snapshot;
       const process = sample.processes.find(
         (candidate) =>
-          `process:${candidate.pid}:${candidate.creationTime}` === action.processId,
+          `process:${candidate.pid}:${candidate.creationTime}` ===
+          action.processId,
       );
       if (!process || process.type !== "Tab") {
-        return { ok: false, message: "That process has exited or is protected." };
+        return {
+          ok: false,
+          message: "That process has exited or is protected.",
+        };
       }
       const tabCount = manager.performanceTabTasks.filter(
         (tab) => tab.processId === process.pid,
@@ -194,7 +201,10 @@ export class PerformanceCentreController {
           }
         : { ok: false, message: "That process has already exited." };
     } catch {
-      return { ok: false, message: "The selected task is no longer available." };
+      return {
+        ok: false,
+        message: "The selected task is no longer available.",
+      };
     }
   }
 
@@ -206,7 +216,10 @@ export class PerformanceCentreController {
 
   private publish(): void {
     if (!this.window || this.window.isDestroyed()) return;
-    this.window.webContents.send(channels.performanceCentreChanged, this.snapshot());
+    this.window.webContents.send(
+      channels.performanceCentreChanged,
+      this.snapshot(),
+    );
   }
 
   private startTimer(): void {
@@ -247,8 +260,14 @@ export class PerformanceCentreController {
     return {
       width,
       height,
-      x: Math.min(Math.max(workArea.x, candidate.x), workArea.x + workArea.width - width),
-      y: Math.min(Math.max(workArea.y, candidate.y), workArea.y + workArea.height - height),
+      x: Math.min(
+        Math.max(workArea.x, candidate.x),
+        workArea.x + workArea.width - width,
+      ),
+      y: Math.min(
+        Math.max(workArea.y, candidate.y),
+        workArea.y + workArea.height - height,
+      ),
     };
   }
 
