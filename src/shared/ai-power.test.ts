@@ -35,16 +35,22 @@ describe("scoutPowerChoices", () => {
     ]);
   });
 
-  it("offers stable Gemini tiers while excluding unsupported models", () => {
+  it("offers exactly the latest Gemini aliases plus Gemini 4 Argon", () => {
     expect(
       scoutPowerChoices("gemini", [
-        model("gemini-2.5-flash-lite", null, true),
-        model("gemini-2.5-flash"),
-        model("gemini-2.5-pro"),
-        model("gemini-2.5-flash-preview"),
+        model("gemini-flash-lite-latest", null, true),
+        model("gemini-flash-latest"),
+        model("gemini-pro-latest"),
+        model("gemini-4-argon"),
+        model("gemini-3.8-flash"),
         model("text-embedding-004"),
       ]).map((choice) => choice.model),
-    ).toEqual(["gemini-2.5-flash-lite", "gemini-2.5-flash", "gemini-2.5-pro"]);
+    ).toEqual([
+      "gemini-flash-lite-latest",
+      "gemini-flash-latest",
+      "gemini-pro-latest",
+      "gemini-4-argon",
+    ]);
   });
 
   it("keeps an existing selected model representable in a four-step dial", () => {

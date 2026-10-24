@@ -9,7 +9,7 @@ const snapshot: AiToolsSnapshot = {
   organiserProvider: "gemini",
   organiserModels: {
     ollama: "qwen3:1.7b",
-    gemini: "gemini-3.5-flash-lite",
+    gemini: "gemini-flash-lite-latest",
   },
   preferredGroupingMode: "smart",
   eligibleTabCount: 4,
@@ -41,7 +41,7 @@ const snapshot: AiToolsSnapshot = {
   },
   gemini: {
     connection: "connected",
-    selectedModel: "gemini-3.5-flash-lite",
+    selectedModel: "gemini-flash-lite-latest",
     error: null,
     apiKeyConfigured: true,
     secureStorageAvailable: true,
@@ -49,8 +49,8 @@ const snapshot: AiToolsSnapshot = {
     cloudConsentGranted: false,
     models: [
       {
-        name: "gemini-3.5-flash-lite",
-        displayName: "Gemini 3.5 Flash-Lite",
+        name: "gemini-flash-lite-latest",
+        displayName: "Flash-Lite",
         size: null,
         modifiedAt: null,
         family: "Gemini",

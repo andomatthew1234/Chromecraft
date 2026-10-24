@@ -122,15 +122,15 @@ describe("AiAssistantPanel", () => {
             apiKeyConfigured: true,
             models: [
               {
-                name: "gemini-2.5-flash-lite",
-                displayName: "Gemini 2.5 Flash Lite",
+                name: "gemini-flash-lite-latest",
+                displayName: "Flash-Lite",
                 size: null,
                 modifiedAt: null,
                 family: "gemini",
                 parameterSize: null,
               },
             ],
-            selectedModel: "gemini-2.5-flash-lite",
+            selectedModel: "gemini-flash-lite-latest",
           },
         }}
         close={vi.fn()}

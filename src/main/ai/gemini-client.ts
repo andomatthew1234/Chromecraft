@@ -7,13 +7,44 @@ import type {
 const GEMINI_ORIGIN = "https://generativelanguage.googleapis.com";
 const RESPONSE_LIMIT = 1024 ** 2;
 const REQUEST_TIMEOUT_MS = 45_000;
-const PREFERRED_MODELS = [
-  "gemini-3.5-flash-lite",
-  "gemini-3.1-flash-lite",
-  "gemini-2.5-flash-lite",
-] as const;
-const VERIFIED_TEXT_MODEL =
-  /^gemini-(?:2\.(?:0|5)|3(?:\.\d+)?)-(?:flash(?:-lite)?|pro)(?:-\d{3,4})?$/u;
+const SCOUT_GEMINI_MODELS: ReadonlyArray<AiModelSnapshot> = [
+  {
+    name: "gemini-flash-lite-latest",
+    displayName: "Flash-Lite",
+    size: null,
+    modifiedAt: null,
+    family: "Gemini",
+    parameterSize: null,
+    recommended: true,
+  },
+  {
+    name: "gemini-flash-latest",
+    displayName: "Flash",
+    size: null,
+    modifiedAt: null,
+    family: "Gemini",
+    parameterSize: null,
+  },
+  {
+    name: "gemini-pro-latest",
+    displayName: "Pro",
+    size: null,
+    modifiedAt: null,
+    family: "Gemini",
+    parameterSize: null,
+  },
+  {
+    name: "gemini-4-argon",
+    displayName: "Gemini 4 Argon",
+    size: null,
+    modifiedAt: null,
+    family: "Gemini",
+    parameterSize: null,
+  },
+];
+const SCOUT_GEMINI_MODEL_IDS = new Set(
+  SCOUT_GEMINI_MODELS.map((model) => model.name),
+);
 
 type FetchLike = typeof fetch;
 
@@ -76,49 +107,6 @@ async function readJson(response: Response): Promise<Record<string, unknown>> {
   return value as Record<string, unknown>;
 }
 
-function compatibleModel(entry: unknown): AiModelSnapshot | null {
-  if (!entry || typeof entry !== "object") return null;
-  const value = entry as Record<string, unknown>;
-  const rawName = typeof value.name === "string" ? value.name : "";
-  const name = rawName.replace(/^models\//u, "");
-  const methods = Array.isArray(value.supportedGenerationMethods)
-    ? value.supportedGenerationMethods
-    : [];
-  if (
-    !VERIFIED_TEXT_MODEL.test(name) ||
-    !methods.includes("generateContent") ||
-    /(?:preview|experimental|exp|live|tts|audio|image|embedding|transcribe|robotics)/iu.test(
-      name,
-    )
-  ) {
-    return null;
-  }
-  return {
-    name,
-    displayName:
-      typeof value.displayName === "string"
-        ? value.displayName.slice(0, 128)
-        : name,
-    size: null,
-    modifiedAt: null,
-    family: "Gemini",
-    parameterSize: null,
-    recommended: PREFERRED_MODELS.includes(
-      name as (typeof PREFERRED_MODELS)[number],
-    ),
-  };
-}
-
-function rankModel(model: AiModelSnapshot): number {
-  const preferred = PREFERRED_MODELS.indexOf(
-    model.name as (typeof PREFERRED_MODELS)[number],
-  );
-  if (preferred >= 0) return preferred;
-  if (/flash-lite/iu.test(model.name)) return 20;
-  if (/flash/iu.test(model.name)) return 30;
-  return 100;
-}
-
 export class GeminiClient implements StructuredModelProvider {
   constructor(
     private readonly apiKey: string,
@@ -129,7 +117,7 @@ export class GeminiClient implements StructuredModelProvider {
     const scoped = scopedSignal(signal);
     try {
       const response = await this.request(
-        `${GEMINI_ORIGIN}/v1beta/models?pageSize=100`,
+        `${GEMINI_ORIGIN}/v1beta/models?pageSize=1`,
         {
           headers: {
             accept: "application/json",
@@ -139,18 +127,8 @@ export class GeminiClient implements StructuredModelProvider {
           signal: scoped.signal,
         },
       );
-      const value = await readJson(response);
-      const models = Array.isArray(value.models)
-        ? value.models.flatMap((entry) => {
-            const model = compatibleModel(entry);
-            return model ? [model] : [];
-          })
-        : [];
-      const unique = [
-        ...new Map(models.map((model) => [model.name, model])).values(),
-      ];
-      unique.sort((left, right) => rankModel(left) - rankModel(right));
-      return unique;
+      await readJson(response);
+      return SCOUT_GEMINI_MODELS.map((model) => ({ ...model }));
     } catch (error) {
       if (scoped.signal.aborted) {
         if (signal?.aborted) throw new DOMException("Cancelled", "AbortError");
@@ -163,7 +141,7 @@ export class GeminiClient implements StructuredModelProvider {
   }
 
   async chatStructured(request: StructuredGenerationRequest): Promise<unknown> {
-    if (!/^[a-z0-9._:-]{1,128}$/iu.test(request.model)) {
+    if (!SCOUT_GEMINI_MODEL_IDS.has(request.model)) {
       throw new TypeError("Choose a supported Gemini model.");
     }
     const scoped = scopedSignal(request.signal);

@@ -214,7 +214,7 @@ describe("OrganiseTabsPanel", () => {
       id: "done",
       toolId: "organise-tabs",
       provider: "gemini",
-      model: "gemini-flash-lite",
+      model: "gemini-flash-lite-latest",
       createdAt: 1,
       groups: [
         {

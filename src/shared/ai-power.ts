@@ -114,63 +114,54 @@ function localChoices(
   }));
 }
 
-function geminiVersion(model: AiModelSnapshot): number {
-  const values = [...model.name.matchAll(/(\d+(?:\.\d+)?)/gu)].map((match) =>
-    Number(match[1]),
-  );
-  return values.reduce((score, value, index) => score + value / 10 ** index, 0);
-}
-
-function newest(models: AiModelSnapshot[]) {
-  return [...models].sort((left, right) => {
-    const recommended =
-      Number(Boolean(right.recommended)) - Number(Boolean(left.recommended));
-    return recommended || geminiVersion(right) - geminiVersion(left);
-  })[0];
-}
-
 function geminiChoices(
   models: AiModelSnapshot[],
-  selectedModel: string | null,
+  _selectedModel: string | null,
 ): ScoutPowerChoice[] {
-  const compatible = uniqueModels(
-    models.filter(
-      (model) =>
-        /^gemini-/iu.test(model.name) &&
-        !UNSTABLE_GEMINI_MODEL.test(model.name),
-    ),
-  );
-  const selected = [
-    newest(compatible.filter((model) => /flash-lite/iu.test(model.name))),
-    newest(
-      compatible.filter(
+  const available = new Map(
+    models
+      .filter(
         (model) =>
-          /flash/iu.test(model.name) && !/flash-lite/iu.test(model.name),
-      ),
-    ),
-    newest(compatible.filter((model) => /pro/iu.test(model.name))),
-  ].filter((model): model is AiModelSnapshot => Boolean(model));
-  const fallback = [...compatible].sort(
-    (left, right) => geminiVersion(right) - geminiVersion(left),
+          /^gemini-/iu.test(model.name) &&
+          !UNSTABLE_GEMINI_MODEL.test(model.name),
+      )
+      .map((model) => [model.name, model]),
   );
-  const ranked = uniqueModels([...selected, ...fallback]);
-  const representatives = includeSelected(
-    ranked.slice(0, 3),
-    ranked,
-    selectedModel,
-    3,
-  );
-  const labels = categories(representatives.length);
-  return representatives.map((model, index) => ({
-    model: model.name,
-    displayName: model.displayName ?? model.name,
-    category: labels[index] ?? "Balanced",
-    detail: /flash-lite/iu.test(model.name)
-      ? "Lowest cloud usage"
-      : /flash/iu.test(model.name)
-        ? "Fast general-purpose model"
-        : "Potentially higher cloud usage",
-  }));
+  const definitions: Array<
+    Pick<ScoutPowerChoice, "model" | "category" | "detail">
+  > = [
+    {
+      model: "gemini-flash-lite-latest",
+      category: "Fastest",
+      detail: "Always uses the latest Flash-Lite",
+    },
+    {
+      model: "gemini-flash-latest",
+      category: "Balanced",
+      detail: "Always uses the latest Flash",
+    },
+    {
+      model: "gemini-pro-latest",
+      category: "Most capable",
+      detail: "Always uses the latest Pro",
+    },
+    {
+      model: "gemini-4-argon",
+      category: "Most capable",
+      detail: "Google's frontier model · paid tier",
+    },
+  ];
+  return definitions.flatMap((definition) => {
+    const model = available.get(definition.model);
+    return model
+      ? [
+          {
+            ...definition,
+            displayName: model.displayName ?? model.name,
+          },
+        ]
+      : [];
+  });
 }
 
 export function scoutPowerChoices(

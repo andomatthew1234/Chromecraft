@@ -10,7 +10,7 @@ function json(value: unknown, status = 200) {
 }
 
 describe("GeminiClient", () => {
-  it("discovers supported stable text models and ranks Flash-Lite deliberately", async () => {
+  it("returns only Scout's four current Gemini choices after validating the key", async () => {
     const request = vi.fn().mockResolvedValue(
       json({
         models: [
@@ -48,9 +48,11 @@ describe("GeminiClient", () => {
       request as unknown as typeof fetch,
     ).listModels();
 
-    expect(models.map((model) => model.name)).toEqual([
-      "gemini-3.5-flash-lite",
-      "gemini-2.5-flash",
+    expect(models.map((model) => [model.name, model.displayName])).toEqual([
+      ["gemini-flash-lite-latest", "Flash-Lite"],
+      ["gemini-flash-latest", "Flash"],
+      ["gemini-pro-latest", "Pro"],
+      ["gemini-4-argon", "Gemini 4 Argon"],
     ]);
     expect(request.mock.calls[0][0]).not.toContain("secret-key");
     expect(request.mock.calls[0][1].headers["x-goog-api-key"]).toBe(
@@ -98,7 +100,7 @@ describe("GeminiClient", () => {
 
     await expect(
       client.chatStructured({
-        model: "gemini-3.5-flash-lite",
+        model: "gemini-flash-lite-latest",
         system: "System",
         prompt: "Prompt",
         schema,
@@ -108,7 +110,7 @@ describe("GeminiClient", () => {
 
     const body = JSON.parse(request.mock.calls[0][1].body as string);
     expect(request.mock.calls[0][0]).toBe(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent",
     );
     expect(body.generationConfig).toMatchObject({
       responseMimeType: "application/json",
@@ -118,7 +120,7 @@ describe("GeminiClient", () => {
     expect(body.generationConfig).not.toHaveProperty("temperature");
   });
 
-  it("never invents a fallback model that the Gemini API did not list", async () => {
+  it("keeps the latest aliases instead of pinning concrete list results", async () => {
     const request = vi.fn().mockResolvedValue(
       json({
         models: [
@@ -137,7 +139,27 @@ describe("GeminiClient", () => {
     ).listModels();
 
     expect(models.map((model) => model.name)).toEqual([
-      "gemini-2.5-flash-lite",
+      "gemini-flash-lite-latest",
+      "gemini-flash-latest",
+      "gemini-pro-latest",
+      "gemini-4-argon",
     ]);
+  });
+
+  it("rejects Gemini model IDs outside the curated choices", async () => {
+    const client = new GeminiClient(
+      "secret",
+      vi.fn() as unknown as typeof fetch,
+    );
+
+    await expect(
+      client.chatStructured({
+        model: "gemini-2.5-pro",
+        system: "System",
+        prompt: "Prompt",
+        schema: { type: "object" },
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toThrow("supported Gemini model");
   });
 });

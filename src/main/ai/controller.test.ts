@@ -156,7 +156,7 @@ describe("AiToolsController", () => {
         provider: "gemini",
         preferredGroupingMode: "smart",
         ollamaModel: "qwen3:1.7b",
-        geminiModel: "gemini-3.5-flash-lite",
+        geminiModel: "gemini-flash-lite-latest",
         cloudConsentGranted: true,
       }),
     );
@@ -174,12 +174,12 @@ describe("AiToolsController", () => {
       organiserProvider: "gemini",
       organiserModels: {
         ollama: "qwen3:1.7b",
-        gemini: "gemini-3.5-flash-lite",
+        gemini: "gemini-flash-lite-latest",
       },
       preferredGroupingMode: "smart",
       ollama: { selectedModel: "qwen3:1.7b" },
       gemini: {
-        selectedModel: "gemini-3.5-flash-lite",
+        selectedModel: "gemini-flash-lite-latest",
         cloudConsentGranted: true,
       },
     });
