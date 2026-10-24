@@ -505,12 +505,12 @@ input::placeholder {
 }
 
 .brand {
-  /* Sit just above the toolbar seam rather than visually dropping into it. */
+  /* Centre the mark against the tabs while keeping it clear of the toolbar. */
   position: relative;
-  top: -6px;
-  width: 32px;
-  height: 32px;
-  flex: 0 0 32px;
+  top: -4px;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
   border-radius: var(--shape-md);
   transition:
     border-radius var(--motion-standard),
@@ -538,12 +538,12 @@ input::placeholder {
 .brand-menu-anchor {
   position: relative;
   z-index: 20;
-  flex: 0 0 32px;
+  flex: 0 0 30px;
 }
 
 .brand-menu {
   position: absolute;
-  top: 40px;
+  top: 38px;
   left: 0;
   width: min(360px, calc(100vw - 16px));
   max-height: calc(100vh - 52px);
@@ -6911,9 +6911,9 @@ select:focus-visible,
   }
 
   .brand {
-    width: 32px;
-    height: 32px;
-    flex-basis: 32px;
+    width: 30px;
+    height: 30px;
+    flex-basis: 30px;
   }
 
   .tab {
