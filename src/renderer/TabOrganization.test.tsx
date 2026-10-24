@@ -329,7 +329,7 @@ describe("tab organisation renderer", () => {
       /\.brand\s*\{[\s\S]*?position:\s*relative;[\s\S]*?top:\s*-2px;/,
     );
     expect(stylesheet).toMatch(
-      /\.extensions-menu-pin\s*\{[\s\S]*?width:\s*40px;[\s\S]*?height:\s*40px;/,
+      /\.extensions-menu-pin\s*\{[\s\S]*?width:\s*32px;[\s\S]*?height:\s*32px;[\s\S]*?justify-self:\s*end;/,
     );
     expect(stylesheet).toMatch(
       /\.extensions-menu-pin\.pinned\s*\{[\s\S]*?background:\s*var\(--md-primary-container\);[\s\S]*?box-shadow:/,
