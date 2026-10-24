@@ -5180,17 +5180,17 @@ h1 {
 .comparison-table {
   border-collapse: separate;
   border-spacing: 0;
-  min-width: 1100px;
+  min-width: 0;
   table-layout: fixed;
   width: 100%;
 }
 
 .comparison-feature-column {
-  width: 32%;
+  width: 30%;
 }
 
 .comparison-browser-column {
-  width: 17%;
+  width: 17.5%;
 }
 
 .comparison-table th,
@@ -5426,42 +5426,45 @@ h1 {
     width: calc(100% - 40px);
   }
 
-  .comparison-scroll-hint {
-    display: flex;
-  }
-
   .comparison-table-scroll {
     border-radius: 20px;
-    scroll-behavior: smooth;
-  }
-
-  .comparison-table {
-    min-width: 1080px;
+    overflow-x: hidden;
   }
 
   .comparison-feature-column {
-    width: 260px;
+    width: 29%;
   }
 
   .comparison-browser-column {
-    width: 205px;
+    width: 17.75%;
   }
 
-  .comparison-table .comparison-feature-heading,
+  .comparison-table th,
+  .comparison-table td {
+    padding-inline: 12px;
+  }
+
+  .comparison-browser-logo,
+  .comparison-browser-logo img {
+    height: 50px;
+    width: 50px;
+  }
+
+  .comparison-browser-heading > span:not(.comparison-browser-logo) {
+    font-size: 12px;
+  }
+
   .comparison-table tbody th {
-    box-shadow: 9px 0 18px rgba(38, 43, 54, 0.07);
-    left: 0;
-    position: sticky;
-    z-index: 3;
+    font-size: 13px;
   }
 
-  .comparison-table .comparison-feature-heading {
-    background: #fafbfc;
-    z-index: 4;
+  .comparison-table tbody td {
+    font-size: 11px;
   }
 
-  .comparison-table tbody tr:hover th {
-    background: #f0f3f7;
+  .comparison-value {
+    flex-wrap: wrap;
+    gap: 4px;
   }
 }
 
@@ -5484,15 +5487,42 @@ h1 {
 
   .comparison-table th,
   .comparison-table td {
-    padding-inline: 16px;
+    padding: 14px 7px;
   }
 
   .comparison-feature-column {
-    width: 220px;
+    width: 32%;
   }
 
   .comparison-browser-column {
-    width: 190px;
+    width: 17%;
+  }
+
+  .comparison-table thead th {
+    height: 132px;
+  }
+
+  .comparison-browser-logo,
+  .comparison-browser-logo img {
+    height: 38px;
+    width: 38px;
+  }
+
+  .comparison-browser-heading > span:not(.comparison-browser-logo) {
+    font-size: 10px;
+  }
+
+  .comparison-browser-heading small {
+    font-size: 7px;
+  }
+
+  .comparison-table tbody th,
+  .comparison-table tbody td {
+    font-size: 10px;
+  }
+
+  .comparison-value .material-symbols-rounded {
+    font-size: 19px;
   }
 }
 
