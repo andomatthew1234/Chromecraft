@@ -208,6 +208,125 @@
   }
 }
 
+/* Browser-wide colour themes. These override the complete Material 3 tonal
+ * system on the Browser Shell so every token-based surface changes together. */
+.app-shell.color-theme-nether {
+  --md-primary: #855389;
+  --md-on-primary: #fff;
+  --md-primary-container: #f9d7fb;
+  --md-on-primary-container: #2e0935;
+  --md-secondary: #705a6e;
+  --md-on-secondary: #fff;
+  --md-secondary-container: #fbd8f4;
+  --md-on-secondary-container: #2a1729;
+  --md-tertiary: #825f42;
+  --md-on-tertiary: #fff;
+  --md-tertiary-container: #ffddb8;
+  --md-on-tertiary-container: #2d1603;
+  --md-background: #fff7fb;
+  --md-on-background: #201a20;
+  --md-surface: #fff7fb;
+  --md-on-surface: #201a20;
+  --md-surface-variant: #eadfe8;
+  --md-on-surface-variant: #4d444d;
+  --md-surface-container-lowest: #fff;
+  --md-surface-container-low: #fcf1fa;
+  --md-surface-container: #f6ebf4;
+  --md-surface-container-high: #f0e5ee;
+  --md-surface-container-highest: #eadfe8;
+  --md-surface-bright: #fff7fb;
+  --md-surface-dim: #ddd4dc;
+  --md-outline: #7f747e;
+  --md-outline-variant: #d2c4ce;
+  --md-inverse-surface: #352e35;
+  --md-inverse-on-surface: #faeff8;
+  --md-hover: rgb(32 26 32 / 8%);
+  --md-focus: rgb(32 26 32 / 10%);
+  --md-pressed: rgb(32 26 32 / 12%);
+  --md-primary-hover: rgb(133 83 137 / 8%);
+  --md-primary-pressed: rgb(133 83 137 / 12%);
+  --md-disabled-content: rgb(32 26 32 / 38%);
+  --md-disabled-container: rgb(32 26 32 / 12%);
+}
+
+.app-shell.color-theme-end {
+  --md-primary: #46617c;
+  --md-on-primary: #fff;
+  --md-primary-container: #cde5ff;
+  --md-on-primary-container: #001d33;
+  --md-secondary: #52606f;
+  --md-on-secondary: #fff;
+  --md-secondary-container: #d6e4f7;
+  --md-on-secondary-container: #0e1d2b;
+  --md-tertiary: #65617f;
+  --md-on-tertiary: #fff;
+  --md-tertiary-container: #e5deff;
+  --md-on-tertiary-container: #201c38;
+  --md-background: #f7f9fc;
+  --md-on-background: #191c20;
+  --md-surface: #f7f9fc;
+  --md-on-surface: #191c20;
+  --md-surface-variant: #dfe4eb;
+  --md-on-surface-variant: #43474e;
+  --md-surface-container-lowest: #fff;
+  --md-surface-container-low: #f1f4f8;
+  --md-surface-container: #ebeff4;
+  --md-surface-container-high: #e5e9ee;
+  --md-surface-container-highest: #dfe4eb;
+  --md-surface-bright: #f7f9fc;
+  --md-surface-dim: #d8dce1;
+  --md-outline: #73777f;
+  --md-outline-variant: #c3c7cf;
+  --md-inverse-surface: #2e3135;
+  --md-inverse-on-surface: #eff1f5;
+  --md-hover: rgb(25 28 32 / 8%);
+  --md-focus: rgb(25 28 32 / 10%);
+  --md-pressed: rgb(25 28 32 / 12%);
+  --md-primary-hover: rgb(70 97 124 / 8%);
+  --md-primary-pressed: rgb(70 97 124 / 12%);
+  --md-disabled-content: rgb(25 28 32 / 38%);
+  --md-disabled-container: rgb(25 28 32 / 12%);
+}
+
+.app-shell.color-theme-minimal {
+  --md-primary: #50555d;
+  --md-on-primary: #fff;
+  --md-primary-container: #dce2ea;
+  --md-on-primary-container: #0d141c;
+  --md-secondary: #5b5f66;
+  --md-on-secondary: #fff;
+  --md-secondary-container: #dfe3e9;
+  --md-on-secondary-container: #181c22;
+  --md-tertiary: #65616b;
+  --md-on-tertiary: #fff;
+  --md-tertiary-container: #e7e0e9;
+  --md-on-tertiary-container: #211d25;
+  --md-background: #faf9fa;
+  --md-on-background: #1b1b1c;
+  --md-surface: #faf9fa;
+  --md-on-surface: #1b1b1c;
+  --md-surface-variant: #e3e2e4;
+  --md-on-surface-variant: #47474c;
+  --md-surface-container-lowest: #fff;
+  --md-surface-container-low: #f4f3f5;
+  --md-surface-container: #eeedef;
+  --md-surface-container-high: #e8e7e9;
+  --md-surface-container-highest: #e3e2e4;
+  --md-surface-bright: #faf9fa;
+  --md-surface-dim: #dcdbdd;
+  --md-outline: #77777d;
+  --md-outline-variant: #c7c6cc;
+  --md-inverse-surface: #303033;
+  --md-inverse-on-surface: #f2f0f2;
+  --md-hover: rgb(27 27 28 / 8%);
+  --md-focus: rgb(27 27 28 / 10%);
+  --md-pressed: rgb(27 27 28 / 12%);
+  --md-primary-hover: rgb(80 85 93 / 8%);
+  --md-primary-pressed: rgb(80 85 93 / 12%);
+  --md-disabled-content: rgb(27 27 28 / 38%);
+  --md-disabled-container: rgb(27 27 28 / 12%);
+}
+
 * {
   box-sizing: border-box;
 }
@@ -4943,21 +5062,6 @@ input::placeholder {
 
 .sidebar-detached .new-tab-surface {
   left: 0;
-}
-
-.new-tab-surface.theme-nether {
-  --ntp-accent-container: var(--md-tertiary-container);
-  --ntp-on-accent-container: var(--md-on-tertiary-container);
-}
-
-.new-tab-surface.theme-end {
-  --ntp-accent-container: var(--md-secondary-container);
-  --ntp-on-accent-container: var(--md-on-secondary-container);
-}
-
-.new-tab-surface.theme-minimal {
-  --ntp-accent-container: var(--md-surface-highest);
-  --ntp-on-accent-container: var(--md-on-surface);
 }
 
 .new-tab-offline-pages {

@@ -738,17 +738,45 @@ try {
   await selectCategory(app.cdp, "appearance");
   const originalTheme = await app.cdp.evaluate(preference("newTabTheme"));
   const nextTheme = originalTheme === "minimal" ? "overworld" : "minimal";
+  await app.cdp.evaluate(
+    "document.querySelector('#setting-new-tab-theme .material-select-trigger')?.click()",
+  );
+  await poll(
+    () =>
+      app.cdp.evaluate(
+        "Boolean(document.querySelector('#setting-new-tab-theme [role=\"option\"]'))",
+      ),
+    Boolean,
+    "the Material theme menu to open",
+  );
   await app.cdp.evaluate(`(() => {
-    const select = document.querySelector('#setting-new-tab-theme select');
-    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')?.set;
-    setter?.call(select, '${nextTheme}');
-    select?.dispatchEvent(new Event('change', { bubbles: true }));
+    [...document.querySelectorAll('#setting-new-tab-theme [role="option"]')]
+      .find((option) => option.textContent?.trim() === '${nextTheme === "minimal" ? "Minimal" : "Chromecraft blue"}')
+      ?.click();
   })()`);
   await poll(
     () => app.cdp.evaluate(preference("newTabTheme")),
     (value) => value === nextTheme,
     "the new tab theme to update",
   );
+  const themeAppliedEverywhere = await app.cdp.evaluate(`(() => {
+    const shell = document.querySelector('.app-shell');
+    const brand = document.querySelector('.brand');
+    const chrome = document.querySelector('.browser-chrome');
+    const styles = shell ? getComputedStyle(shell) : null;
+    return Boolean(
+      shell?.classList.contains('color-theme-${nextTheme}') &&
+      styles?.getPropertyValue('--md-primary').trim() &&
+      styles?.getPropertyValue('--md-surface-container').trim() &&
+      brand && getComputedStyle(brand).backgroundColor !== 'rgba(0, 0, 0, 0)' &&
+      chrome && getComputedStyle(chrome).backgroundColor !== 'rgba(0, 0, 0, 0)',
+    );
+  })()`);
+  if (!themeAppliedEverywhere) {
+    throw new Error(
+      "The selected colour theme was not applied to the Browser Shell.",
+    );
+  }
   controlChecks.theme = { before: originalTheme, after: nextTheme };
 
   await selectCategory(app.cdp, "hyperdrive");

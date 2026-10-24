@@ -86,6 +86,7 @@ import {
   isHyperdriveEnabled,
   tabHoverCardContent,
 } from "./toolbar-model";
+import { browserThemeClass } from "./theme";
 
 const emptyData: BrowserDataSnapshot = {
   bookmarks: [],
@@ -7068,7 +7069,7 @@ export function App() {
   };
   return (
     <div
-      className={`app-shell ${!snapshot.preferences.sidebarAttached ? "sidebar-detached" : tool ? "sidebar-panel-open" : "sidebar-rail-only"} ${snapshot.preferences.hyperdriveMonitorOpen ? "hyperdrive-monitor-open" : ""}`}
+      className={`app-shell ${browserThemeClass(snapshot.preferences.newTabTheme)} ${!snapshot.preferences.sidebarAttached ? "sidebar-detached" : tool ? "sidebar-panel-open" : "sidebar-rail-only"} ${snapshot.preferences.hyperdriveMonitorOpen ? "hyperdrive-monitor-open" : ""}`}
       style={
         {
           "--base-chrome-height": `${snapshot.baseChromeHeight}px`,
