@@ -13,7 +13,21 @@ export type AssistantAttachmentKind =
   | "description"
   | "selected-text"
   | "screenshot"
-  | "element";
+  | "element"
+  | "full-reader-article";
+
+export interface AssistantReaderArticleContext {
+  tabId: string;
+  revision: number;
+  url: string;
+  title: string;
+  siteName: string | null;
+  byline: string | null;
+  publishedTime: string | null;
+  headings: string[];
+  text: string;
+  complete: boolean;
+}
 
 export interface AssistantPageContext {
   tabId: string;
@@ -50,6 +64,7 @@ export interface AssistantAttachment {
     selectedText?: string;
     screenshotDataUrl?: string;
     element?: AssistantElementContext;
+    readerArticle?: AssistantReaderArticleContext;
   };
 }
 
@@ -81,6 +96,7 @@ export const DEFAULT_ASSISTANT_CONTEXT: AssistantContextPreferences = {
   "selected-text": false,
   screenshot: false,
   element: false,
+  "full-reader-article": false,
 };
 
 /**

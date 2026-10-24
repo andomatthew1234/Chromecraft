@@ -65,6 +65,7 @@ import type {
 } from "../shared/ai-assistant";
 import { isAllowedWebUrl } from "../shared/navigation";
 import { BrowserDataStore } from "./browser-data";
+import { ReadingPositionStore } from "./reading-position-store";
 import {
   ChromeWebStoreExtensionService,
   type ExtensionInstallProgress,
@@ -967,6 +968,7 @@ function requireAssistantAttachment(value: unknown): AssistantAttachment {
     "selected-text",
     "screenshot",
     "element",
+    "full-reader-article",
   ] as const;
   if (!kinds.includes(attachment.kind as (typeof kinds)[number])) {
     throw new TypeError("Scout context has an unknown kind.");
@@ -1012,6 +1014,56 @@ function requireAssistantAttachment(value: unknown): AssistantAttachment {
   ) {
     throw new TypeError("The Scout screenshot is invalid.");
   }
+  let readerArticle: AssistantAttachment["data"]["readerArticle"];
+  if (rawData.readerArticle !== undefined) {
+    if (
+      !rawData.readerArticle ||
+      typeof rawData.readerArticle !== "object" ||
+      Array.isArray(rawData.readerArticle)
+    ) {
+      throw new TypeError("The Reader article context is invalid.");
+    }
+    const source = rawData.readerArticle as Record<string, unknown>;
+    const url = requireString(source.url, "article URL", 2_048);
+    if (!isAllowedWebUrl(url))
+      throw new TypeError("The article URL is invalid.");
+    if (!Array.isArray(source.headings) || source.headings.length > 100) {
+      throw new TypeError("The article heading list is invalid.");
+    }
+    readerArticle = {
+      tabId: requireString(source.tabId, "article tab id", 128),
+      revision: Number.isSafeInteger(source.revision)
+        ? (source.revision as number)
+        : (() => {
+            throw new TypeError("The article revision is invalid.");
+          })(),
+      url,
+      title: requireString(source.title, "article title", 1_000),
+      siteName:
+        optionalAssistantText(source.siteName, "article website", 300) ?? null,
+      byline:
+        optionalAssistantText(source.byline, "article author", 500) ?? null,
+      publishedTime:
+        optionalAssistantText(
+          source.publishedTime,
+          "article publication date",
+          200,
+        ) ?? null,
+      headings: source.headings.map((heading) =>
+        requireString(heading, "article heading", 500),
+      ),
+      text: requireString(source.text, "article text", 1_000_000),
+      complete: source.complete !== false,
+    };
+  }
+  if (attachment.kind === "full-reader-article" && !readerArticle) {
+    throw new TypeError("Full Reader article context is missing its article.");
+  }
+  if (attachment.kind !== "full-reader-article" && readerArticle) {
+    throw new TypeError(
+      "Reader article context has an invalid attachment kind.",
+    );
+  }
   return {
     id: requireString(attachment.id, "context id", 128),
     kind: attachment.kind as AssistantAttachment["kind"],
@@ -1038,6 +1090,7 @@ function requireAssistantAttachment(value: unknown): AssistantAttachment {
       ),
       screenshotDataUrl,
       element,
+      readerArticle,
     },
   };
 }
@@ -1448,6 +1501,80 @@ function registerIpc(): void {
         appearance,
       ),
   );
+  ipcMain.handle(channels.toggleSavedArticle, (event, tabId: unknown) =>
+    requireManager(event).toggleSavedArticle(
+      requireString(tabId, "tabId", 128),
+    ),
+  );
+  ipcMain.handle(channels.removeSavedArticle, (event, id: unknown) =>
+    requireManager(event).removeSavedArticle(requireString(id, "id", 128)),
+  );
+  ipcMain.handle(
+    channels.setSmartReaderProgressVisible,
+    (event, tabId: unknown, visible: unknown) =>
+      requireManager(event).setSmartReaderProgressVisible(
+        requireString(tabId, "tabId", 128),
+        requireBoolean(visible, "visible"),
+      ),
+  );
+  ipcMain.handle(
+    channels.runSmartReaderCommand,
+    (event, tabId: unknown, command: unknown) =>
+      requireManager(event).runSmartReaderCommand(
+        requireString(tabId, "tabId", 128),
+        command,
+      ),
+  );
+  ipcMain.handle(
+    channels.getSmartReaderArticleAttachment,
+    (event, tabId: unknown) =>
+      requireManager(event).getSmartReaderArticleAttachment(
+        requireString(tabId, "tabId", 128),
+      ),
+  );
+  ipcMain.on(channels.smartReaderProgressChanged, (event, value: unknown) => {
+    try {
+      tabManager?.handleSmartReaderProgress(event.sender, value);
+    } catch (error) {
+      console.warn("Rejected Smart Reader progress update.", error);
+    }
+  });
+  ipcMain.on(channels.smartReaderPanelClosed, (event, value: unknown) => {
+    try {
+      tabManager?.handleSmartReaderPanelClosed(event.sender, value);
+    } catch (error) {
+      console.warn("Rejected Smart Reader panel update.", error);
+    }
+  });
+  ipcMain.handle(channels.getSmartReaderNarrationCapabilities, (event) => {
+    if (!tabManager) throw new Error("The browser window is unavailable.");
+    return tabManager.getSmartReaderNarrationCapabilities(event.sender);
+  });
+  ipcMain.handle(
+    channels.startSmartReaderGeminiNarration,
+    (event, request: unknown) => {
+      if (!tabManager) throw new Error("The browser window is unavailable.");
+      return tabManager.startSmartReaderGeminiNarration(event.sender, request);
+    },
+  );
+  ipcMain.handle(
+    channels.getSmartReaderGeminiSegment,
+    (event, sessionId: unknown, index: unknown) => {
+      if (!tabManager) throw new Error("The browser window is unavailable.");
+      return tabManager.getSmartReaderGeminiSegment(
+        event.sender,
+        sessionId,
+        index,
+      );
+    },
+  );
+  ipcMain.handle(
+    channels.cancelSmartReaderGeminiNarration,
+    (event, sessionId: unknown) => {
+      if (!tabManager) throw new Error("The browser window is unavailable.");
+      tabManager.cancelSmartReaderGeminiNarration(event.sender, sessionId);
+    },
+  );
   ipcMain.handle(channels.getSmartReaderSummary, (event) => {
     if (!tabManager) throw new Error("The browser window is unavailable.");
     return tabManager.getSmartReaderSummary(event.sender);
@@ -1464,6 +1591,13 @@ function registerIpc(): void {
     (event, request: unknown) => {
       if (!tabManager) throw new Error("The browser window is unavailable.");
       return tabManager.setSmartReaderSummaryPreference(event.sender, request);
+    },
+  );
+  ipcMain.handle(
+    channels.setSmartReaderSummaryConsent,
+    (event, granted: unknown) => {
+      if (!tabManager) throw new Error("The browser window is unavailable.");
+      return tabManager.setSmartReaderSummaryConsent(event.sender, granted);
     },
   );
   ipcMain.handle(
@@ -1484,6 +1618,13 @@ function registerIpc(): void {
   ipcMain.handle(channels.copySmartReaderSummary, async (event) => {
     if (!tabManager) throw new Error("The browser window is unavailable.");
     await tabManager.copySmartReaderSummary(event.sender);
+  });
+  ipcMain.handle(channels.openSmartReaderSummarySettings, (event) => {
+    if (!tabManager) throw new Error("The browser window is unavailable.");
+    tabManager.getSmartReaderSummary(event.sender);
+    if (shellView && !shellView.webContents.isDestroyed()) {
+      shellView.webContents.send(channels.showScoutSettings);
+    }
   });
   ipcMain.handle(channels.duplicateTab, async (event, tabId: unknown) =>
     requireManager(event).duplicateTab(requireString(tabId, "tabId", 128)),
@@ -2790,6 +2931,10 @@ async function createMainWindow(): Promise<void> {
   );
   await data.load();
   browserData = data;
+  const readingPositions = new ReadingPositionStore(
+    path.join(app.getPath("userData"), "smart-reader-positions.json"),
+  );
+  await readingPositions.load();
   const ublock = new UblockService(browserSession, preferences);
   const suggestions = new SearchSuggestionService(
     preferences,
@@ -3120,6 +3265,7 @@ async function createMainWindow(): Promise<void> {
     extensionService,
     preferences,
     data,
+    readingPositions,
     hyperdrive,
     smartReaderDocuments,
     sendBrowserData,
@@ -3164,6 +3310,10 @@ async function createMainWindow(): Promise<void> {
           model,
         );
       },
+      setConsent: async (granted) => {
+        if (!aiToolsController) throw new Error("Scout is unavailable.");
+        await aiToolsController.setSmartReaderSummaryConsent(granted);
+      },
       generate: (requestId, article, request) => {
         if (!aiToolsController) throw new Error("Scout is unavailable.");
         return aiToolsController.summarizeSmartReaderArticle(
@@ -3176,6 +3326,22 @@ async function createMainWindow(): Promise<void> {
       },
       cancel: (requestId) =>
         aiToolsController?.cancelSmartReaderSummary(requestId),
+    },
+    {
+      capabilities: () => {
+        if (!aiToolsController) throw new Error("Scout is unavailable.");
+        return aiToolsController.getSmartReaderNarrationCapabilities();
+      },
+      synthesize: (requestId, text, voice) => {
+        if (!aiToolsController) throw new Error("Scout is unavailable.");
+        return aiToolsController.synthesizeSmartReaderSpeech(
+          requestId,
+          text,
+          voice,
+        );
+      },
+      cancel: (requestId) =>
+        aiToolsController?.cancelSmartReaderSpeech(requestId),
     },
   );
   tabManager = manager;

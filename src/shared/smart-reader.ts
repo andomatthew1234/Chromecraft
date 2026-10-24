@@ -8,6 +8,15 @@ export interface SmartReaderTabSnapshot {
   availability: SmartReaderAvailability;
   active: boolean;
   revision: number;
+  saved?: boolean;
+  navigationOpen?: boolean;
+  narrationOpen?: boolean;
+}
+
+export interface SmartReaderSection {
+  id: string;
+  text: string;
+  level: 1 | 2 | 3 | 4;
 }
 
 export interface SmartReaderArticle {
@@ -18,9 +27,51 @@ export interface SmartReaderArticle {
   excerpt: string | null;
   content: string;
   textContent: string;
+  textContentTruncated?: boolean;
   headings: string[];
+  sections?: SmartReaderSection[];
   textLength: number;
   sourceUrl: string;
+}
+
+export type SmartReaderCommand =
+  | {
+      type: "set-progress-visible";
+      visible: boolean;
+      resumeProgress: number | null;
+    }
+  | { type: "toggle-navigation" }
+  | { type: "toggle-narration" }
+  | { type: "pause-narration" }
+  | { type: "stop-narration" };
+
+export interface SmartReaderNarrationCapabilities {
+  gemini: {
+    available: boolean;
+    model: string;
+    voices: string[];
+    reason: string | null;
+  };
+  local: {
+    available: false;
+    reason: string;
+    setupHint: string;
+  };
+}
+
+export interface SmartReaderGeminiSession {
+  id: string;
+  segmentCount: number;
+  model: string;
+  voice: string;
+}
+
+export interface SmartReaderGeminiSegment {
+  sessionId: string;
+  index: number;
+  segmentCount: number;
+  mimeType: string;
+  audioBase64: string;
 }
 
 export type SmartReaderSummaryStage = "idle" | "loading" | "ready" | "error";
@@ -67,7 +118,7 @@ export interface SmartReaderSummarySnapshot {
 
 export interface SmartReaderSummaryGenerateRequest {
   provider: "ollama" | "gemini";
-  model: string;
+  model: string | null;
   cloudConsent: boolean;
 }
 

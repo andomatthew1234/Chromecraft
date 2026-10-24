@@ -31,6 +31,7 @@ function makePreferences(
     showDownloadProgressInToolbar: true,
     showDownloadCompletionNotification: true,
     addVideosToGallery: true,
+    smartReaderProgressVisible: false,
     ...patch,
   };
   return {

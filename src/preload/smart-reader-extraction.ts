@@ -2,6 +2,7 @@ import createDOMPurify from "dompurify";
 import { Readability, isProbablyReaderable } from "@mozilla/readability";
 
 import type { SmartReaderArticle } from "../shared/smart-reader";
+import type { SmartReaderSection } from "../shared/smart-reader";
 
 const MAX_CONTENT_LENGTH = 5 * 1024 * 1024;
 const ALLOWED_TAGS = [
@@ -223,6 +224,40 @@ function sanitizeArticle(
   return wrapper.innerHTML.slice(0, MAX_CONTENT_LENGTH);
 }
 
+function assignHeadingAnchors(container: HTMLElement): SmartReaderSection[] {
+  const used = new Set<string>();
+  const sections: SmartReaderSection[] = [];
+  for (const heading of container.querySelectorAll<HTMLHeadingElement>(
+    "h1, h2, h3, h4",
+  )) {
+    const text = cleanText(heading.textContent, 500);
+    if (!text) continue;
+    const existing = heading.id.trim();
+    const base =
+      (existing && !used.has(existing)
+        ? existing
+        : text
+            .normalize("NFKD")
+            .toLowerCase()
+            .replace(/[^\p{Letter}\p{Number}]+/gu, "-")
+            .replace(/^-+|-+$/gu, "")
+            .slice(0, 72)) || "section";
+    let id = existing && !used.has(existing) ? existing : `reader-${base}`;
+    let suffix = 2;
+    while (used.has(id)) id = `reader-${base}-${suffix++}`;
+    used.add(id);
+    heading.id = id;
+    const level = Math.min(4, Math.max(1, Number(heading.tagName.slice(1)))) as
+      | 1
+      | 2
+      | 3
+      | 4;
+    sections.push({ id, text, level });
+    if (sections.length >= 100) break;
+  }
+  return sections;
+}
+
 export function extractSmartReaderArticleFromDocument(
   sourceDocument: Document,
   sourceUrl: string,
@@ -248,7 +283,7 @@ export function extractSmartReaderArticleFromDocument(
   const textLength = parsed?.textContent?.trim().length ?? 0;
   if (!parsed?.content || !title || textLength < (force ? 80 : 260))
     return null;
-  const content = sanitizeArticle(parsed.content, sourceUrl, sourceDocument);
+  let content = sanitizeArticle(parsed.content, sourceUrl, sourceDocument);
   if (!content) return null;
   const qualityProbe = sourceDocument.createElement("div");
   qualityProbe.innerHTML = content;
@@ -263,7 +298,12 @@ export function extractSmartReaderArticleFromDocument(
   ) {
     return null;
   }
+  const sections = assignHeadingAnchors(qualityProbe);
+  content = qualityProbe.innerHTML.slice(0, MAX_CONTENT_LENGTH);
 
+  const normalizedText = (qualityProbe.textContent ?? "")
+    .replace(/\s+/gu, " ")
+    .trim();
   return {
     title,
     byline: cleanText(parsed.byline, 500),
@@ -271,14 +311,13 @@ export function extractSmartReaderArticleFromDocument(
     siteName: cleanText(parsed.siteName, 300),
     excerpt: cleanText(parsed.excerpt, 1_000),
     content,
-    textContent: (qualityProbe.textContent ?? "")
-      .replace(/\s+/gu, " ")
-      .trim()
-      .slice(0, 1_000_000),
+    textContent: normalizedText.slice(0, 1_000_000),
+    textContentTruncated: normalizedText.length > 1_000_000,
     headings: [...qualityProbe.querySelectorAll("h1, h2, h3, h4, h5, h6")]
       .map((heading) => cleanText(heading.textContent, 500))
       .filter((heading): heading is string => Boolean(heading))
       .slice(0, 100),
+    sections,
     textLength,
     sourceUrl,
   };

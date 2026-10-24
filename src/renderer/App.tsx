@@ -55,6 +55,7 @@ import type {
   OrganiseTabsProposal,
   OrganiseTabsRequest,
 } from "../shared/ai-tools";
+import type { AssistantAttachment } from "../shared/ai-assistant";
 import {
   ExtensionInstallBanner,
   type ExtensionInstallBannerState,
@@ -97,6 +98,7 @@ import { browserThemeClass } from "./theme";
 
 const emptyData: BrowserDataSnapshot = {
   bookmarks: [],
+  savedArticles: [],
   history: [],
   recentlyClosed: [],
   quickLinks: [],
@@ -3038,6 +3040,7 @@ function Toolbar({
   onToggleSplitControls,
   onSplitCommand,
   onReaderPopoverOpenChange,
+  onAskScout,
 }: {
   tab: BrowserTabSnapshot;
   snapshot: BrowserSnapshot;
@@ -3071,6 +3074,7 @@ function Toolbar({
       | "close-right",
   ) => void;
   onReaderPopoverOpenChange: (open: boolean) => void;
+  onAskScout: () => void;
 }) {
   const canBookmark = /^https?:\/\//.test(tab.url);
   const actionExtensions = extensions.items.filter(
@@ -3186,6 +3190,8 @@ function Toolbar({
       />
       <SmartReaderControls
         tab={tab}
+        progressVisible={snapshot.preferences.smartReaderProgressVisible}
+        onAskScout={onAskScout}
         onPopoverOpenChange={onReaderPopoverOpenChange}
       />
       <div className="toolbar-actions">
@@ -6236,6 +6242,8 @@ function Sidebar({
   aiTools,
   openOrganiseTabs,
   openScoutSettings,
+  readerAttachment,
+  onReaderAttachmentConsumed,
 }: {
   snapshot: BrowserSnapshot;
   data: BrowserDataSnapshot;
@@ -6252,8 +6260,14 @@ function Sidebar({
   aiTools: AiToolsSnapshot;
   openOrganiseTabs: () => void;
   openScoutSettings: () => void;
+  readerAttachment: AssistantAttachment | null;
+  onReaderAttachmentConsumed: () => void;
 }) {
   const [query, setQuery] = useState("");
+  const [bookmarkView, setBookmarkView] = useState<"bookmarks" | "saved">(
+    "bookmarks",
+  );
+  const [savedSort, setSavedSort] = useState<"recent" | "title">("recent");
   const [downloadJustCompleted, setDownloadJustCompleted] = useState(false);
   const priorDownloadStates = useRef<Map<
     string,
@@ -6277,6 +6291,17 @@ function Sidebar({
   const bookmarks = data.bookmarks.filter((item) =>
     `${item.title} ${item.url} ${item.folder}`.toLowerCase().includes(needle),
   );
+  const savedArticles = (data.savedArticles ?? [])
+    .filter((item) =>
+      `${item.title} ${item.siteName} ${item.description ?? ""} ${item.originalUrl}`
+        .toLowerCase()
+        .includes(needle),
+    )
+    .sort((left, right) =>
+      savedSort === "title"
+        ? left.title.localeCompare(right.title)
+        : right.savedAt - left.savedAt,
+    );
   const history = data.history.filter((item) =>
     `${item.title} ${item.url}`.toLowerCase().includes(needle),
   );
@@ -6461,6 +6486,8 @@ function Sidebar({
               }}
               onOrganiseTabs={openOrganiseTabs}
               onOpenSettings={openScoutSettings}
+              initialAttachment={readerAttachment}
+              onInitialAttachmentConsumed={onReaderAttachmentConsumed}
             />
           )}
           {(tool === "bookmarks" || tool === "history") && (
@@ -6471,56 +6498,156 @@ function Sidebar({
                 type="search"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder={`Search ${tool}`}
-                aria-label={`Search ${tool}`}
+                placeholder={`Search ${tool === "bookmarks" && bookmarkView === "saved" ? "saved articles" : tool}`}
+                aria-label={`Search ${tool === "bookmarks" && bookmarkView === "saved" ? "saved articles" : tool}`}
               />
             </label>
           )}
           {tool === "bookmarks" && (
             <>
-              <div className="panel-actions">
+              <div
+                className="bookmark-library-tabs"
+                role="tablist"
+                aria-label="Bookmark library"
+              >
                 <button
-                  onClick={() => void window.chromecraft.importBookmarks()}
+                  type="button"
+                  role="tab"
+                  aria-selected={bookmarkView === "bookmarks"}
+                  onClick={() => setBookmarkView("bookmarks")}
                 >
-                  Import
+                  Bookmarks
                 </button>
                 <button
-                  onClick={() => void window.chromecraft.exportBookmarks()}
+                  type="button"
+                  role="tab"
+                  aria-selected={bookmarkView === "saved"}
+                  onClick={() => setBookmarkView("saved")}
                 >
-                  Export
+                  Saved articles
                 </button>
               </div>
-              <div className="panel-list" role="list">
-                {bookmarks.map((item) => (
-                  <article className="list-item" key={item.id} role="listitem">
+              {bookmarkView === "bookmarks" ? (
+                <>
+                  <div className="panel-actions">
                     <button
-                      className="entry-main"
-                      onClick={() => navigate(item.url)}
+                      onClick={() => void window.chromecraft.importBookmarks()}
                     >
-                      <strong>{item.title}</strong>
-                      <small className="entry-supporting-text">
-                        {item.folder || hostLabel(item.url)}
-                      </small>
+                      Import
                     </button>
                     <button
-                      className="entry-remove"
-                      onClick={() =>
-                        void window.chromecraft.removeBookmark(item.id)
-                      }
-                      aria-label="Remove bookmark"
+                      onClick={() => void window.chromecraft.exportBookmarks()}
                     >
-                      <Icon name="close" />
+                      Export
                     </button>
-                  </article>
-                ))}
-                {bookmarks.length === 0 && (
-                  <EmptyState
-                    icon="bookmark"
-                    title="No bookmarks yet"
-                    description="Save a page to keep it within easy reach."
-                  />
-                )}
-              </div>
+                  </div>
+                  <div className="panel-list" role="list">
+                    {bookmarks.map((item) => (
+                      <article
+                        className="list-item"
+                        key={item.id}
+                        role="listitem"
+                      >
+                        <button
+                          className="entry-main"
+                          onClick={() => navigate(item.url)}
+                        >
+                          <strong>{item.title}</strong>
+                          <small className="entry-supporting-text">
+                            {item.folder || hostLabel(item.url)}
+                          </small>
+                        </button>
+                        <button
+                          className="entry-remove"
+                          onClick={() =>
+                            void window.chromecraft.removeBookmark(item.id)
+                          }
+                          aria-label="Remove bookmark"
+                        >
+                          <Icon name="close" />
+                        </button>
+                      </article>
+                    ))}
+                    {bookmarks.length === 0 && (
+                      <EmptyState
+                        icon="bookmark"
+                        title="No bookmarks yet"
+                        description="Save a page to keep it within easy reach."
+                      />
+                    )}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="saved-article-sort">
+                    <label>
+                      Sort
+                      <select
+                        value={savedSort}
+                        onChange={(event) =>
+                          setSavedSort(event.target.value as "recent" | "title")
+                        }
+                      >
+                        <option value="recent">Recently saved</option>
+                        <option value="title">Title</option>
+                      </select>
+                    </label>
+                  </div>
+                  <div className="panel-list saved-article-list" role="list">
+                    {savedArticles.map((item) => (
+                      <article
+                        className="list-item saved-article-entry"
+                        key={item.id}
+                        role="listitem"
+                      >
+                        <button
+                          className="entry-main"
+                          onClick={() => navigate(item.originalUrl)}
+                          title={item.originalUrl}
+                        >
+                          <span className="saved-article-heading">
+                            {item.faviconDataUrl ? (
+                              <img src={item.faviconDataUrl} alt="" />
+                            ) : (
+                              <span className="saved-article-fallback">
+                                <Icon name="reader" />
+                              </span>
+                            )}
+                            <span>
+                              <strong>{item.title}</strong>
+                              <small>{item.siteName}</small>
+                            </span>
+                          </span>
+                          {item.description && (
+                            <span className="saved-article-description">
+                              {item.description}
+                            </span>
+                          )}
+                          <small className="saved-article-date">
+                            Saved {new Date(item.savedAt).toLocaleDateString()}
+                          </small>
+                        </button>
+                        <button
+                          className="entry-remove"
+                          onClick={() =>
+                            void window.chromecraft.removeSavedArticle(item.id)
+                          }
+                          aria-label={`Remove ${item.title} from saved articles`}
+                        >
+                          <Icon name="close" />
+                        </button>
+                      </article>
+                    ))}
+                    {savedArticles.length === 0 && (
+                      <EmptyState
+                        icon="bookmark"
+                        title="No saved articles yet"
+                        description="Find something interesting? Save it here to read later."
+                      />
+                    )}
+                  </div>
+                </>
+              )}
             </>
           )}
           {tool === "history" && (
@@ -8127,6 +8254,8 @@ export function App() {
   const [splitControlsOpen, setSplitControlsOpen] = useState(false);
   const [splitError, setSplitError] = useState<string | null>(null);
   const [readerTryError, setReaderTryError] = useState<string | null>(null);
+  const [readerScoutAttachment, setReaderScoutAttachment] =
+    useState<AssistantAttachment | null>(null);
   useEffect(() => {
     const openScout = () => {
       setTool("assistant");
@@ -8205,6 +8334,25 @@ export function App() {
       window.chromecraft.onSmartDownloads(setSmartDownloads),
       window.chromecraft.onWebsiteControls(setWebsiteControls),
       window.chromecraft.onAiTools(setAiTools),
+      window.chromecraft.onShowScoutSettings(() => {
+        void (async () => {
+          const currentSettingsId = latestFullSettingsTabId.current;
+          const existingTab = currentSettingsId
+            ? latestSnapshot.current?.tabs.find(
+                (tab) => tab.id === currentSettingsId,
+              )
+            : null;
+          if (existingTab) await window.chromecraft.activateTab(existingTab.id);
+          else {
+            const created = await window.chromecraft.createTab();
+            latestFullSettingsTabId.current = created;
+            setFullSettingsTabId(created);
+          }
+          setOpenAiSettingsRequest((value) => value + 1);
+          setTool(null);
+          await window.chromecraft.setSidebarOpen(false);
+        })();
+      }),
       window.chromecraft.onShowSmartDownloadsSettings(() => {
         void (async () => {
           const currentSettingsId = latestFullSettingsTabId.current;
@@ -8394,6 +8542,18 @@ export function App() {
       </main>
     );
   const bookmarked = data.bookmarks.some((item) => item.url === activeTab.url);
+  const askScoutAboutReader = async () => {
+    setTool("assistant");
+    await window.chromecraft.setSidebarAttached(true);
+    await window.chromecraft.setSidebarOpen(true);
+    try {
+      const attachment =
+        await window.chromecraft.getSmartReaderArticleAttachment(activeTab.id);
+      setReaderScoutAttachment(attachment);
+    } catch {
+      setReaderTryError("Scout could not attach this Reader article.");
+    }
+  };
   const closeFind = () => {
     setFindOpen(false);
     void window.chromecraft.stopFindInPage(activeTab.id);
@@ -8728,6 +8888,7 @@ export function App() {
           onManageSiteSettings={openWebsitePermissions}
           onOmniboxExpandedChange={setOmniboxExpanded}
           onReaderPopoverOpenChange={setReaderPopoverOpen}
+          onAskScout={() => void askScoutAboutReader()}
           splitPair={activeSplitPair}
           splitControlsOpen={splitControlsOpen}
           onToggleSplitControls={() => {
@@ -8916,6 +9077,8 @@ export function App() {
         aiTools={aiTools}
         openOrganiseTabs={openOrganiseTabs}
         openScoutSettings={openAiSettings}
+        readerAttachment={readerScoutAttachment}
+        onReaderAttachmentConsumed={() => setReaderScoutAttachment(null)}
         requestClearHistory={(range) => {
           if (range === "all") {
             setDialog({ kind: "clear-history" });

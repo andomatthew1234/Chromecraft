@@ -30,6 +30,7 @@ export interface BrowserPreferences {
   showDownloadProgressInToolbar: boolean;
   showDownloadCompletionNotification: boolean;
   addVideosToGallery: boolean;
+  smartReaderProgressVisible: boolean;
 }
 
 const defaults: BrowserPreferences = {
@@ -54,6 +55,7 @@ const defaults: BrowserPreferences = {
   showDownloadProgressInToolbar: true,
   showDownloadCompletionNotification: true,
   addVideosToGallery: true,
+  smartReaderProgressVisible: false,
 };
 
 const themes = new Set<NewTabTheme>(["overworld", "nether", "end", "minimal"]);
@@ -218,6 +220,10 @@ export class PreferencesStore {
           typeof parsed.addVideosToGallery === "boolean"
             ? parsed.addVideosToGallery
             : defaults.addVideosToGallery,
+        smartReaderProgressVisible:
+          typeof parsed.smartReaderProgressVisible === "boolean"
+            ? parsed.smartReaderProgressVisible
+            : defaults.smartReaderProgressVisible,
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
@@ -338,6 +344,10 @@ export class PreferencesStore {
 
   async setAddVideosToGallery(enabled: boolean): Promise<void> {
     await this.update({ addVideosToGallery: enabled });
+  }
+
+  async setSmartReaderProgressVisible(visible: boolean): Promise<void> {
+    await this.update({ smartReaderProgressVisible: visible });
   }
 
   private async update(patch: Partial<BrowserPreferences>): Promise<void> {

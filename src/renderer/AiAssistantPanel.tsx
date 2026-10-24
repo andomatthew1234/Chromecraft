@@ -180,6 +180,7 @@ function attachmentIcon(kind: AssistantAttachmentKind) {
       "selected-text": "format_quote",
       screenshot: "crop",
       element: "ads_click",
+      "full-reader-article": "auto_stories",
     } satisfies Record<AssistantAttachmentKind, string>
   )[kind];
 }
@@ -237,12 +238,16 @@ export function AiAssistantPanel({
   close,
   onOrganiseTabs,
   onOpenSettings,
+  initialAttachment,
+  onInitialAttachmentConsumed,
 }: {
   activeTab: BrowserTabSnapshot;
   aiTools: AiToolsSnapshot;
   close: () => void;
   onOrganiseTabs: () => void;
   onOpenSettings: () => void;
+  initialAttachment?: AssistantAttachment | null;
+  onInitialAttachmentConsumed?: () => void;
 }) {
   const [conversations, setConversations] =
     useState<Conversation[]>(readHistory);
@@ -264,6 +269,8 @@ export function AiAssistantPanel({
   const [pendingModel, setPendingModel] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
+  const [readerPreview, setReaderPreview] =
+    useState<AssistantAttachment | null>(null);
 
   const panelRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -290,7 +297,12 @@ export function AiAssistantPanel({
   const visibleContextChips = useMemo(
     () =>
       included.filter((item) =>
-        ["selected-text", "screenshot", "element"].includes(item.kind),
+        [
+          "selected-text",
+          "screenshot",
+          "element",
+          "full-reader-article",
+        ].includes(item.kind),
       ),
     [included],
   );
@@ -336,6 +348,25 @@ export function AiAssistantPanel({
         ? "true"
         : "false";
   }, []);
+
+  useEffect(() => {
+    if (!initialAttachment) return;
+    setAttachments((current) => [
+      ...current.filter((item) => item.kind !== "full-reader-article"),
+      initialAttachment,
+    ]);
+    setChoices((current) => ({
+      ...current,
+      url: false,
+      title: false,
+      description: false,
+      "selected-text": false,
+      "full-reader-article": true,
+    }));
+    setStatusNote("Full Reader Article added to this prompt.");
+    onInitialAttachmentConsumed?.();
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  }, [initialAttachment, onInitialAttachmentConsumed]);
 
   useEffect(() => {
     const refreshDefaults = () => setChoices(readDefaults());
@@ -1017,7 +1048,19 @@ export function AiAssistantPanel({
                     title={item.detail ?? item.label}
                   >
                     {icon(attachmentIcon(item.kind))}
-                    <span>{item.label}</span>
+                    <button
+                      type="button"
+                      className="ai-context-chip-preview"
+                      disabled={item.kind !== "full-reader-article"}
+                      onClick={() =>
+                        item.kind === "full-reader-article" &&
+                        setReaderPreview(item)
+                      }
+                    >
+                      {item.kind === "full-reader-article"
+                        ? `Full article · ${item.detail ?? "Article"}`
+                        : item.label}
+                    </button>
                     <button
                       type="button"
                       onClick={() => removeContext(item)}
@@ -1028,6 +1071,53 @@ export function AiAssistantPanel({
                   </span>
                 ))}
               </div>
+            )}
+            {readerPreview?.data.readerArticle && (
+              <section
+                className="ai-reader-preview"
+                role="dialog"
+                aria-label="Full Reader Article preview"
+              >
+                <header>
+                  <span>{icon("auto_stories")}</span>
+                  <span>
+                    <strong>{readerPreview.data.readerArticle.title}</strong>
+                    <small>
+                      {readerPreview.data.readerArticle.siteName ??
+                        new URL(readerPreview.data.readerArticle.url).hostname}
+                    </small>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setReaderPreview(null)}
+                    aria-label="Close article preview"
+                  >
+                    {icon("close")}
+                  </button>
+                </header>
+                <p>
+                  {readerPreview.data.readerArticle.text.slice(0, 700)}
+                  {readerPreview.data.readerArticle.text.length > 700
+                    ? "…"
+                    : ""}
+                </p>
+                <small>
+                  Preview abbreviated ·{" "}
+                  {readerPreview.data.readerArticle.text.length.toLocaleString()}{" "}
+                  captured characters are attached. Very long articles may be
+                  partially included to fit the selected model.
+                </small>
+                <button
+                  type="button"
+                  onClick={() =>
+                    void window.chromecraft.createTab(
+                      readerPreview.data.readerArticle!.url,
+                    )
+                  }
+                >
+                  {icon("open_in_new")} Open source
+                </button>
+              </section>
             )}
             {statusNote && (
               <p className="ai-status-note" role="status">

@@ -159,6 +159,7 @@ function readerArticle(): SmartReaderArticle {
     content: "<p>The launch reached 42 participants.</p>",
     textContent: "The launch reached 42 participants.",
     headings: ["Launch results"],
+    sections: [],
     textLength: 35,
     sourceUrl: "https://example.com/launch",
   };
@@ -583,6 +584,71 @@ describe("AiToolsController", () => {
     });
   });
 
+  it("discovers and selects a lightweight local summary model automatically", async () => {
+    const file = await statePath();
+    const listModels = vi.fn().mockResolvedValue([
+      {
+        name: "giant:70b",
+        size: 40 * 1024 ** 3,
+        modifiedAt: null,
+        family: "giant",
+        parameterSize: "70B",
+      },
+      {
+        name: "qwen3:1.7b",
+        size: 1_000,
+        modifiedAt: null,
+        family: "qwen3",
+        parameterSize: "1.7B",
+      },
+    ]);
+    const chatStructured = vi.fn().mockResolvedValue({
+      points: ["Point one", "Point two", "Point three"],
+    });
+    const controller = new AiToolsController({
+      stateFilePath: file,
+      ollama: { listModels, chatStructured } as unknown as OllamaClient,
+      credentials: credentials(),
+      organiseTabs: organiser(),
+    });
+
+    const result = await controller.summarizeSmartReaderArticle(
+      "summary-auto",
+      readerArticle(),
+      "ollama",
+      null,
+      false,
+    );
+
+    expect(listModels).toHaveBeenCalledOnce();
+    expect(result.model).toBe("qwen3:1.7b");
+    expect(chatStructured).toHaveBeenCalledWith(
+      expect.objectContaining({ model: "qwen3:1.7b" }),
+    );
+    expect(controller.getSmartReaderSummaryConfiguration().model).toBeNull();
+  });
+
+  it("switches summary providers while keeping automatic model selection", async () => {
+    const file = await statePath();
+    const controller = new AiToolsController({
+      stateFilePath: file,
+      ollama: { listModels: vi.fn() } as unknown as OllamaClient,
+      credentials: credentials("secret"),
+      organiseTabs: organiser(),
+    });
+
+    await controller.setSmartReaderSummaryPreference("gemini", null);
+
+    expect(controller.getSmartReaderSummaryConfiguration()).toMatchObject({
+      provider: "gemini",
+      model: null,
+    });
+    expect(JSON.parse(await readFile(file, "utf8"))).toMatchObject({
+      summaryProvider: "gemini",
+      summaryGeminiModel: null,
+    });
+  });
+
   it("requires separate article consent before Gemini summarisation", async () => {
     const file = await statePath();
     await writeFile(
@@ -608,7 +674,7 @@ describe("AiToolsController", () => {
     ).toBe(false);
   });
 
-  it("summarises with configured Gemini only after explicit article consent", async () => {
+  it("automatically selects Gemini Flash-Lite after explicit article consent", async () => {
     const file = await statePath();
     const request = vi.fn(async (input: string | URL | Request) => {
       const url = String(input);
@@ -652,19 +718,19 @@ describe("AiToolsController", () => {
         "summary-gemini",
         readerArticle(),
         "gemini",
-        "gemini-flash-latest",
+        null,
         true,
       ),
     ).resolves.toMatchObject({
       provider: "gemini",
-      model: "gemini-flash-latest",
+      model: "gemini-flash-lite-latest",
       points: ["Gemini point one", "Point two", "Point three"],
     });
     expect(request).toHaveBeenCalledTimes(2);
     expect(JSON.parse(await readFile(file, "utf8"))).toMatchObject({
       summaryCloudConsentGranted: true,
       summaryProvider: "gemini",
-      summaryGeminiModel: "gemini-flash-latest",
+      summaryGeminiModel: null,
     });
   });
 });

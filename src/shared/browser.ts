@@ -13,6 +13,7 @@ import type {
   OrganiseTabsRequest,
 } from "./ai-tools";
 import type {
+  AssistantAttachment,
   AssistantContextCaptured,
   AssistantMessageRequest,
   AssistantMessageResponse,
@@ -20,6 +21,7 @@ import type {
 } from "./ai-assistant";
 import type {
   SmartReaderAppearance,
+  SmartReaderCommand,
   SmartReaderTabSnapshot,
   SmartReaderViewSnapshot,
 } from "./smart-reader";
@@ -411,6 +413,7 @@ export interface BrowserPreferencesSnapshot {
   showDownloadProgressInToolbar: boolean;
   showDownloadCompletionNotification: boolean;
   addVideosToGallery: boolean;
+  smartReaderProgressVisible?: boolean;
 }
 
 export interface HyperdriveDestinationSnapshot {
@@ -637,6 +640,17 @@ export interface BookmarkEntry {
   createdAt: number;
 }
 
+export interface SavedArticleEntry {
+  id: string;
+  canonicalUrl: string;
+  originalUrl: string;
+  title: string;
+  siteName: string;
+  faviconDataUrl: string | null;
+  description: string | null;
+  savedAt: number;
+}
+
 export interface HistoryEntry {
   id: string;
   title: string;
@@ -695,6 +709,7 @@ export interface QuickLinkEntry {
 
 export interface BrowserDataSnapshot {
   bookmarks: BookmarkEntry[];
+  savedArticles?: SavedArticleEntry[];
   history: HistoryEntry[];
   recentlyClosed: ClosedTabEntry[];
   quickLinks: QuickLinkEntry[];
@@ -768,6 +783,17 @@ export interface ChromecraftApi {
     tabId: TabId,
     appearance: SmartReaderAppearance,
   ): Promise<SmartReaderViewSnapshot>;
+  toggleSavedArticle(tabId: TabId): Promise<SmartReaderViewSnapshot>;
+  removeSavedArticle(id: string): Promise<void>;
+  setSmartReaderProgressVisible(
+    tabId: TabId,
+    visible: boolean,
+  ): Promise<SmartReaderViewSnapshot>;
+  runSmartReaderCommand(
+    tabId: TabId,
+    command: SmartReaderCommand,
+  ): Promise<void>;
+  getSmartReaderArticleAttachment(tabId: TabId): Promise<AssistantAttachment>;
   duplicateTab(tabId: TabId): Promise<TabId>;
   reopenClosedTab(id?: string): Promise<TabId | null>;
   createTabGroup(
@@ -983,6 +1009,7 @@ export interface ChromecraftApi {
   onExtensions(listener: (snapshot: ExtensionsSnapshot) => void): () => void;
   onUpdateSnapshot(listener: (snapshot: UpdateSnapshot) => void): () => void;
   onAiTools(listener: (snapshot: AiToolsSnapshot) => void): () => void;
+  onShowScoutSettings(listener: () => void): () => void;
   onAssistantContextCaptured(
     listener: (context: AssistantContextCaptured) => void,
   ): () => void;

@@ -9,6 +9,7 @@ import type {
   ClosedTabEntry,
   HistoryEntry,
   QuickLinkEntry,
+  SavedArticleEntry,
   SavedTabGroupEntry,
   SplitViewPairSnapshot,
   TabGroupColor,
@@ -21,6 +22,7 @@ export type {
   ClosedTabEntry,
   HistoryEntry,
   QuickLinkEntry,
+  SavedArticleEntry,
   SavedTabGroupEntry,
   SplitViewPairSnapshot,
   TabGroupColor,
@@ -38,6 +40,7 @@ const DEFAULT_MAX_PINNED_SHORTCUTS = 12;
 const DEFAULT_MAX_SAVED_TAB_GROUPS = 100;
 const DEFAULT_MAX_RECENTLY_CLOSED_WINDOWS = 10;
 const MAX_BOOKMARKS = 10_000;
+const MAX_SAVED_ARTICLES = 5_000;
 const MAX_SESSION_TABS = 500;
 const MAX_ID_LENGTH = 128;
 const MAX_TITLE_LENGTH = 1_024;
@@ -63,6 +66,15 @@ export interface BookmarkInput {
   title: string;
   url: string;
   folder?: string;
+}
+
+export interface SavedArticleInput {
+  canonicalUrl: string;
+  originalUrl: string;
+  title: string;
+  siteName: string;
+  faviconDataUrl?: string | null;
+  description?: string | null;
 }
 
 export interface HistoryEntryInput {
@@ -145,6 +157,7 @@ export interface BrowserDataStoreOptions {
 interface PersistedBrowserData {
   version: typeof DATA_VERSION;
   bookmarks: BookmarkEntry[];
+  savedArticles: SavedArticleEntry[];
   history: HistoryEntry[];
   session: BrowserSessionSnapshot | null;
   recentlyClosed: ClosedTabEntry[];
@@ -162,6 +175,7 @@ function emptyData(): PersistedBrowserData {
   return {
     version: DATA_VERSION,
     bookmarks: [],
+    savedArticles: [],
     history: [],
     session: null,
     recentlyClosed: [],
@@ -223,6 +237,16 @@ function cleanWebUrl(value: unknown): string | null {
   }
 }
 
+function canonicalArticleUrl(value: unknown): string | null {
+  const clean = cleanWebUrl(value);
+  if (!clean) return null;
+  const url = new URL(clean);
+  url.username = "";
+  url.password = "";
+  url.hash = "";
+  return url.href;
+}
+
 function cleanTimestamp(value: unknown): number | null {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
     ? value
@@ -257,6 +281,47 @@ function validateBookmark(value: unknown): BookmarkEntry | null {
 
   return id && title && url && createdAt !== null && folder !== null
     ? { id, title, url, folder, createdAt }
+    : null;
+}
+
+function validateSavedArticle(value: unknown): SavedArticleEntry | null {
+  if (!isRecord(value)) return null;
+  const id = cleanId(value.id);
+  const canonicalUrl = canonicalArticleUrl(value.canonicalUrl);
+  const originalUrl = cleanWebUrl(value.originalUrl);
+  const title = cleanTitle(value.title);
+  const siteName = cleanString(value.siteName, 300);
+  const savedAt = cleanTimestamp(value.savedAt);
+  const description =
+    value.description === null
+      ? null
+      : cleanString(value.description, 1_000, true);
+  const faviconDataUrl =
+    value.faviconDataUrl === null
+      ? null
+      : typeof value.faviconDataUrl === "string" &&
+          value.faviconDataUrl.length <= 1_000_000 &&
+          /^data:image\/(?:avif|gif|jpeg|png|svg\+xml|webp);/iu.test(
+            value.faviconDataUrl,
+          )
+        ? value.faviconDataUrl
+        : null;
+  return id &&
+    canonicalUrl &&
+    originalUrl &&
+    title &&
+    siteName &&
+    savedAt !== null
+    ? {
+        id,
+        canonicalUrl,
+        originalUrl,
+        title,
+        siteName,
+        faviconDataUrl,
+        description: description || null,
+        savedAt,
+      }
     : null;
 }
 
@@ -650,6 +715,7 @@ export class BrowserDataStore {
   getSnapshot(): BrowserDataSnapshot {
     return structuredClone({
       bookmarks: this.data.bookmarks,
+      savedArticles: this.data.savedArticles,
       history: this.data.history,
       recentlyClosed: this.data.recentlyClosed,
       quickLinks: this.data.quickLinks,
@@ -711,6 +777,74 @@ export class BrowserDataStore {
 
   async removeBookmark(id: string): Promise<boolean> {
     return this.removeById("bookmarks", id);
+  }
+
+  listSavedArticles(): SavedArticleEntry[] {
+    return structuredClone(this.data.savedArticles);
+  }
+
+  findSavedArticle(url: string): SavedArticleEntry | null {
+    const clean = canonicalArticleUrl(url);
+    if (!clean) return null;
+    const entry = this.data.savedArticles.find(
+      (candidate) => candidate.canonicalUrl === clean,
+    );
+    return entry ? structuredClone(entry) : null;
+  }
+
+  async saveArticle(input: SavedArticleInput): Promise<SavedArticleEntry> {
+    const canonicalUrl = canonicalArticleUrl(input.canonicalUrl);
+    if (!canonicalUrl) throw new TypeError("A valid article URL is required.");
+    const originalUrl = this.requireWebUrl(input.originalUrl);
+    const title = this.requireTitle(input.title);
+    const siteName =
+      cleanString(input.siteName, 300) ?? new URL(canonicalUrl).hostname;
+    const description =
+      cleanString(input.description ?? "", 1_000, true) || null;
+    const faviconDataUrl =
+      typeof input.faviconDataUrl === "string" &&
+      input.faviconDataUrl.length <= 1_000_000 &&
+      /^data:image\/(?:avif|gif|jpeg|png|svg\+xml|webp);/iu.test(
+        input.faviconDataUrl,
+      )
+        ? input.faviconDataUrl
+        : null;
+    return this.mutate((draft) => {
+      const existing = draft.savedArticles.find(
+        (entry) => entry.canonicalUrl === canonicalUrl,
+      );
+      if (existing) {
+        Object.assign(existing, {
+          originalUrl,
+          title,
+          siteName,
+          faviconDataUrl,
+          description,
+        });
+        return { result: structuredClone(existing), changed: true };
+      }
+      if (draft.savedArticles.length >= MAX_SAVED_ARTICLES) {
+        throw new RangeError(
+          `Saved articles are limited to ${MAX_SAVED_ARTICLES}.`,
+        );
+      }
+      const entry: SavedArticleEntry = {
+        id: this.newId(),
+        canonicalUrl,
+        originalUrl,
+        title,
+        siteName,
+        faviconDataUrl,
+        description,
+        savedAt: this.timestamp(),
+      };
+      draft.savedArticles.unshift(entry);
+      return { result: structuredClone(entry), changed: true };
+    });
+  }
+
+  async removeSavedArticle(id: string): Promise<boolean> {
+    return this.removeById("savedArticles", id);
   }
 
   listHistory(): HistoryEntry[] {
@@ -1106,6 +1240,14 @@ export class BrowserDataStore {
             .filter((entry): entry is BookmarkEntry => entry !== null),
         )
       : [];
+    const savedArticles = Array.isArray(value.savedArticles)
+      ? filterUniqueById(
+          value.savedArticles
+            .slice(0, MAX_SAVED_ARTICLES)
+            .map(validateSavedArticle)
+            .filter((entry): entry is SavedArticleEntry => entry !== null),
+        )
+      : [];
     const history = Array.isArray(value.history)
       ? filterUniqueById(
           value.history
@@ -1150,6 +1292,7 @@ export class BrowserDataStore {
     return {
       version: DATA_VERSION,
       bookmarks,
+      savedArticles,
       history,
       session: validateSession(value.session),
       recentlyClosed,
@@ -1177,7 +1320,7 @@ export class BrowserDataStore {
   }
 
   private async removeById(
-    collection: "bookmarks" | "history" | "quickLinks",
+    collection: "bookmarks" | "savedArticles" | "history" | "quickLinks",
     id: string,
   ): Promise<boolean> {
     const clean = this.requireId(id);

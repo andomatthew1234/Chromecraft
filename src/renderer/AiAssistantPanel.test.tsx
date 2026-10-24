@@ -74,6 +74,7 @@ describe("AiAssistantPanel", () => {
         "selected-text": false,
         screenshot: false,
         element: false,
+        "full-reader-article": false,
       },
       [],
     );

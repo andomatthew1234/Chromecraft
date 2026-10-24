@@ -202,30 +202,53 @@ function AppearancePopover({
 
 export function SmartReaderControls({
   tab,
+  progressVisible = false,
+  onAskScout = () => undefined,
   onPopoverOpenChange,
 }: {
   tab: BrowserTabSnapshot;
+  progressVisible?: boolean;
+  onAskScout?: () => void;
   onPopoverOpenChange: (open: boolean) => void;
 }) {
   const appearanceButton = useRef<HTMLButtonElement>(null);
   const [appearanceOpen, setAppearanceOpen] = useState(false);
+  const [overflowOpen, setOverflowOpen] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const narrationOpen = tab.reader.narrationOpen === true;
+  const navigationOpen = tab.reader.navigationOpen === true;
   const visible = tab.reader.availability === "available" || tab.reader.active;
 
   useEffect(() => {
     setAppearanceOpen(false);
+    setOverflowOpen(false);
   }, [tab.id, tab.reader.active]);
   useEffect(() => {
-    onPopoverOpenChange(appearanceOpen);
+    onPopoverOpenChange(appearanceOpen || overflowOpen);
     return () => onPopoverOpenChange(false);
-  }, [appearanceOpen, onPopoverOpenChange]);
+  }, [appearanceOpen, overflowOpen, onPopoverOpenChange]);
   if (!visible) return null;
 
   const toggle = () => {
     setAppearanceOpen(false);
+    setOverflowOpen(false);
     void window.chromecraft.toggleSmartReader(
       tab.id,
       readSmartReaderAppearance(),
     );
+  };
+  const command = (type: "toggle-narration" | "toggle-navigation") => {
+    setOverflowOpen(false);
+    void window.chromecraft.runSmartReaderCommand(tab.id, { type });
+  };
+  const save = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      await window.chromecraft.toggleSavedArticle(tab.id);
+    } finally {
+      window.setTimeout(() => setSaving(false), 260);
+    }
   };
   return (
     <div
@@ -248,19 +271,142 @@ export function SmartReaderControls({
         <MaterialIcon name="chrome_reader_mode" />
       </button>
       {tab.reader.active && (
-        <button
-          ref={appearanceButton}
-          type="button"
-          className="tool-button reader-appearance-button"
-          data-smart-reader-appearance-button
-          aria-label="Reading appearance"
-          aria-haspopup="dialog"
-          aria-expanded={appearanceOpen}
-          title="Reading appearance"
-          onClick={() => setAppearanceOpen((open) => !open)}
-        >
-          <MaterialIcon name="text_fields" />
-        </button>
+        <>
+          <button
+            ref={appearanceButton}
+            type="button"
+            className="tool-button reader-appearance-button"
+            data-smart-reader-appearance-button
+            aria-label="Reading appearance"
+            aria-haspopup="dialog"
+            aria-expanded={appearanceOpen}
+            title="Reading appearance"
+            onClick={() => setAppearanceOpen((open) => !open)}
+          >
+            <MaterialIcon name="text_fields" />
+          </button>
+          <button
+            type="button"
+            className={`tool-button reader-save-button ${saving ? "confirming" : ""}`}
+            aria-label={
+              tab.reader.saved
+                ? "Remove from saved articles"
+                : "Save for later reading"
+            }
+            aria-pressed={tab.reader.saved}
+            title={
+              tab.reader.saved ? "Saved for later" : "Save for later reading"
+            }
+            onClick={() => void save()}
+          >
+            <MaterialIcon
+              name={tab.reader.saved ? "bookmark_added" : "bookmark_add"}
+            />
+          </button>
+          <button
+            type="button"
+            className="tool-button reader-progress-button reader-overflowable"
+            aria-label="Reading progress"
+            aria-pressed={progressVisible}
+            title="Reading progress"
+            onClick={() =>
+              void window.chromecraft.setSmartReaderProgressVisible(
+                tab.id,
+                !progressVisible,
+              )
+            }
+          >
+            <MaterialIcon name="progress_activity" />
+          </button>
+          <button
+            type="button"
+            className="tool-button reader-scout-button reader-overflowable"
+            aria-label="Ask Scout about this article"
+            title="Ask Scout about this article"
+            onClick={onAskScout}
+          >
+            <MaterialIcon name="auto_awesome" />
+          </button>
+          <button
+            type="button"
+            className="tool-button reader-secondary"
+            aria-label="Read aloud"
+            aria-pressed={narrationOpen}
+            title="Read aloud"
+            onClick={() => command("toggle-narration")}
+          >
+            <MaterialIcon name="headphones" />
+          </button>
+          <button
+            type="button"
+            className="tool-button reader-secondary"
+            aria-label="Article navigation"
+            aria-pressed={navigationOpen}
+            title="Article navigation"
+            onClick={() => command("toggle-navigation")}
+          >
+            <MaterialIcon name="toc" />
+          </button>
+          <span className="reader-overflow-anchor">
+            <button
+              type="button"
+              className="tool-button reader-overflow-button"
+              aria-label="More Smart Reader actions"
+              aria-haspopup="menu"
+              aria-expanded={overflowOpen}
+              title="More Smart Reader actions"
+              onClick={() => setOverflowOpen((open) => !open)}
+            >
+              <MaterialIcon name="more_vert" />
+            </button>
+            {overflowOpen && (
+              <span className="reader-overflow-menu" role="menu">
+                <button
+                  type="button"
+                  role="menuitemcheckbox"
+                  aria-checked={progressVisible}
+                  onClick={() => {
+                    setOverflowOpen(false);
+                    void window.chromecraft.setSmartReaderProgressVisible(
+                      tab.id,
+                      !progressVisible,
+                    );
+                  }}
+                >
+                  <MaterialIcon name="progress_activity" />
+                  <span>Reading progress</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => {
+                    setOverflowOpen(false);
+                    onAskScout();
+                  }}
+                >
+                  <MaterialIcon name="auto_awesome" />
+                  <span>Ask Scout</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => command("toggle-narration")}
+                >
+                  <MaterialIcon name="headphones" />
+                  <span>Read aloud</span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => command("toggle-navigation")}
+                >
+                  <MaterialIcon name="toc" />
+                  <span>Article navigation</span>
+                </button>
+              </span>
+            )}
+          </span>
+        </>
       )}
       {appearanceOpen && appearanceButton.current && (
         <AppearancePopover

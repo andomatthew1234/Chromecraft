@@ -75,6 +75,35 @@ describe("BrowserDataStore", () => {
     expect(reloaded.listBookmarks()).toHaveLength(2);
   });
 
+  it("persists saved article references and deduplicates canonical URLs", async () => {
+    const store = createStore();
+    await store.load();
+    const first = await store.saveArticle({
+      canonicalUrl: "https://example.com/story#intro",
+      originalUrl: "https://example.com/story#intro",
+      title: "A useful story",
+      siteName: "Example",
+      description: "Worth reading",
+    });
+    const updated = await store.saveArticle({
+      canonicalUrl: "https://example.com/story#later",
+      originalUrl: "https://example.com/story#later",
+      title: "A useful story, updated",
+      siteName: "Example",
+    });
+
+    expect(updated.id).toBe(first.id);
+    expect(store.listSavedArticles()).toHaveLength(1);
+    expect(
+      store.findSavedArticle("https://example.com/story#anything")?.title,
+    ).toBe("A useful story, updated");
+    const reloaded = createStore();
+    await reloaded.load();
+    expect(reloaded.snapshot.savedArticles).toHaveLength(1);
+    await reloaded.removeSavedArticle(first.id);
+    expect(reloaded.listSavedArticles()).toEqual([]);
+  });
+
   it("records bounded history and supports deletion and time-range clearing", async () => {
     const store = createStore({ maxHistoryEntries: 3 });
     await store.load();

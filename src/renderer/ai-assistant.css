@@ -24,6 +24,77 @@
   animation: ai-panel-in var(--ai-motion-emphasized) both;
 }
 
+.ai-context-chip-preview {
+  min-width: 0;
+  overflow: hidden;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: inherit;
+}
+
+.ai-context-chip-preview:disabled {
+  opacity: 1;
+}
+
+.ai-reader-preview {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--md-outline-variant);
+  border-radius: 18px;
+  color: var(--md-on-surface);
+  background: var(--md-surface-container-high);
+  box-shadow: var(--elevation-2);
+  animation: ai-popover-in 160ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+.ai-reader-preview header {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr) 30px;
+  align-items: start;
+  gap: 8px;
+}
+
+.ai-reader-preview header > span:nth-child(2) {
+  min-width: 0;
+  display: grid;
+}
+
+.ai-reader-preview header strong,
+.ai-reader-preview header small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ai-reader-preview p {
+  max-height: 120px;
+  overflow: auto;
+  margin: 0;
+  color: var(--md-on-surface-variant);
+  font: var(--type-body-small);
+}
+
+.ai-reader-preview > small {
+  color: var(--md-on-surface-variant);
+  font: var(--type-label-small);
+}
+
+.ai-reader-preview > button {
+  justify-self: start;
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 0 12px;
+  border-radius: 999px;
+  color: var(--md-on-secondary-container);
+  background: var(--md-secondary-container);
+}
+
 .ai-assistant-header {
   min-width: 0;
   min-height: 62px;

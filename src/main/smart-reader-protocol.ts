@@ -14,6 +14,7 @@ const MAX_STORE_BYTES = 32 * 1024 * 1024;
 const CSP = [
   "default-src 'none'",
   "img-src https: http: data:",
+  "media-src blob: data:",
   "style-src 'unsafe-inline'",
   "script-src 'none'",
   "connect-src 'none'",

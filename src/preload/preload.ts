@@ -71,6 +71,20 @@ const api: ChromecraftApi = {
     ipcRenderer.invoke(channels.trySmartReader, tabId, appearance),
   setSmartReaderAppearance: (tabId, appearance) =>
     ipcRenderer.invoke(channels.setSmartReaderAppearance, tabId, appearance),
+  toggleSavedArticle: (tabId) =>
+    ipcRenderer.invoke(channels.toggleSavedArticle, tabId),
+  removeSavedArticle: (id) =>
+    ipcRenderer.invoke(channels.removeSavedArticle, id) as Promise<void>,
+  setSmartReaderProgressVisible: (tabId, visible) =>
+    ipcRenderer.invoke(channels.setSmartReaderProgressVisible, tabId, visible),
+  runSmartReaderCommand: (tabId, command) =>
+    ipcRenderer.invoke(
+      channels.runSmartReaderCommand,
+      tabId,
+      command,
+    ) as Promise<void>,
+  getSmartReaderArticleAttachment: (tabId) =>
+    ipcRenderer.invoke(channels.getSmartReaderArticleAttachment, tabId),
   duplicateTab: (tabId) =>
     ipcRenderer.invoke(channels.duplicateTab, tabId) as Promise<TabId>,
   reopenClosedTab: (id) =>
@@ -748,6 +762,12 @@ const api: ChromecraftApi = {
     ) => listener(snapshot);
     ipcRenderer.on(channels.aiToolsChanged, handler);
     return () => ipcRenderer.removeListener(channels.aiToolsChanged, handler);
+  },
+  onShowScoutSettings: (listener) => {
+    const handler = () => listener();
+    ipcRenderer.on(channels.showScoutSettings, handler);
+    return () =>
+      ipcRenderer.removeListener(channels.showScoutSettings, handler);
   },
   onAssistantContextCaptured: (listener) => {
     const handler = (

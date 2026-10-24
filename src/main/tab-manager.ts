@@ -37,7 +37,11 @@ import type {
 import type {
   SmartReaderAppearance,
   SmartReaderArticle,
+  SmartReaderCommand,
   SmartReaderExtractionResult,
+  SmartReaderGeminiSegment,
+  SmartReaderGeminiSession,
+  SmartReaderNarrationCapabilities,
   SmartReaderSummaryGenerateRequest,
   SmartReaderSummaryResult,
   SmartReaderSummarySnapshot,
@@ -62,6 +66,7 @@ import { parseChromeWebStoreListingUrl } from "../shared/web-store-listing";
 import { parseYouTubeWatchUrl } from "../shared/youtube-watch";
 import { sidebarWidth } from "../shared/sidebar";
 import { BrowserDataStore, type SessionTabInput } from "./browser-data";
+import { ReadingPositionStore } from "./reading-position-store";
 import { ChromeWebStoreExtensionService } from "./chrome-web-store-extension-service";
 import { ExtensionPopupController } from "./extension-popup-controller";
 import { FullscreenHintController } from "./fullscreen-hint-controller";
@@ -187,6 +192,8 @@ interface TabRecord {
   readerAppearanceRevision: number;
   readerMutationTimer: ReturnType<typeof setTimeout> | null;
   readerTimers: Set<ReturnType<typeof setTimeout>>;
+  readerProgressTimer: ReturnType<typeof setTimeout> | null;
+  readerProgressValue: number | null;
   readerArticle: SmartReaderArticle | null;
   readerSummary: {
     stage: SmartReaderSummarySnapshot["stage"];
@@ -209,13 +216,71 @@ export interface SmartReaderSummaryBridge {
     "provider" | "model" | "providers"
   >;
   refresh(provider: "ollama" | "gemini"): Promise<void>;
-  setPreference(provider: "ollama" | "gemini", model: string): Promise<void>;
+  setPreference(
+    provider: "ollama" | "gemini",
+    model: string | null,
+  ): Promise<void>;
+  setConsent(granted: boolean): Promise<void>;
   generate(
     requestId: string,
     article: SmartReaderArticle,
     request: SmartReaderSummaryGenerateRequest,
   ): Promise<SmartReaderSummaryResult>;
   cancel(requestId: string): void;
+}
+
+export interface SmartReaderNarrationBridge {
+  capabilities(): SmartReaderNarrationCapabilities;
+  synthesize(
+    requestId: string,
+    text: string,
+    voice: string,
+  ): Promise<{ mimeType: string; data: string }>;
+  cancel(requestId: string): void;
+}
+
+interface SmartReaderNarrationSessionRecord {
+  id: string;
+  tabId: string;
+  revision: number;
+  voice: string;
+  segments: string[];
+  activeRequestId: string | null;
+}
+
+export function splitNarrationText(text: string, maximum = 4_500): string[] {
+  const paragraphs = text
+    .replace(/\r\n?/gu, "\n")
+    .split(/\n{2,}/u)
+    .map((part) => part.replace(/\s+/gu, " ").trim())
+    .filter(Boolean);
+  const result: string[] = [];
+  let current = "";
+  const append = (piece: string) => {
+    if (!piece) return;
+    if (current && current.length + piece.length + 2 > maximum) {
+      result.push(current);
+      current = "";
+    }
+    if (piece.length <= maximum) {
+      current = current ? `${current}\n\n${piece}` : piece;
+      return;
+    }
+    for (const sentence of piece.split(/(?<=[.!?])\s+/u)) {
+      if (sentence.length > maximum) {
+        if (current) result.push(current);
+        current = "";
+        for (let offset = 0; offset < sentence.length; offset += maximum) {
+          result.push(sentence.slice(offset, offset + maximum));
+        }
+      } else {
+        append(sentence);
+      }
+    }
+  };
+  for (const paragraph of paragraphs) append(paragraph);
+  if (current) result.push(current);
+  return result;
 }
 
 export interface AiTabOrganizationCandidate {
@@ -449,6 +514,10 @@ export class TabManager {
     string,
     PendingReaderExtraction
   >();
+  private readonly readerNarrationSessions = new Map<
+    string,
+    SmartReaderNarrationSessionRecord
+  >();
   private readonly selectedTabIds = new Set<TabId>();
   private aiTabOrganizationUndo: AiTabOrganizationUndo | null = null;
   private aiTabOrganizationMutationInProgress = false;
@@ -481,6 +550,7 @@ export class TabManager {
     private readonly extensions: ChromeWebStoreExtensionService | null,
     private readonly preferences: PreferencesStore,
     private readonly browserData: BrowserDataStore,
+    private readonly readingPositions: ReadingPositionStore,
     private readonly hyperdrive: HyperdriveController,
     private readonly smartReaderDocuments: SmartReaderDocumentStore,
     private readonly onBrowserDataChanged: () => void,
@@ -504,6 +574,7 @@ export class TabManager {
       number
     > = () => new Map(),
     private readonly smartReaderSummary?: SmartReaderSummaryBridge,
+    private readonly smartReaderNarration?: SmartReaderNarrationBridge,
   ) {
     this.extensionPopup = extensions
       ? new ExtensionPopupController(window, browserSession, extensions, {
@@ -641,6 +712,8 @@ export class TabManager {
         showDownloadCompletionNotification:
           this.preferences.snapshot.showDownloadCompletionNotification,
         addVideosToGallery: this.preferences.snapshot.addVideosToGallery,
+        smartReaderProgressVisible:
+          this.preferences.snapshot.smartReaderProgressVisible,
       },
       baseChromeHeight: this.baseChromeHeight,
       chromeHeight: this.chromeHeight,
@@ -1287,6 +1360,9 @@ export class TabManager {
     if (previous && this.pendingHtmlFullscreen?.tabId === previous.id)
       this.pendingHtmlFullscreen = null;
     if (previous) this.releaseWebsiteInputCapture(previous);
+    if (previous?.reader.active) {
+      this.sendSmartReaderCommand(previous, { type: "pause-narration" });
+    }
     if (previous?.view && !previous.view.webContents.isDestroyed())
       this.onWebsiteDocumentInvalidated?.(previous.view.webContents);
     if (previous) void this.captureTabThumbnail(previous);
@@ -2300,6 +2376,266 @@ export class TabManager {
     return this.smartReaderSnapshot(tab);
   }
 
+  async toggleSavedArticle(tabId: TabId): Promise<SmartReaderViewSnapshot> {
+    const tab = this.requireTab(tabId);
+    const article = tab.readerArticle;
+    if (!article || !tab.reader.active) {
+      throw new Error("Open Smart Reader before saving this article.");
+    }
+    const existing = this.browserData.findSavedArticle(article.sourceUrl);
+    if (existing) {
+      await this.browserData.removeSavedArticle(existing.id);
+    } else {
+      const source = new URL(article.sourceUrl);
+      source.username = "";
+      source.password = "";
+      source.hash = "";
+      await this.browserData.saveArticle({
+        canonicalUrl: source.href,
+        originalUrl: article.sourceUrl,
+        title: article.title,
+        siteName: article.siteName || source.hostname,
+        faviconDataUrl: tab.faviconDataUrl,
+        description: article.excerpt,
+      });
+    }
+    this.refreshSmartReaderSavedState();
+    this.onBrowserDataChanged();
+    this.emitSnapshot();
+    return this.smartReaderSnapshot(tab);
+  }
+
+  refreshSmartReaderSavedState(): void {
+    for (const tab of this.tabs.values()) {
+      tab.reader.saved = Boolean(
+        tab.readerArticle &&
+        this.browserData.findSavedArticle(tab.readerArticle.sourceUrl),
+      );
+    }
+    this.scheduleSnapshot();
+  }
+
+  async removeSavedArticle(id: string): Promise<void> {
+    await this.browserData.removeSavedArticle(id);
+    this.refreshSmartReaderSavedState();
+    this.onBrowserDataChanged();
+    this.emitSnapshot();
+  }
+
+  async setSmartReaderProgressVisible(
+    tabId: TabId,
+    visible: boolean,
+  ): Promise<SmartReaderViewSnapshot> {
+    const tab = this.requireTab(tabId);
+    await this.preferences.setSmartReaderProgressVisible(visible);
+    this.sendSmartReaderCommand(tab, {
+      type: "set-progress-visible",
+      visible,
+      resumeProgress: this.meaningfulReadingPosition(tab),
+    });
+    this.emitSnapshot();
+    return this.smartReaderSnapshot(tab);
+  }
+
+  runSmartReaderCommand(tabId: TabId, value: unknown): void {
+    const tab = this.requireTab(tabId);
+    if (!tab.reader.active) throw new Error("Smart Reader is not open.");
+    if (!value || typeof value !== "object") {
+      throw new TypeError("Unknown Smart Reader command.");
+    }
+    const type = (value as { type?: unknown }).type;
+    if (
+      type !== "toggle-navigation" &&
+      type !== "toggle-narration" &&
+      type !== "stop-narration"
+    ) {
+      throw new TypeError("Unknown Smart Reader command.");
+    }
+    if (type === "toggle-navigation") {
+      tab.reader.navigationOpen = !tab.reader.navigationOpen;
+    } else if (type === "toggle-narration") {
+      tab.reader.narrationOpen = !tab.reader.narrationOpen;
+    } else if (type === "stop-narration") {
+      tab.reader.narrationOpen = false;
+    }
+    this.sendSmartReaderCommand(tab, { type } as SmartReaderCommand);
+    this.emitSnapshot();
+  }
+
+  handleSmartReaderPanelClosed(source: WebContents, value: unknown): void {
+    const tab = this.requireReaderTab(source);
+    if (value === "navigation") tab.reader.navigationOpen = false;
+    else if (value === "narration") tab.reader.narrationOpen = false;
+    else throw new TypeError("Unknown Smart Reader panel.");
+    this.emitSnapshot();
+  }
+
+  getSmartReaderArticleAttachment(tabId: TabId): AssistantAttachment {
+    const tab = this.requireTab(tabId);
+    const article = tab.readerArticle;
+    if (!article || !tab.reader.active || tab.id !== this.activeTabId) {
+      throw new Error("Open Smart Reader before attaching this article.");
+    }
+    return structuredClone({
+      id: `reader-article-${tab.id}-${tab.reader.revision}`,
+      kind: "full-reader-article" as const,
+      label: "Full Reader Article",
+      detail: article.title.slice(0, 160),
+      createdAt: Date.now(),
+      data: {
+        readerArticle: {
+          tabId: tab.id,
+          revision: tab.reader.revision,
+          url: article.sourceUrl,
+          title: article.title,
+          siteName: article.siteName,
+          byline: article.byline,
+          publishedTime: article.publishedTime,
+          headings: [...article.headings],
+          text: article.textContent,
+          complete: article.textContentTruncated !== true,
+        },
+      },
+    });
+  }
+
+  handleSmartReaderProgress(source: WebContents, value: unknown): void {
+    const tab = this.requireReaderTab(source);
+    const progress = Number(value);
+    if (!Number.isFinite(progress) || progress < 0 || progress > 1) return;
+    tab.readerProgressValue = progress;
+    if (tab.readerProgressTimer) clearTimeout(tab.readerProgressTimer);
+    tab.readerProgressTimer = setTimeout(() => {
+      tab.readerProgressTimer = null;
+      void this.flushReadingPosition(tab);
+    }, 2_000);
+  }
+
+  getSmartReaderNarrationCapabilities(
+    source: WebContents,
+  ): SmartReaderNarrationCapabilities {
+    this.requireReaderTab(source);
+    return (
+      this.smartReaderNarration?.capabilities() ?? {
+        gemini: {
+          available: false,
+          model: "gemini-3.8-flash-lite-tts",
+          voices: [],
+          reason: "Scout narration is unavailable.",
+        },
+        local: {
+          available: false,
+          reason: "No local AI speech engine is integrated in this build.",
+          setupHint: "Use Standard system speech to stay on-device.",
+        },
+      }
+    );
+  }
+
+  startSmartReaderGeminiNarration(
+    source: WebContents,
+    value: unknown,
+  ): SmartReaderGeminiSession {
+    const tab = this.requireReaderTab(source);
+    if (!this.smartReaderNarration || !value || typeof value !== "object") {
+      throw new Error("Gemini voiceover is unavailable.");
+    }
+    const request = value as { voice?: unknown; cloudConsent?: unknown };
+    const capabilities = this.smartReaderNarration.capabilities();
+    const voice = typeof request.voice === "string" ? request.voice : "";
+    if (!request.cloudConsent) {
+      throw new Error("Confirm sending this article text to Google first.");
+    }
+    if (
+      !capabilities.gemini.available ||
+      !capabilities.gemini.voices.includes(voice)
+    ) {
+      throw new Error(
+        capabilities.gemini.reason ?? "Choose a supported Gemini voice.",
+      );
+    }
+    const segments = splitNarrationText(tab.readerArticle!.textContent);
+    if (!segments.length)
+      throw new Error("This article has no text to narrate.");
+    this.cancelNarrationForTab(tab);
+    const id = randomUUID();
+    this.readerNarrationSessions.set(id, {
+      id,
+      tabId: tab.id,
+      revision: tab.reader.revision,
+      voice,
+      segments,
+      activeRequestId: null,
+    });
+    return {
+      id,
+      segmentCount: segments.length,
+      model: capabilities.gemini.model,
+      voice,
+    };
+  }
+
+  async getSmartReaderGeminiSegment(
+    source: WebContents,
+    sessionIdValue: unknown,
+    indexValue: unknown,
+  ): Promise<SmartReaderGeminiSegment> {
+    const tab = this.requireReaderTab(source);
+    const sessionId = typeof sessionIdValue === "string" ? sessionIdValue : "";
+    const index = Number(indexValue);
+    const session = this.readerNarrationSessions.get(sessionId);
+    if (
+      !session ||
+      session.tabId !== tab.id ||
+      session.revision !== tab.reader.revision ||
+      !Number.isSafeInteger(index) ||
+      index < 0 ||
+      index >= session.segments.length ||
+      !this.smartReaderNarration
+    ) {
+      throw new Error("That voiceover session is no longer available.");
+    }
+    if (session.activeRequestId) {
+      throw new Error("Wait for the current voiceover part to finish.");
+    }
+    const requestId = randomUUID();
+    session.activeRequestId = requestId;
+    try {
+      const audio = await this.smartReaderNarration.synthesize(
+        requestId,
+        session.segments[index],
+        session.voice,
+      );
+      if (this.readerNarrationSessions.get(sessionId) !== session) {
+        throw new DOMException("Cancelled", "AbortError");
+      }
+      return {
+        sessionId,
+        index,
+        segmentCount: session.segments.length,
+        mimeType: audio.mimeType,
+        audioBase64: audio.data,
+      };
+    } finally {
+      if (session.activeRequestId === requestId) session.activeRequestId = null;
+    }
+  }
+
+  cancelSmartReaderGeminiNarration(
+    source: WebContents,
+    sessionIdValue?: unknown,
+  ): void {
+    const tab = this.requireReaderTab(source);
+    const sessionId =
+      typeof sessionIdValue === "string" ? sessionIdValue : null;
+    if (sessionId) {
+      const session = this.readerNarrationSessions.get(sessionId);
+      if (session?.tabId === tab.id) this.cancelNarrationSession(session);
+      return;
+    }
+    this.cancelNarrationForTab(tab);
+  }
+
   getSmartReaderSummary(source: WebContents): SmartReaderSummarySnapshot {
     return this.smartReaderSummarySnapshot(this.requireReaderTab(source));
   }
@@ -2326,6 +2662,20 @@ export class TabManager {
       request.provider,
       request.model,
     );
+    this.sendSmartReaderSummary(tab);
+    return this.smartReaderSummarySnapshot(tab);
+  }
+
+  async setSmartReaderSummaryConsent(
+    source: WebContents,
+    granted: unknown,
+  ): Promise<SmartReaderSummarySnapshot> {
+    const tab = this.requireReaderTab(source);
+    if (typeof granted !== "boolean") {
+      throw new TypeError("Choose whether Gemini may process Reader articles.");
+    }
+    if (!this.smartReaderSummary) throw new Error("Scout is unavailable.");
+    await this.smartReaderSummary.setConsent(granted);
     this.sendSmartReaderSummary(tab);
     return this.smartReaderSummarySnapshot(tab);
   }
@@ -2384,9 +2734,8 @@ export class TabManager {
           stage: previousResult ? "ready" : "error",
           requestId: null,
           result: previousResult,
-          error: previousResult
-            ? null
-            : error instanceof Error
+          error:
+            error instanceof Error
               ? error.message
               : "Scout could not finish this summary.",
         };
@@ -2833,6 +3182,13 @@ export class TabManager {
   }
 
   async flushWindowStateForClose(): Promise<void> {
+    await Promise.all(
+      [...this.tabs.values()].map((tab) => {
+        if (tab.readerProgressTimer) clearTimeout(tab.readerProgressTimer);
+        tab.readerProgressTimer = null;
+        return this.flushReadingPosition(tab);
+      }),
+    );
     if (this.preferences.snapshot.restoreSession) {
       await this.flushSession();
       return;
@@ -2914,7 +3270,14 @@ export class TabManager {
       webStoreListingDescription: null,
       groupId,
       thumbnailDataUrl: null,
-      reader: { availability: "unavailable", active: false, revision: 0 },
+      reader: {
+        availability: "unavailable",
+        active: false,
+        revision: 0,
+        saved: false,
+        navigationOpen: false,
+        narrationOpen: false,
+      },
       readerView: null,
       readerDocumentUrl: null,
       readerPendingRequestId: null,
@@ -2923,6 +3286,8 @@ export class TabManager {
       readerAppearanceRevision: 0,
       readerMutationTimer: null,
       readerTimers: new Set(),
+      readerProgressTimer: null,
+      readerProgressValue: null,
       readerArticle: null,
       readerSummary: {
         stage: "idle",
@@ -3785,12 +4150,61 @@ export class TabManager {
   }
 
   private smartReaderSnapshot(tab: TabRecord): SmartReaderViewSnapshot {
+    tab.reader.saved = Boolean(
+      tab.readerArticle &&
+      this.browserData.findSavedArticle(tab.readerArticle.sourceUrl),
+    );
     return {
       tabId: tab.id,
       ...tab.reader,
       article: null,
       error: tab.readerError,
     };
+  }
+
+  private meaningfulReadingPosition(tab: TabRecord): number | null {
+    const progress = tab.readerArticle
+      ? this.readingPositions.get(tab.readerArticle.sourceUrl)
+      : null;
+    return progress !== null && progress >= 0.05 && progress <= 0.95
+      ? progress
+      : null;
+  }
+
+  private sendSmartReaderCommand(
+    tab: TabRecord,
+    command: SmartReaderCommand,
+  ): void {
+    const contents = tab.readerView?.webContents;
+    if (!contents || contents.isDestroyed()) return;
+    contents.send(channels.smartReaderCommand, command);
+  }
+
+  private async flushReadingPosition(tab: TabRecord): Promise<void> {
+    const progress = tab.readerProgressValue;
+    const url = tab.readerArticle?.sourceUrl;
+    tab.readerProgressValue = null;
+    if (progress === null || !url) return;
+    await this.readingPositions
+      .set(url, progress)
+      .catch((error) =>
+        console.warn("Could not save Smart Reader position.", error),
+      );
+  }
+
+  private cancelNarrationSession(
+    session: SmartReaderNarrationSessionRecord,
+  ): void {
+    if (session.activeRequestId) {
+      this.smartReaderNarration?.cancel(session.activeRequestId);
+    }
+    this.readerNarrationSessions.delete(session.id);
+  }
+
+  private cancelNarrationForTab(tab: TabRecord): void {
+    for (const session of this.readerNarrationSessions?.values() ?? []) {
+      if (session.tabId === tab.id) this.cancelNarrationSession(session);
+    }
   }
 
   private smartReaderSummarySnapshot(
@@ -3855,8 +4269,11 @@ export class TabManager {
     const candidate = value as Record<string, unknown>;
     const provider = this.requireSummaryProvider(candidate.provider);
     const model =
-      typeof candidate.model === "string" ? candidate.model.trim() : "";
-    if (!model || model.length > 256 || /[\u0000-\u001f\u007f]/u.test(model)) {
+      typeof candidate.model === "string" ? candidate.model.trim() : null;
+    if (
+      model !== null &&
+      (!model || model.length > 256 || /[\u0000-\u001f\u007f]/u.test(model))
+    ) {
       throw new TypeError("Choose a valid Scout model.");
     }
     return {
@@ -3919,6 +4336,19 @@ export class TabManager {
       article.headings.every(
         (heading) => typeof heading === "string" && heading.length <= 500,
       ) &&
+      (article.sections === undefined ||
+        (Array.isArray(article.sections) &&
+          article.sections.length <= 100 &&
+          article.sections.every(
+            (section) =>
+              section !== null &&
+              typeof section === "object" &&
+              typeof section.id === "string" &&
+              section.id.length <= 160 &&
+              typeof section.text === "string" &&
+              section.text.length <= 500 &&
+              [1, 2, 3, 4].includes(section.level),
+          ))) &&
       typeof article.textLength === "number" &&
       article.textLength >= 80 &&
       article.textLength <= 10_000_000 &&
@@ -4002,6 +4432,7 @@ export class TabManager {
             availability: "unavailable",
             active: false,
             revision: pending.revision,
+            saved: false,
             article: null,
             error: "The page changed before Smart Reader finished.",
           },
@@ -4079,6 +4510,11 @@ export class TabManager {
   }
 
   private invalidateSmartReader(tab: TabRecord): void {
+    this.sendSmartReaderCommand(tab, { type: "stop-narration" });
+    this.cancelNarrationForTab(tab);
+    if (tab.readerProgressTimer) clearTimeout(tab.readerProgressTimer);
+    tab.readerProgressTimer = null;
+    void this.flushReadingPosition(tab);
     this.clearReaderTimers(tab);
     this.cancelReaderExtraction(tab, "The page changed.");
     tab.reader.revision += 1;
@@ -4086,6 +4522,9 @@ export class TabManager {
       ? "checking"
       : "unavailable";
     tab.reader.active = false;
+    tab.reader.saved = false;
+    tab.reader.navigationOpen = false;
+    tab.reader.narrationOpen = false;
     tab.readerError = null;
     tab.readerArticle = null;
     this.resetSummaryForTab(tab);
@@ -4133,6 +4572,15 @@ export class TabManager {
     }
     tab.reader.active = true;
     tab.reader.availability = "available";
+    tab.reader.saved = Boolean(
+      tab.readerArticle &&
+      this.browserData.findSavedArticle(tab.readerArticle.sourceUrl),
+    );
+    this.sendSmartReaderCommand(tab, {
+      type: "set-progress-visible",
+      visible: this.preferences.snapshot.smartReaderProgressVisible,
+      resumeProgress: this.meaningfulReadingPosition(tab),
+    });
     if (tab.id === this.activeTabId) {
       this.layoutActiveView();
       view.webContents.focus();
@@ -4142,6 +4590,16 @@ export class TabManager {
 
   private exitSmartReader(tab: TabRecord): void {
     if (!tab.reader.active) return;
+    if (tab.reader.navigationOpen) {
+      this.sendSmartReaderCommand(tab, { type: "toggle-navigation" });
+    }
+    this.sendSmartReaderCommand(tab, { type: "stop-narration" });
+    tab.reader.navigationOpen = false;
+    tab.reader.narrationOpen = false;
+    this.cancelNarrationForTab(tab);
+    if (tab.readerProgressTimer) clearTimeout(tab.readerProgressTimer);
+    tab.readerProgressTimer = null;
+    void this.flushReadingPosition(tab);
     tab.reader.active = false;
     this.cancelSummaryForTab(tab);
     if (tab.id === this.activeTabId) {
@@ -4273,6 +4731,8 @@ export class TabManager {
     tab.readerAppearanceRevision += 1;
     const wasActive = tab.reader.active;
     tab.reader.active = false;
+    tab.reader.navigationOpen = false;
+    tab.reader.narrationOpen = false;
     if (!this.tabs.has(tab.id) || !wasActive) return;
     if (tab.id === this.activeTabId) {
       this.layoutActiveView();
@@ -4589,6 +5049,11 @@ export class TabManager {
   }
 
   private destroyView(tab: TabRecord): void {
+    this.sendSmartReaderCommand(tab, { type: "stop-narration" });
+    this.cancelNarrationForTab(tab);
+    if (tab.readerProgressTimer) clearTimeout(tab.readerProgressTimer);
+    tab.readerProgressTimer = null;
+    void this.flushReadingPosition(tab);
     this.clearReaderTimers(tab);
     this.cancelReaderExtraction(tab, "The tab closed.");
     this.smartReaderDocuments.removeUrl(tab.readerDocumentUrl);
@@ -4612,6 +5077,10 @@ export class TabManager {
     tab: TabRecord,
     memoryByProcessId: ReadonlyMap<number, number>,
   ): BrowserTabSnapshot {
+    tab.reader.saved = Boolean(
+      tab.readerArticle &&
+      this.browserData.findSavedArticle(tab.readerArticle.sourceUrl),
+    );
     return {
       id: tab.id,
       title: tab.title,

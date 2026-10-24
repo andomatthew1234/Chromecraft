@@ -108,6 +108,103 @@
   background: transparent;
 }
 
+.bookmark-library-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+  margin: 0 12px 10px;
+  padding: 3px;
+  border-radius: 14px;
+  background: var(--md-surface-container-highest);
+}
+
+.bookmark-library-tabs button {
+  min-height: 36px;
+  border-radius: 11px;
+  color: var(--md-on-surface-variant);
+  font: var(--type-label-medium);
+}
+
+.bookmark-library-tabs button[aria-selected="true"] {
+  color: var(--md-on-secondary-container);
+  background: var(--md-secondary-container);
+  box-shadow: var(--elevation-1);
+}
+
+.saved-article-sort {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 12px 8px;
+}
+
+.saved-article-sort label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--md-on-surface-variant);
+  font: var(--type-label-small);
+}
+
+.saved-article-sort select {
+  min-height: 32px;
+  padding: 0 28px 0 9px;
+  border: 1px solid var(--md-outline-variant);
+  border-radius: 10px;
+  color: var(--md-on-surface);
+  background: var(--md-surface-container-low);
+  font: var(--type-label-small);
+}
+
+.saved-article-entry .entry-main {
+  display: grid;
+  gap: 7px;
+}
+
+.saved-article-heading {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.saved-article-heading > img,
+.saved-article-fallback {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  background: var(--md-surface-container-highest);
+  object-fit: contain;
+}
+
+.saved-article-heading > span:last-child {
+  min-width: 0;
+  display: grid;
+}
+
+.saved-article-heading strong,
+.saved-article-heading small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.saved-article-description {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--md-on-surface-variant);
+  font: var(--type-body-small);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.saved-article-date {
+  color: var(--md-on-surface-variant);
+  font: var(--type-label-small);
+}
+
 :root[data-theme="dark"] {
   --md-primary: #adc6ff;
   --md-on-primary: #002e68;

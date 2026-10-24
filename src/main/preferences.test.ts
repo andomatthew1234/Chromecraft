@@ -27,7 +27,17 @@ describe("PreferencesStore search suggestions", () => {
       hyperdriveExcludedHosts: [],
       hyperdriveMonitorOpen: false,
       hyperdriveDeveloperMode: false,
+      smartReaderProgressVisible: false,
     });
+  });
+
+  it("persists the opt-in Smart Reader progress preference", async () => {
+    const preferences = new PreferencesStore(filePath);
+    await preferences.load();
+    await preferences.setSmartReaderProgressVisible(true);
+    const reloaded = new PreferencesStore(filePath);
+    await reloaded.load();
+    expect(reloaded.snapshot.smartReaderProgressVisible).toBe(true);
   });
 
   it("keeps legacy sidebar preferences attached and preserves panel state", async () => {

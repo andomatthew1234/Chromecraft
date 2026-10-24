@@ -289,7 +289,7 @@ try {
     !articleState.image ||
     !articleState.fragmentTarget ||
     articleState.fragmentLink !== "#details" ||
-    articleState.summaryButton !== "✦Summarise with Scout" ||
+    articleState.summaryButton !== "Generate summary" ||
     articleState.scriptCount ||
     articleState.overflow
   ) {
@@ -298,13 +298,21 @@ try {
     );
   }
   const summarySettings = await reader.evaluate(
-    `(()=>{document.querySelector('[data-action="settings"]')?.click();return {ollama:[...document.querySelectorAll('[data-provider]')].some(button=>button.textContent==='Local Ollama'),gemini:[...document.querySelectorAll('[data-provider]')].some(button=>button.textContent==='Google Gemini'),cloudDisclosure:document.querySelector('.scout-cloud-note')?.textContent}})()`,
+    `(()=>{document.querySelector('[data-action="settings"]')?.click();return {actionCount:document.querySelectorAll('.scout-actions > button').length,automatic:[...document.querySelectorAll('[data-model]')].some(button=>button.textContent.includes('Automatic (recommended)')),ollama:[...document.querySelectorAll('[data-provider]')].some(button=>button.textContent.trim()==='Local AI'),gemini:[...document.querySelectorAll('[data-provider]')].some(button=>button.textContent.trim()==='Google Gemini')}})()`,
   );
-  if (!summarySettings.ollama || !summarySettings.gemini) {
+  if (
+    summarySettings.actionCount !== 3 ||
+    !summarySettings.automatic ||
+    !summarySettings.ollama ||
+    !summarySettings.gemini
+  ) {
     throw new Error(
       `Reader summary settings regression: ${JSON.stringify(summarySettings)}`,
     );
   }
+  await reader.evaluate(
+    "document.querySelector('[data-action=\"settings\"]')?.click()",
+  );
   await poll(
     () =>
       shell.evaluate(
@@ -312,6 +320,198 @@ try {
       ),
     Boolean,
     "active Reader toolbar state",
+  );
+  const featureToolbar = await shell.evaluate(
+    `(()=>({labels:[...document.querySelectorAll('.reader-toolbar-cluster button')].map(button=>button.getAttribute('aria-label')),overflow:Boolean(document.querySelector('.reader-overflow-button'))}))()`,
+  );
+  for (const label of [
+    "Exit Smart Reader",
+    "Reading appearance",
+    "Save for later reading",
+    "Reading progress",
+    "Ask Scout about this article",
+    "Read aloud",
+    "Article navigation",
+  ]) {
+    if (!featureToolbar.labels.includes(label)) {
+      throw new Error(
+        `Missing Smart Reader toolbar action ${label}: ${JSON.stringify(featureToolbar)}`,
+      );
+    }
+  }
+  const articleAttachment = await shell.evaluate(
+    `(async()=>{const snapshot=await window.chromecraft.getSnapshot();const attachment=await window.chromecraft.getSmartReaderArticleAttachment(snapshot.activeTabId);return {kind:attachment?.kind,title:attachment?.data?.readerArticle?.title,textLength:attachment?.data?.readerArticle?.text?.length,complete:attachment?.data?.readerArticle?.complete}})()`,
+  );
+  if (
+    articleAttachment.kind !== "full-reader-article" ||
+    articleAttachment.title !== "Reader fixture" ||
+    !articleAttachment.textLength
+  ) {
+    throw new Error(
+      `Full Reader attachment regression: ${JSON.stringify(articleAttachment)}`,
+    );
+  }
+  await shell.evaluate(
+    "document.querySelector('.reader-save-button')?.click()",
+  );
+  await poll(
+    () =>
+      shell.evaluate(
+        `(async()=>{const [snapshot,browserData]=await Promise.all([window.chromecraft.getSnapshot(),window.chromecraft.getBrowserData()]);const tab=snapshot.tabs.find(item=>item.id===snapshot.activeTabId);return {saved:tab?.reader?.saved,librarySize:browserData.savedArticles?.length??0}})()`,
+      ),
+    (value) => value.saved === true && value.librarySize === 1,
+    "saved article persistence",
+  );
+  await shell.evaluate(
+    "document.querySelector('.reader-progress-button')?.click()",
+  );
+  await poll(
+    () =>
+      reader.evaluate(
+        "document.querySelector('.reader-progress-track')?.classList.contains('visible')",
+      ),
+    Boolean,
+    "Reader progress indicator",
+  );
+  await shell.evaluate(
+    "document.querySelector('[aria-label=\"Article navigation\"]')?.click()",
+  );
+  const navigationPanel = await poll(
+    () =>
+      reader.evaluate(
+        `(()=>({open:document.querySelector('.reader-nav')?.classList.contains('open'),links:document.querySelectorAll('.reader-nav-list button').length,title:document.querySelector('.reader-nav header strong')?.textContent}))()`,
+      ),
+    (value) => value.open === true,
+    "article navigation panel",
+  );
+  if (
+    navigationPanel.links < 2 ||
+    navigationPanel.title !== "In this article"
+  ) {
+    throw new Error(
+      `Article navigation regression: ${JSON.stringify(navigationPanel)}`,
+    );
+  }
+  await new Promise((resolve) => setTimeout(resolve, 260));
+  const navigationScreenshot = await reader.send("Page.captureScreenshot", {
+    format: "png",
+  });
+  const navigationScreenshotPath = path.join(
+    profile,
+    "smart-reader-navigation.png",
+  );
+  await fs.writeFile(
+    navigationScreenshotPath,
+    Buffer.from(navigationScreenshot.data, "base64"),
+  );
+  await reader.evaluate(
+    `dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))`,
+  );
+  await poll(
+    () =>
+      shell.evaluate(
+        `document.querySelector('[aria-label="Article navigation"]')?.getAttribute('aria-pressed')`,
+      ),
+    (value) => value === "false",
+    "navigation toolbar state after Escape",
+  );
+  await shell.evaluate(
+    "document.querySelector('[aria-label=\"Read aloud\"]')?.click()",
+  );
+  const narrationPanel = await poll(
+    () =>
+      reader.evaluate(
+        `(()=>({open:document.querySelector('.reader-audio')?.classList.contains('open'),modes:[...document.querySelectorAll('.reader-audio-modes button')].map(button=>button.textContent?.trim()),status:document.querySelector('.reader-audio-status')?.textContent}))()`,
+      ),
+    (value) => value.open === true,
+    "Read aloud panel",
+  );
+  if (
+    narrationPanel.modes.join("|") !== "Standard|Gemini|Local AI" ||
+    !narrationPanel.status
+  ) {
+    throw new Error(
+      `Read aloud panel regression: ${JSON.stringify(narrationPanel)}`,
+    );
+  }
+  await reader.evaluate(
+    `document.querySelector('[data-mode="gemini"]')?.click()`,
+  );
+  const geminiNarration = await poll(
+    () =>
+      reader.evaluate(
+        `(()=>{const cloud=document.querySelector('.reader-audio-cloud');return {cloudDisplay:getComputedStyle(cloud).display,localDisplay:getComputedStyle(document.querySelector('.reader-audio-local')).display,notice:cloud?.textContent,consent:Boolean(cloud?.querySelector('[data-cloud-consent]')),generate:Boolean(cloud?.querySelector('[data-generate]'))}})()`,
+      ),
+    (value) => value.cloudDisplay !== "none",
+    "Gemini narration consent state",
+  );
+  if (
+    geminiNarration.localDisplay !== "none" ||
+    !geminiNarration.notice?.includes("sent to Google Gemini") ||
+    !geminiNarration.notice.includes("paid API quota") ||
+    !geminiNarration.consent ||
+    !geminiNarration.generate
+  ) {
+    throw new Error(
+      `Gemini narration consent regression: ${JSON.stringify(geminiNarration)}`,
+    );
+  }
+  await reader.evaluate(
+    `document.querySelector('[data-mode="local"]')?.click()`,
+  );
+  const localNarration = await poll(
+    () =>
+      reader.evaluate(
+        `document.querySelector('.reader-audio-local')?.textContent`,
+      ),
+    (value) => Boolean(value),
+    "Local narration unavailable state",
+  );
+  if (
+    !localNarration
+      ?.toLowerCase()
+      .includes("no integrated local ai speech engine") ||
+    !localNarration.toLowerCase().includes("ollama models are text-only")
+  ) {
+    throw new Error(
+      `Local narration honesty regression: ${JSON.stringify(localNarration)}`,
+    );
+  }
+  const localModeLayout = await reader.evaluate(
+    `(()=>({cloud:getComputedStyle(document.querySelector('.reader-audio-cloud')).display,local:getComputedStyle(document.querySelector('.reader-audio-local')).display,voiceHidden:document.querySelector('[data-voice]').closest('label').hidden,rateHidden:document.querySelector('[data-rate]').closest('label').hidden}))()`,
+  );
+  if (
+    localModeLayout.cloud !== "none" ||
+    localModeLayout.local === "none" ||
+    !localModeLayout.voiceHidden ||
+    !localModeLayout.rateHidden
+  ) {
+    throw new Error(
+      `Local narration layout regression: ${JSON.stringify(localModeLayout)}`,
+    );
+  }
+  await new Promise((resolve) => setTimeout(resolve, 220));
+  const narrationScreenshot = await reader.send("Page.captureScreenshot", {
+    format: "png",
+  });
+  const narrationScreenshotPath = path.join(
+    profile,
+    "smart-reader-narration.png",
+  );
+  await fs.writeFile(
+    narrationScreenshotPath,
+    Buffer.from(narrationScreenshot.data, "base64"),
+  );
+  await reader.evaluate(
+    `document.querySelector('.reader-audio-close')?.click()`,
+  );
+  await poll(
+    () =>
+      shell.evaluate(
+        `document.querySelector('[aria-label="Read aloud"]')?.getAttribute('aria-pressed')`,
+      ),
+    (value) => value === "false",
+    "narration toolbar state after panel close",
   );
   await shell.evaluate(
     "document.querySelector('[data-smart-reader-appearance-button]').click()",
@@ -446,7 +646,7 @@ try {
     }
   }
   process.stdout.write(
-    `${JSON.stringify({ placement, articleState, preserved, dynamicDetection: "available", nonArticle: manualNegative.availability, screenshotPath, realSites }, null, 2)}\n`,
+    `${JSON.stringify({ placement, articleState, navigationScreenshotPath, narrationScreenshotPath, preserved, dynamicDetection: "available", nonArticle: manualNegative.availability, screenshotPath, realSites }, null, 2)}\n`,
   );
 } finally {
   reader?.close();
