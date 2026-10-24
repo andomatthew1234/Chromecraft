@@ -826,6 +826,81 @@ function scoutShouldPlay() {
   );
 }
 
+const agenticShowcase = document.querySelector(".agentic-showcase");
+const agenticPanels = [...document.querySelectorAll("[data-agentic-panel]")];
+const agenticTabs = [...document.querySelectorAll("[data-agentic-slide]")];
+const agenticArrows = [
+  ...document.querySelectorAll("[data-agentic-direction]"),
+];
+const agenticStatus = document.querySelector(".agentic-status");
+let activeAgenticSlide = 0;
+
+function showAgenticSlide(index, { focus = false, announce = false } = {}) {
+  if (!agenticPanels.length || !agenticTabs.length) return;
+  activeAgenticSlide = (index + agenticPanels.length) % agenticPanels.length;
+
+  agenticPanels.forEach((panel, panelIndex) => {
+    const active = panelIndex === activeAgenticSlide;
+    panel.classList.toggle("is-active", active);
+    panel.setAttribute("aria-hidden", String(!active));
+  });
+
+  agenticTabs.forEach((tab, tabIndex) => {
+    const active = tabIndex === activeAgenticSlide;
+    tab.classList.toggle("is-active", active);
+    tab.setAttribute("aria-selected", String(active));
+    tab.tabIndex = active ? 0 : -1;
+  });
+
+  if (focus) agenticTabs[activeAgenticSlide]?.focus();
+  if (announce && agenticStatus) {
+    const name =
+      agenticTabs[activeAgenticSlide]
+        ?.querySelector("strong")
+        ?.textContent?.trim() ?? "Feature";
+    agenticStatus.textContent = `${name}, slide ${activeAgenticSlide + 1} of ${agenticPanels.length}`;
+  }
+}
+
+function handleAgenticKeydown(event) {
+  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+    return;
+  }
+  event.preventDefault();
+  if (event.key === "Home") {
+    showAgenticSlide(0, { focus: true, announce: true });
+  } else if (event.key === "End") {
+    showAgenticSlide(agenticPanels.length - 1, {
+      focus: true,
+      announce: true,
+    });
+  } else {
+    const direction = event.key === "ArrowRight" ? 1 : -1;
+    showAgenticSlide(activeAgenticSlide + direction, {
+      focus: true,
+      announce: true,
+    });
+  }
+}
+
+if (agenticShowcase && agenticPanels.length && agenticTabs.length) {
+  agenticTabs.forEach((tab) => {
+    tab.addEventListener("click", () => {
+      showAgenticSlide(Number(tab.dataset.agenticSlide), { announce: true });
+    });
+    tab.addEventListener("keydown", handleAgenticKeydown);
+  });
+  agenticArrows.forEach((button) => {
+    button.addEventListener("click", () => {
+      showAgenticSlide(
+        activeAgenticSlide + Number(button.dataset.agenticDirection),
+        { announce: true },
+      );
+    });
+  });
+  showAgenticSlide(0);
+}
+
 function updateScoutPauseState() {
   if (!scoutShowcase || !scoutPlayToggle) return;
   const transientPause =

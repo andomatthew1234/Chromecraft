@@ -585,263 +585,179 @@
         </div>
       </section>
 
-      <section class="feature feature-agent" aria-labelledby="agent-title">
-        <div class="feature-copy">
-          <p class="section-kicker">04 / Let the browser lend a hand</p>
-          <h2 id="agent-title">Built for <span>Agentic AI</span></h2>
-          <p>
-            Chromecraft can run actions on your behalf - free, with no
-            subscriptions required.
-          </p>
-        </div>
-
-        <div class="agent-queue" aria-label="Agent action queue illustration">
-          <div class="queue-heading">
-            <span class="queue-pulse" aria-hidden="true"></span>
-            Agent workspace
-            <span class="queue-count">03</span>
-          </div>
-          <ol>
-            <li class="completed">
-              <span class="queue-icon">+</span><span>Organize open tabs</span
-              ><strong>Done</strong>
-            </li>
-            <li class="active">
-              <span class="queue-icon">+</span
-              ><span>Compare selected pages</span><strong>Working</strong>
-            </li>
-            <li>
-              <span class="queue-icon">+</span><span>Draft a quick summary</span
-              ><strong>Ready</strong>
-            </li>
-          </ol>
-          <div class="queue-composer">
-            <span>What should we do next?</span
-            ><span class="send-mark" aria-hidden="true">^</span>
-          </div>
-        </div>
-      </section>
-
-      <section class="scout-showcase" id="scout" aria-labelledby="scout-title">
+      <section
+        class="agentic-showcase"
+        id="agentic-ai"
+        aria-labelledby="agentic-showcase-title"
+      >
         <div
-          class="scout-stage"
+          class="agentic-stage"
           role="region"
           aria-roledescription="carousel"
-          aria-label="Scout features"
+          aria-label="Chromecraft agentic AI features"
         >
-          <div class="scout-copy">
-            <p class="scout-kicker">05 / Meet Scout</p>
-            <h2 id="scout-title">
-              <span>Scout.</span> Your ready-on personal agent.
-            </h2>
-            <p class="scout-intro">
-              Scout stays beside every tab, ready to understand, focus, and act
-              without pulling you away from the page.
-            </p>
-
-            <div class="scout-feature-viewport">
-              <article
-                class="scout-feature-slide is-active"
-                data-scout-slide="0"
-              >
-                <span class="material-symbols-rounded" aria-hidden="true"
-                  >language</span
-                >
-                <p>01 / PAGE AWARE</p>
-                <h3>Understands this page</h3>
+          <div class="agentic-panels">
+            <article
+              class="agentic-panel is-active"
+              id="agentic-panel-home"
+              role="tabpanel"
+              aria-labelledby="agentic-tab-home"
+              data-agentic-panel="0"
+            >
+              <div class="agentic-copy">
+                <p class="section-kicker">04 / Let the browser lend a hand</p>
+                <h2 id="agentic-showcase-title">
+                  Built for <span>Agentic AI</span>
+                </h2>
                 <p>
-                  Ask with the page's title, URL, and description already in
-                  reach. Scout keeps the answer grounded in the tab you're
-                  actually looking at.
+                  Chromecraft can run actions on your behalf - free, with no
+                  subscriptions required.
                 </p>
-              </article>
-
-              <article class="scout-feature-slide" data-scout-slide="1" hidden>
-                <span class="material-symbols-rounded" aria-hidden="true"
-                  >select_window</span
-                >
-                <p>02 / PRECISE CONTEXT</p>
-                <h3>Point to what matters</h3>
-                <p>
-                  Attach selected text, a meaningful page element, or a
-                  screenshot area. Bring only the detail that matters into the
-                  conversation.
-                </p>
-              </article>
-
-              <article class="scout-feature-slide" data-scout-slide="2" hidden>
-                <span class="material-symbols-rounded" aria-hidden="true"
-                  >tab_group</span
-                >
-                <p>03 / BROWSER ACTIONS</p>
-                <h3>Turns intent into action</h3>
-                <p>
-                  Organise open tabs with local Ollama, Gemini, or instant
-                  website grouping, without leaving the page you're on.
-                </p>
-              </article>
-
-              <article class="scout-feature-slide" data-scout-slide="3" hidden>
-                <span class="material-symbols-rounded" aria-hidden="true"
-                  >shield_lock</span
-                >
-                <p>04 / PRIVATE BY DESIGN</p>
-                <h3>Context on your terms</h3>
-                <p>
-                  Review what Scout includes before every request, keep context
-                  local by default, and decide exactly what can leave your
-                  device.
-                </p>
-              </article>
-            </div>
-
-            <div class="scout-carousel-controls">
-              <div
-                class="scout-progress-tabs"
-                aria-label="Choose a Scout feature"
-              >
-                <button
-                  type="button"
-                  aria-label="Show Understands this page"
-                  aria-current="true"
-                  data-scout-go="0"
-                >
-                  <span></span>
-                </button>
-                <button
-                  type="button"
-                  aria-label="Show Point to what matters"
-                  data-scout-go="1"
-                >
-                  <span></span>
-                </button>
-                <button
-                  type="button"
-                  aria-label="Show Turns intent into action"
-                  data-scout-go="2"
-                >
-                  <span></span>
-                </button>
-                <button
-                  type="button"
-                  aria-label="Show Context on your terms"
-                  data-scout-go="3"
-                >
-                  <span></span>
-                </button>
               </div>
-              <button
-                class="scout-play-toggle"
-                type="button"
-                aria-label="Pause Scout slideshow"
-                aria-pressed="false"
-                title="Pause slideshow"
+
+              <div
+                class="agent-queue"
+                aria-label="Agent action queue illustration"
               >
-                <span class="material-symbols-rounded" aria-hidden="true"
-                  >pause</span
+                <div class="queue-heading">
+                  <span class="queue-pulse" aria-hidden="true"></span>
+                  Agent workspace
+                  <span class="queue-count">03</span>
+                </div>
+                <ol>
+                  <li class="completed">
+                    <span class="queue-icon">+</span
+                    ><span>Organize open tabs</span><strong>Done</strong>
+                  </li>
+                  <li class="active">
+                    <span class="queue-icon">+</span
+                    ><span>Compare selected pages</span><strong>Working</strong>
+                  </li>
+                  <li>
+                    <span class="queue-icon">+</span
+                    ><span>Draft a quick summary</span><strong>Ready</strong>
+                  </li>
+                </ol>
+                <div class="queue-composer">
+                  <span>What should we do next?</span
+                  ><span class="send-mark" aria-hidden="true">^</span>
+                </div>
+              </div>
+            </article>
+
+            <article
+              class="agentic-panel"
+              id="agentic-panel-scout"
+              role="tabpanel"
+              aria-labelledby="agentic-tab-scout"
+              data-agentic-panel="1"
+              aria-hidden="true"
+            >
+              <div class="agentic-copy agentic-scout-copy">
+                <p class="section-kicker">04 / Meet Scout</p>
+                <h2><span>Scout.</span> Your ready-on personal agent.</h2>
+                <p>
+                  Scout stays beside every tab, ready to understand this page,
+                  focus on what matters, and turn your intent into action.
+                </p>
+                <ul class="agentic-scout-points">
+                  <li>
+                    <span class="material-symbols-rounded" aria-hidden="true"
+                      >language</span
+                    >Page-aware context
+                  </li>
+                  <li>
+                    <span class="material-symbols-rounded" aria-hidden="true"
+                      >select_window</span
+                    >Precise selections
+                  </li>
+                  <li>
+                    <span class="material-symbols-rounded" aria-hidden="true"
+                      >shield_lock</span
+                    >Private by default
+                  </li>
+                </ul>
+              </div>
+
+              <figure class="agentic-scout-visual">
+                <img
+                  src="./assets/scout/scout-browser.png"
+                  width="2560"
+                  height="1640"
+                  loading="lazy"
+                  decoding="async"
+                  alt="Chromecraft with Scout open beside the current page, showing the Scout character and page-aware suggestions."
+                />
+              </figure>
+            </article>
+          </div>
+
+          <div class="agentic-picker">
+            <div
+              class="agentic-tabs"
+              role="tablist"
+              aria-label="Choose an agentic AI feature"
+            >
+              <button
+                class="agentic-tab is-active"
+                id="agentic-tab-home"
+                type="button"
+                role="tab"
+                aria-selected="true"
+                aria-controls="agentic-panel-home"
+                data-agentic-slide="0"
+              >
+                <span
+                  class="agentic-tab-icon material-symbols-rounded"
+                  aria-hidden="true"
+                  >home</span
+                >
+                <span
+                  ><strong>Home</strong
+                  ><small>Built for Agentic AI</small></span
                 >
               </button>
-              <span class="scout-control-divider" aria-hidden="true"></span>
               <button
-                class="scout-arrow"
+                class="agentic-tab"
+                id="agentic-tab-scout"
                 type="button"
-                data-scout-direction="-1"
-                aria-label="Previous Scout feature"
+                role="tab"
+                aria-selected="false"
+                aria-controls="agentic-panel-scout"
+                data-agentic-slide="1"
+                tabindex="-1"
+              >
+                <span class="agentic-scout-avatar" aria-hidden="true"
+                  ><i></i><i></i
+                ></span>
+                <span
+                  ><strong>Scout</strong
+                  ><small>Your ready-on personal agent</small></span
+                >
+              </button>
+            </div>
+            <div class="agentic-arrows">
+              <button
+                type="button"
+                data-agentic-direction="-1"
+                aria-label="Previous agentic AI feature"
               >
                 <span class="material-symbols-rounded" aria-hidden="true"
                   >arrow_back</span
                 >
               </button>
               <button
-                class="scout-arrow"
                 type="button"
-                data-scout-direction="1"
-                aria-label="Next Scout feature"
+                data-agentic-direction="1"
+                aria-label="Next agentic AI feature"
               >
                 <span class="material-symbols-rounded" aria-hidden="true"
                   >arrow_forward</span
                 >
               </button>
             </div>
-            <p class="sr-only scout-carousel-status" aria-live="polite"></p>
           </div>
-
-          <div
-            class="scout-gallery"
-            aria-label="Scout product screenshots"
-            tabindex="0"
-          >
-            <span class="scout-gallery-backdrop" aria-hidden="true"></span>
-
-            <button
-              class="scout-shot is-active"
-              type="button"
-              data-scout-slide="0"
-              aria-label="Show Understands this page feature"
-              aria-current="true"
-            >
-              <img
-                src="./assets/scout/scout-browser.png"
-                width="2560"
-                height="1640"
-                loading="lazy"
-                decoding="async"
-                alt="Chromecraft browser with Scout open beside the current page and page-aware suggestions ready."
-              />
-              <span>Understands this page</span>
-            </button>
-
-            <button
-              class="scout-shot is-next"
-              type="button"
-              data-scout-slide="1"
-              aria-label="Show Point to what matters feature"
-            >
-              <img
-                src="./assets/scout/scout-context.png"
-                width="2560"
-                height="1640"
-                loading="lazy"
-                decoding="async"
-                alt="Scout's context picker with screenshot, page element, and selected text controls."
-              />
-              <span>Point to what matters</span>
-            </button>
-
-            <button
-              class="scout-shot is-far"
-              type="button"
-              data-scout-slide="2"
-              aria-label="Show Turns intent into action feature"
-            >
-              <img
-                src="./assets/scout/scout-organiser.png"
-                width="2560"
-                height="1640"
-                loading="lazy"
-                decoding="async"
-                alt="Scout's tab organiser with Gemini, local Ollama, and instant website sorting options."
-              />
-              <span>Turns intent into action</span>
-            </button>
-
-            <button
-              class="scout-shot is-previous"
-              type="button"
-              data-scout-slide="3"
-              aria-label="Show Context on your terms feature"
-            >
-              <img
-                src="./assets/scout/scout-privacy.png"
-                width="1280"
-                height="820"
-                loading="lazy"
-                decoding="async"
-                alt="Scout privacy settings showing local-by-default context controls for page URL, title, and description."
-              />
-              <span>Context on your terms</span>
-            </button>
-          </div>
+          <p class="sr-only agentic-status" aria-live="polite"></p>
         </div>
       </section>
 
@@ -851,7 +767,7 @@
         aria-labelledby="youtube-utilities-title"
       >
         <div class="youtube-utilities-intro">
-          <p class="section-kicker">06 / YouTube Utilities</p>
+          <p class="section-kicker">05 / YouTube Utilities</p>
           <h2 id="youtube-utilities-title">
             Your videos. <span>Ready offline.</span>
           </h2>
@@ -1004,7 +920,7 @@
         <div class="hyperdrive-stage">
           <canvas class="hyperdrive-field" aria-hidden="true"></canvas>
           <div class="hyperdrive-content">
-            <p class="section-kicker">07 / Chromecraft Hyperdrive</p>
+            <p class="section-kicker">06 / Chromecraft Hyperdrive</p>
             <h2 id="hyperdrive-title">Hyperdrive</h2>
             <p class="hyperdrive-summary">
               When Hyperdrive is on, Chromecraft predicts which sites you might
