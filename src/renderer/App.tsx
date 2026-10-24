@@ -2411,6 +2411,10 @@ function ublockLabel(ublock: UblockSnapshot): string {
   return ublock.error ? "uBlock error" : "uBlock off";
 }
 
+type ToolbarContextMenuTarget =
+  | { kind: "action"; action: ToolbarAction; label: string }
+  | { kind: "extension"; extension: BrowserExtensionSnapshot; label: string };
+
 function Toolbar({
   tab,
   snapshot,
@@ -2460,10 +2464,60 @@ function Toolbar({
   const hiddenToolbarActions = new Set(
     snapshot.preferences.hiddenToolbarActions,
   );
-  const unpinToolbarAction = (event: MouseEvent, action: ToolbarAction) => {
+  const [toolbarContextMenu, setToolbarContextMenu] = useState<{
+    x: number;
+    y: number;
+    target: ToolbarContextMenuTarget;
+  } | null>(null);
+  const openToolbarContextMenu = (
+    event: MouseEvent,
+    target: ToolbarContextMenuTarget,
+  ) => {
     event.preventDefault();
-    void window.chromecraft.setToolbarActionPinned(action, false);
+    event.stopPropagation();
+    setToolbarContextMenu({
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - 244)),
+      y: Math.max(52, Math.min(event.clientY, window.innerHeight - 116)),
+      target,
+    });
   };
+  const removeFromToolbar = () => {
+    if (!toolbarContextMenu) return;
+    if (toolbarContextMenu.target.kind === "action") {
+      void window.chromecraft.setToolbarActionPinned(
+        toolbarContextMenu.target.action,
+        false,
+      );
+    } else {
+      void window.chromecraft.setExtensionToolbarPinned(
+        toolbarContextMenu.target.extension.id,
+        false,
+      );
+    }
+    setToolbarContextMenu(null);
+  };
+  useEffect(() => {
+    if (!toolbarContextMenu) return;
+    const dismiss = (event: PointerEvent) => {
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest(".toolbar-context-menu, [data-toolbar-context-trigger]")
+      ) {
+        return;
+      }
+      setToolbarContextMenu(null);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setToolbarContextMenu(null);
+    };
+    addEventListener("pointerdown", dismiss, { capture: true });
+    addEventListener("keydown", onKeyDown);
+    return () => {
+      removeEventListener("pointerdown", dismiss, { capture: true });
+      removeEventListener("keydown", onKeyDown);
+    };
+  }, [toolbarContextMenu]);
   return (
     <div className="toolbar">
       <div className="toolbar-navigation">
@@ -2523,10 +2577,17 @@ function Toolbar({
                 url: tab.url,
               })
             }
-            onContextMenu={(event) => unpinToolbarAction(event, "bookmark")}
+            data-toolbar-context-trigger
+            onContextMenu={(event) =>
+              openToolbarContextMenu(event, {
+                kind: "action",
+                action: "bookmark",
+                label: "Bookmark this page",
+              })
+            }
             aria-label="Bookmark this page"
             aria-pressed={bookmarked}
-            title={`${bookmarked ? "Bookmarked" : "Bookmark this page"} · right-click to unpin`}
+            title={`${bookmarked ? "Bookmarked" : "Bookmark this page"} · right-click for toolbar options`}
           >
             <Icon name={bookmarked ? "bookmarkFilled" : "bookmark"} />
           </button>
@@ -2536,9 +2597,16 @@ function Toolbar({
             type="button"
             className="tool-button"
             onClick={onFind}
-            onContextMenu={(event) => unpinToolbarAction(event, "find")}
+            data-toolbar-context-trigger
+            onContextMenu={(event) =>
+              openToolbarContextMenu(event, {
+                kind: "action",
+                action: "find",
+                label: "Find in page",
+              })
+            }
             aria-label="Find in page"
-            title="Find (Ctrl+F) · right-click to unpin"
+            title="Find (Ctrl+F) · right-click for toolbar options"
           >
             <Icon name="find" />
           </button>
@@ -2556,12 +2624,20 @@ function Toolbar({
                 event.currentTarget.getBoundingClientRect(),
               )
             }
+            data-toolbar-context-trigger
+            onContextMenu={(event) =>
+              openToolbarContextMenu(event, {
+                kind: "extension",
+                extension,
+                label: extension.action?.title || extension.name,
+              })
+            }
             aria-label={`${extensionActionSelected(extensions.popupExtensionId, extension.id) ? "Close" : "Open"} ${extension.action?.title || extension.name}`}
             aria-expanded={extensionActionSelected(
               extensions.popupExtensionId,
               extension.id,
             )}
-            title={extension.action?.title || extension.name}
+            title={`${extension.action?.title || extension.name} · right-click for toolbar options`}
           >
             {extension.action?.iconUrl || extension.iconDataUrl ? (
               <img
@@ -2744,8 +2820,15 @@ function Toolbar({
             }
             aria-label={`${snapshot.preferences.hyperdriveMonitorOpen ? "Close" : "Open"} Hyperdrive Monitor`}
             aria-pressed={snapshot.preferences.hyperdriveMonitorOpen}
-            onContextMenu={(event) => unpinToolbarAction(event, "hyperdrive")}
-            title={`Hyperdrive: ${hyperdrive.status.replace("-", " ")} · right-click to unpin`}
+            data-toolbar-context-trigger
+            onContextMenu={(event) =>
+              openToolbarContextMenu(event, {
+                kind: "action",
+                action: "hyperdrive",
+                label: "Hyperdrive",
+              })
+            }
+            title={`Hyperdrive: ${hyperdrive.status.replace("-", " ")} · right-click for toolbar options`}
           >
             <Icon name="bolt" />
             <span className="toolbar-status-dot" aria-hidden="true" />
@@ -2768,8 +2851,15 @@ function Toolbar({
               snapshot.ublock.ready &&
               void window.chromecraft.openUblockDashboard()
             }
-            onContextMenu={(event) => unpinToolbarAction(event, "ublock")}
-            title={`${snapshot.ublock.error ?? "Open uBlock Origin dashboard"} · right-click to unpin`}
+            data-toolbar-context-trigger
+            onContextMenu={(event) =>
+              openToolbarContextMenu(event, {
+                kind: "action",
+                action: "ublock",
+                label: "uBlock Origin",
+              })
+            }
+            title={`${snapshot.ublock.error ?? "Open uBlock Origin dashboard"} · right-click for toolbar options`}
             aria-label={`${ublockLabel(snapshot.ublock)}. Open uBlock Origin dashboard`}
           >
             <Icon name="shield" />
@@ -2777,6 +2867,29 @@ function Toolbar({
           </button>
         )}
       </div>
+      {toolbarContextMenu && (
+        <div
+          className="toolbar-context-menu"
+          role="menu"
+          aria-label={`Toolbar options for ${toolbarContextMenu.target.label}`}
+          style={{ left: toolbarContextMenu.x, top: toolbarContextMenu.y }}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <div className="toolbar-context-menu-label" aria-hidden="true">
+            <Icon name="pin" />
+            <span>{toolbarContextMenu.target.label}</span>
+          </div>
+          <button
+            type="button"
+            role="menuitem"
+            className="destructive"
+            onClick={removeFromToolbar}
+          >
+            <Icon name="delete" />
+            Remove from toolbar
+          </button>
+        </div>
+      )}
     </div>
   );
 }
