@@ -677,17 +677,16 @@ button {
 }
 
 .sidebar-product-frame {
-  width: clamp(232px, 22vw, 292px);
+  width: clamp(320px, 31vw, 440px);
   margin: 0;
   overflow: hidden;
   position: relative;
-  border: 1px solid rgba(255, 255, 255, 0.58);
-  border-radius: 15px;
-  background: #111;
+  border: 1px solid rgba(124, 130, 147, 0.24);
+  border-radius: 18px;
+  background: transparent;
   box-shadow:
-    0 34px 72px rgba(18, 21, 31, 0.24),
-    0 8px 22px rgba(18, 21, 31, 0.13),
-    inset 0 0 0 1px rgba(26, 35, 59, 0.18);
+    0 34px 72px rgba(56, 61, 78, 0.2),
+    0 8px 22px rgba(56, 61, 78, 0.1);
   transform: perspective(1100px) rotateX(var(--sidebar-tilt-x, 0deg))
     rotateY(var(--sidebar-tilt-y, 0deg)) translateZ(0);
   transform-style: preserve-3d;
@@ -699,9 +698,8 @@ button {
 
 .sidebar-product-frame.is-hovered {
   box-shadow:
-    0 42px 90px rgba(18, 21, 31, 0.29),
-    0 12px 28px rgba(18, 21, 31, 0.16),
-    inset 0 0 0 1px rgba(255, 255, 255, 0.42);
+    0 42px 90px rgba(56, 61, 78, 0.25),
+    0 12px 28px rgba(56, 61, 78, 0.13);
 }
 
 .sidebar-product-frame img {
@@ -760,7 +758,7 @@ button {
 
 .sidebar-showcase-description {
   max-width: 540px;
-  margin: 18px 0 0;
+  margin: 28px 0 0;
   color: #5d616c;
   font-size: 17px;
   line-height: 1.72;
@@ -802,9 +800,59 @@ button {
   background: #f5e7ef;
 }
 
+.sidebar-feature-chips li:nth-child(5) {
+  background: #e8f2f5;
+}
+
+.sidebar-feature-chips li:nth-child(6) {
+  background: #eeeaf7;
+}
+
+.sidebar-feature-chips li:nth-child(7) {
+  background: #eceef2;
+}
+
 .sidebar-feature-chips .material-symbols-rounded {
   color: #435d9a;
   font-size: 18px;
+}
+
+.sidebar-scout-chip-avatar {
+  align-items: center;
+  background: #242936;
+  border-radius: 7px 7px 9px 9px;
+  display: inline-flex;
+  gap: 3px;
+  height: 22px;
+  justify-content: center;
+  width: 28px;
+}
+
+.sidebar-scout-chip-avatar i {
+  animation: sidebar-scout-blink 5.2s ease-in-out infinite;
+  background: #f8ffff;
+  border: 3px solid #5ddfd2;
+  border-radius: 50%;
+  height: 9px;
+  transform-origin: center;
+  width: 9px;
+}
+
+.sidebar-scout-chip-avatar i:nth-child(2) {
+  animation-delay: 60ms;
+}
+
+@keyframes sidebar-scout-blink {
+  0%,
+  44%,
+  48%,
+  100% {
+    transform: scaleY(1);
+  }
+
+  46% {
+    transform: scaleY(0.12);
+  }
 }
 
 .motion-ready .sidebar-visual,
@@ -870,6 +918,18 @@ button {
 
 .motion-ready .sidebar-feature-chips li:nth-child(4) {
   transition-delay: 610ms;
+}
+
+.motion-ready .sidebar-feature-chips li:nth-child(5) {
+  transition-delay: 660ms;
+}
+
+.motion-ready .sidebar-feature-chips li:nth-child(6) {
+  transition-delay: 710ms;
+}
+
+.motion-ready .sidebar-feature-chips li:nth-child(7) {
+  transition-delay: 760ms;
 }
 
 .motion-ready .sidebar-showcase.is-visible .sidebar-visual,
@@ -2404,7 +2464,7 @@ h1 {
   }
 
   .sidebar-product-frame {
-    width: 238px;
+    width: min(36vw, 360px);
   }
 
   .sidebar-showcase-copy h2 {
@@ -2541,7 +2601,7 @@ h1 {
   }
 
   .sidebar-product-frame {
-    width: min(78vw, 270px);
+    width: min(88vw, 420px);
   }
 
   .feature-copy > p:last-child {
@@ -2806,6 +2866,10 @@ h1 {
 
   .sidebar-pointer-light {
     display: none;
+  }
+
+  .sidebar-scout-chip-avatar i {
+    animation: none !important;
   }
 }
 
