@@ -9,12 +9,19 @@ import {
 } from "react";
 
 import type { AiToolsSnapshot } from "../shared/ai-tools";
+import type { AiProviderId } from "../shared/ai-tools";
+import { activeProviderSnapshot, scoutPowerChoices } from "../shared/ai-power";
 import type {
   AssistantAttachment,
   AssistantAttachmentKind,
   AssistantContextCaptured,
   AssistantMessageRequest,
   AssistantPageContext,
+} from "../shared/ai-assistant";
+import {
+  DEFAULT_ASSISTANT_CONTEXT,
+  SCOUT_CONTEXT_DEFAULTS_STORAGE_KEY,
+  SCOUT_REDUCED_MOTION_STORAGE_KEY,
 } from "../shared/ai-assistant";
 import type { BrowserTabSnapshot } from "../shared/browser";
 import {
@@ -25,7 +32,6 @@ import { AssistantPopover } from "./AssistantPopover";
 import "./ai-assistant.css";
 
 const HISTORY_STORAGE_KEY = "chromecraft-ai-assistant-history-v1";
-const DEFAULTS_STORAGE_KEY = "chromecraft-ai-assistant-context-v1";
 const MAX_HISTORY = 24;
 
 type ContextChoices = Record<AssistantAttachmentKind, boolean>;
@@ -34,6 +40,9 @@ type ConversationMessage = {
   text: string;
   createdAt: number;
   attachments: AssistantAttachment[];
+  role: "user" | "assistant";
+  status: "complete" | "thinking" | "error";
+  model?: string;
 };
 type Conversation = {
   id: string;
@@ -42,17 +51,7 @@ type Conversation = {
   messages: ConversationMessage[];
   draft: string;
 };
-type OpenPopover = "attachments" | "context" | "history" | "more" | null;
-
-const defaultChoices: ContextChoices = {
-  page: true,
-  url: true,
-  title: true,
-  description: true,
-  "selected-text": false,
-  screenshot: false,
-  element: false,
-};
+type OpenPopover = "attachments" | "history" | "more" | "power" | null;
 
 function icon(name: string) {
   return (
@@ -69,11 +68,11 @@ function identifier(prefix: string) {
 function readDefaults(): ContextChoices {
   try {
     const parsed = JSON.parse(
-      localStorage.getItem(DEFAULTS_STORAGE_KEY) ?? "",
+      localStorage.getItem(SCOUT_CONTEXT_DEFAULTS_STORAGE_KEY) ?? "",
     ) as Partial<ContextChoices> | null;
-    return { ...defaultChoices, ...parsed };
+    return { ...DEFAULT_ASSISTANT_CONTEXT, ...parsed };
   } catch {
-    return { ...defaultChoices };
+    return { ...DEFAULT_ASSISTANT_CONTEXT };
   }
 }
 
@@ -91,7 +90,15 @@ function readHistory(): Conversation[] {
           typeof conversation.id === "string" &&
           typeof conversation.title === "string" &&
           Array.isArray(conversation.messages),
-      );
+      )
+      .map((conversation) => ({
+        ...conversation,
+        messages: conversation.messages.slice(-100).map((message) => ({
+          ...message,
+          role: message.role === "assistant" ? "assistant" : "user",
+          status: message.status === "error" ? "error" : ("complete" as const),
+        })),
+      }));
   } catch {
     return [];
   }
@@ -119,16 +126,6 @@ export function contextAttachments(
   const items: AssistantAttachment[] = [];
   if (page) {
     const url = safeUrl(page.url);
-    if (choices.page) {
-      items.push({
-        id: `page-${page.tabId}`,
-        kind: "page",
-        label: "Page",
-        detail: page.displayUrl,
-        createdAt: Date.now(),
-        data: { url: url?.value, title: page.title.slice(0, 240) },
-      });
-    }
     if (choices.url && url) {
       items.push({
         id: `url-${page.tabId}`,
@@ -191,10 +188,53 @@ function statusFor(snapshot: AiToolsSnapshot) {
   if (["checking", "thinking", "applying"].includes(snapshot.run.stage)) {
     return ["Thinking", "thinking"] as const;
   }
-  if (snapshot.connection === "connected" && snapshot.selectedModel) {
-    return ["Ready", "ready"] as const;
+  const provider = activeProviderSnapshot(snapshot);
+  if (provider.connection === "connected" && provider.selectedModel) {
+    return [
+      snapshot.provider === "ollama" ? "Ready · Local" : "Ready · Gemini",
+      "ready",
+    ] as const;
+  }
+  if (snapshot.provider === "gemini") {
+    return [
+      snapshot.gemini.apiKeyConfigured
+        ? "Gemini unavailable"
+        : "Gemini key required",
+      "unavailable",
+    ] as const;
   }
   return ["Local AI unavailable", "unavailable"] as const;
+}
+
+function pageContextError(error: unknown): string {
+  const detail = error instanceof Error ? error.message.toLowerCase() : "";
+  if (/load|loading|finish/u.test(detail)) {
+    return "Page still loading — Scout needs this page to finish before it can inspect it.";
+  }
+  if (/internal|new tab|unsupported|cannot be captured/u.test(detail)) {
+    return "Page context is unavailable here. You can still ask Scout a general question.";
+  }
+  return "Scout couldn't inspect this page. You can still ask without page context.";
+}
+
+function responseError(error: unknown, provider: AiProviderId): string {
+  const detail = error instanceof Error ? error.message.toLowerCase() : "";
+  if (/confirm.*context|remove it/u.test(detail)) {
+    return "Confirm Gemini page-context sharing in Scout Power, or remove the page context.";
+  }
+  if (/quota|usage|rate/u.test(detail)) {
+    return "Gemini usage is temporarily limited. Check quota or try again later.";
+  }
+  if (/key|auth/u.test(detail)) {
+    return "Gemini could not authenticate. Check the API key in Scout settings.";
+  }
+  if (/model/u.test(detail)) {
+    return "That model is unavailable. Choose another in Scout Power.";
+  }
+  if (/stopped|cancel/u.test(detail)) return "Response stopped.";
+  return provider === "ollama"
+    ? "Scout could not reach local AI. Start Ollama or choose another model."
+    : "Scout could not reach Gemini. Check the connection and try again.";
 }
 
 export function AiAssistantPanel({
@@ -202,11 +242,13 @@ export function AiAssistantPanel({
   aiTools,
   close,
   onOrganiseTabs,
+  onOpenSettings,
 }: {
   activeTab: BrowserTabSnapshot;
   aiTools: AiToolsSnapshot;
   close: () => void;
   onOrganiseTabs: () => void;
+  onOpenSettings: () => void;
 }) {
   const [conversations, setConversations] =
     useState<Conversation[]>(readHistory);
@@ -223,6 +265,16 @@ export function AiAssistantPanel({
     null,
   );
   const [showScrollBottom, setShowScrollBottom] = useState(false);
+  const [powerBusy, setPowerBusy] = useState(false);
+  const [powerError, setPowerError] = useState<string | null>(null);
+  const [pendingModel, setPendingModel] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+  const [geminiContextConsent, setGeminiContextConsent] = useState(
+    () =>
+      typeof localStorage !== "undefined" &&
+      localStorage.getItem("chromecraft-scout-gemini-context-consent-v1") ===
+        "true",
+  );
 
   const panelRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -232,6 +284,9 @@ export function AiAssistantPanel({
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const plusButtonRef = useRef<HTMLButtonElement>(null);
   const contextButtonRef = useRef<HTMLButtonElement>(null);
+  const attachmentAnchorRef = useRef<HTMLElement>(null);
+  const powerButtonRef = useRef<HTMLButtonElement>(null);
+  const powerChangeRef = useRef(0);
 
   const [statusLabel, statusKind] = statusFor(aiTools);
   const currentConversation =
@@ -249,6 +304,22 @@ export function AiAssistantPanel({
   );
   const pageDisplay =
     page?.displayUrl ?? safeUrl(activeTab.url)?.display ?? "New tab";
+  const providerState = activeProviderSnapshot(aiTools);
+  const powerChoices = useMemo(
+    () =>
+      scoutPowerChoices(
+        aiTools.provider,
+        providerState.models,
+        providerState.selectedModel,
+      ),
+    [aiTools.provider, providerState.models, providerState.selectedModel],
+  );
+  const displayedModel = pendingModel ?? providerState.selectedModel;
+  const powerIndex = Math.max(
+    0,
+    powerChoices.findIndex((choice) => choice.model === displayedModel),
+  );
+  const powerChoice = powerChoices[powerIndex] ?? null;
 
   const refreshPage = useCallback(async () => {
     try {
@@ -256,14 +327,46 @@ export function AiAssistantPanel({
         activeTab.id,
       );
       setPage(next);
+      return next;
     } catch {
       setPage(null);
+      return null;
     }
   }, [activeTab.id]);
 
   useEffect(() => {
     void refreshPage();
   }, [refreshPage, activeTab.url]);
+
+  useEffect(() => {
+    document.documentElement.dataset.scoutReducedMotion =
+      localStorage.getItem(SCOUT_REDUCED_MOTION_STORAGE_KEY) === "true"
+        ? "true"
+        : "false";
+  }, []);
+
+  useEffect(() => {
+    const refreshDefaults = () => setChoices(readDefaults());
+    addEventListener("scout-context-defaults-changed", refreshDefaults);
+    return () =>
+      removeEventListener("scout-context-defaults-changed", refreshDefaults);
+  }, []);
+
+  useEffect(() => {
+    const clearHistory = () => {
+      setConversations([]);
+      setConversationId(identifier("chat"));
+      setDraft("");
+      setOpenPopover(null);
+      setStatusNote("Local conversation history cleared.");
+    };
+    addEventListener("scout-history-cleared", clearHistory);
+    return () => removeEventListener("scout-history-cleared", clearHistory);
+  }, []);
+
+  useEffect(() => {
+    if (!powerBusy) setPendingModel(null);
+  }, [powerBusy, providerState.selectedModel]);
 
   useEffect(
     () =>
@@ -294,7 +397,11 @@ export function AiAssistantPanel({
             ...message,
             // Screenshots and extracted page data remain in memory only.
             attachments: message.attachments.map(
-              ({ data: _data, ...attachment }) => ({ ...attachment, data: {} }),
+              ({ data: _data, ...attachment }) => ({
+                ...attachment,
+                detail: null,
+                data: {},
+              }),
             ),
           })),
         })),
@@ -353,11 +460,7 @@ export function AiAssistantPanel({
       await window.chromecraft.startAssistantSelection(kind);
       setCapturing(kind);
     } catch (error) {
-      setStatusNote(
-        error instanceof Error
-          ? error.message
-          : "This page cannot be captured.",
-      );
+      setStatusNote(pageContextError(error));
     }
   };
 
@@ -365,17 +468,62 @@ export function AiAssistantPanel({
     setChoices((current) => ({ ...current, [kind]: checked }));
   };
 
-  const saveDefaults = () => {
-    localStorage.setItem(DEFAULTS_STORAGE_KEY, JSON.stringify(choices));
-    setStatusNote("Saved as the default included context.");
-    setOpenPopover(null);
-    requestAnimationFrame(() => contextButtonRef.current?.focus());
+  const selectProvider = async (provider: AiProviderId) => {
+    if (provider === aiTools.provider || powerBusy) return;
+    setPowerBusy(true);
+    setPowerError(null);
+    setPendingModel(null);
+    try {
+      let next = await window.chromecraft.setAiProvider(provider);
+      const state = activeProviderSnapshot(next, provider);
+      const canRefresh = provider === "ollama" || next.gemini.apiKeyConfigured;
+      if (
+        canRefresh &&
+        (state.connection === "unknown" || state.models.length === 0)
+      ) {
+        next = await window.chromecraft.refreshAiModels(provider);
+      }
+      const updated = activeProviderSnapshot(next, provider);
+      if (updated.error) setPowerError(updated.error);
+    } catch {
+      setPowerError(
+        provider === "ollama"
+          ? "Scout could not reach Ollama. Start Ollama and try again."
+          : "Scout could not connect to Gemini. Check the API key in Settings.",
+      );
+    } finally {
+      setPowerBusy(false);
+    }
+  };
+
+  const selectPowerModel = async (index: number) => {
+    const choice = powerChoices[index];
+    if (!choice || choice.model === displayedModel || powerBusy) return;
+    const change = ++powerChangeRef.current;
+    setPendingModel(choice.model);
+    setPowerBusy(true);
+    setPowerError(null);
+    try {
+      await window.chromecraft.setAiModel(aiTools.provider, choice.model);
+      if (powerChangeRef.current === change) {
+        setStatusNote(`${choice.displayName} selected for new Scout requests.`);
+      }
+    } catch {
+      if (powerChangeRef.current === change) {
+        setPowerError("That model is no longer available. Refresh the list.");
+        setPendingModel(null);
+      }
+    } finally {
+      if (powerChangeRef.current === change) setPowerBusy(false);
+    }
   };
 
   const newConversation = () => {
+    if (sending) void window.chromecraft.cancelAssistantMessage();
     setConversationId(identifier("chat"));
     setDraft("");
     setAttachments([]);
+    setChoices(readDefaults());
     setStatusNote(null);
     setOpenPopover(null);
     nearBottomRef.current = true;
@@ -385,20 +533,44 @@ export function AiAssistantPanel({
   const submit = (event: FormEvent) => {
     event.preventDefault();
     const prompt = draft.trim();
-    if (!prompt) return;
+    const model = displayedModel;
+    if (!prompt || sending || powerBusy) return;
+    if (!model) {
+      setStatusNote("Choose an available model in Scout Power first.");
+      setOpenPopover("power");
+      return;
+    }
     const request: AssistantMessageRequest = {
       conversationId,
       messageId: identifier("message"),
       prompt,
       createdAt: Date.now(),
-      model: aiTools.selectedModel,
+      provider: aiTools.provider,
+      model,
       context: structuredClone(included),
+      history: (currentConversation?.messages ?? [])
+        .filter((message) => message.status === "complete")
+        .map((message) => ({ role: message.role, text: message.text }))
+        .slice(-12),
+      cloudContextConsent: geminiContextConsent,
     };
     const message: ConversationMessage = {
       id: request.messageId,
       text: request.prompt,
       createdAt: request.createdAt,
       attachments: request.context,
+      role: "user",
+      status: "complete",
+      model: request.model,
+    };
+    const assistantMessage: ConversationMessage = {
+      id: `reply-${request.messageId}`,
+      text: "",
+      createdAt: request.createdAt,
+      attachments: [],
+      role: "assistant",
+      status: "thinking",
+      model: request.model,
     };
     nearBottomRef.current = true;
     setConversations((current) => {
@@ -407,7 +579,11 @@ export function AiAssistantPanel({
         id: conversationId,
         title: existing?.title ?? prompt.slice(0, 56),
         updatedAt: request.createdAt,
-        messages: [...(existing?.messages ?? []), message],
+        messages: [
+          ...(existing?.messages ?? []),
+          message,
+          assistantMessage,
+        ].slice(-100),
         draft: "",
       };
       return [
@@ -415,14 +591,61 @@ export function AiAssistantPanel({
         ...current.filter((item) => item.id !== conversationId),
       ].slice(0, MAX_HISTORY);
     });
-    // General conversation transport is intentionally not fabricated here.
-    void request;
     setDraft("");
-    setStatusNote(
-      aiTools.connection === "connected"
-        ? "Saved locally. General AI chat is not connected yet."
-        : "Saved locally. Start Ollama and choose a model to use local AI tools.",
-    );
+    setAttachments([]);
+    setChoices(readDefaults());
+    setStatusNote(null);
+    setSending(true);
+    void window.chromecraft
+      .sendAssistantMessage(request)
+      .then((response) => {
+        setConversations((current) =>
+          current.map((conversation) =>
+            conversation.id !== conversationId
+              ? conversation
+              : {
+                  ...conversation,
+                  updatedAt: response.createdAt,
+                  messages: conversation.messages.map((entry) =>
+                    entry.id === assistantMessage.id
+                      ? {
+                          ...entry,
+                          text: response.text,
+                          createdAt: response.createdAt,
+                          status: "complete" as const,
+                          model: response.model,
+                        }
+                      : entry,
+                  ),
+                },
+          ),
+        );
+      })
+      .catch((error: unknown) => {
+        const friendly = responseError(error, request.provider);
+        setConversations((current) =>
+          current.map((conversation) =>
+            conversation.id !== conversationId
+              ? conversation
+              : {
+                  ...conversation,
+                  messages: conversation.messages.map((entry) =>
+                    entry.id === assistantMessage.id
+                      ? {
+                          ...entry,
+                          text: friendly,
+                          status: "error" as const,
+                        }
+                      : entry,
+                  ),
+                },
+          ),
+        );
+      })
+      .finally(() => {
+        setSending(false);
+        requestAnimationFrame(() => textareaRef.current?.focus());
+      });
     requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
@@ -452,7 +675,7 @@ export function AiAssistantPanel({
   };
 
   const characterState =
-    capturing || aiTools.run.stage === "thinking"
+    capturing || sending || aiTools.run.stage === "thinking"
       ? "thinking"
       : draft
         ? "typing"
@@ -463,7 +686,7 @@ export function AiAssistantPanel({
       <header className="ai-assistant-header">
         <StaticAssistantAvatar className="ai-header-avatar" size={32} />
         <div className="ai-assistant-title">
-          <strong id="sidebar-panel-title">Chromecraft AI</strong>
+          <strong id="sidebar-panel-title">Scout</strong>
           <span data-status={statusKind}>{statusLabel}</span>
         </div>
         <div className="ai-assistant-header-actions">
@@ -502,7 +725,7 @@ export function AiAssistantPanel({
             type="button"
             onClick={close}
             title="Close sidebar"
-            aria-label="Close Chromecraft AI"
+            aria-label="Close Scout"
           >
             {icon("close")}
           </button>
@@ -590,6 +813,16 @@ export function AiAssistantPanel({
           >
             {icon("refresh")} <span>Refresh page context</span>
           </button>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setOpenPopover(null);
+              onOpenSettings();
+            }}
+          >
+            {icon("settings")} <span>Scout settings</span>
+          </button>
         </AssistantPopover>
       )}
 
@@ -647,26 +880,51 @@ export function AiAssistantPanel({
             <section className="ai-message-list" aria-live="polite">
               {currentConversation.messages.map((message) => (
                 <article
-                  className="ai-message ai-message-user"
+                  className={`ai-message ai-message-${message.role} ${
+                    message.status === "error" ? "ai-message-error" : ""
+                  }`}
                   key={message.id}
+                  aria-busy={message.status === "thinking" || undefined}
                 >
-                  <p>{message.text}</p>
+                  {message.role === "assistant" && (
+                    <StaticAssistantAvatar
+                      className="ai-message-avatar"
+                      size={24}
+                    />
+                  )}
+                  {message.status === "thinking" ? (
+                    <div className="ai-thinking-indicator" role="status">
+                      <span />
+                      <span />
+                      <span />
+                      <span className="sr-only">Scout is thinking</span>
+                    </div>
+                  ) : (
+                    <p>{message.text}</p>
+                  )}
                   <footer>
                     <small>
-                      Saved locally ·{" "}
+                      {message.status === "error"
+                        ? "Could not complete"
+                        : message.role === "assistant"
+                          ? (message.model ?? "Scout")
+                          : "You"}{" "}
+                      ·{" "}
                       {new Date(message.createdAt).toLocaleTimeString([], {
                         hour: "numeric",
                         minute: "2-digit",
                       })}
                     </small>
-                    <button
-                      type="button"
-                      onClick={() => void copyMessage(message)}
-                      aria-label="Copy message"
-                      title="Copy message"
-                    >
-                      {icon("content_copy")}
-                    </button>
+                    {message.status !== "thinking" && (
+                      <button
+                        type="button"
+                        onClick={() => void copyMessage(message)}
+                        aria-label="Copy message"
+                        title="Copy message"
+                      >
+                        {icon("content_copy")}
+                      </button>
+                    )}
                   </footer>
                 </article>
               ))}
@@ -749,7 +1007,7 @@ export function AiAssistantPanel({
             ref={textareaRef}
             value={draft}
             rows={1}
-            placeholder="Ask Chromecraft AI..."
+            placeholder="Ask Scout..."
             onChange={(event) => {
               setDraft(event.target.value);
               setStatusNote(null);
@@ -761,17 +1019,20 @@ export function AiAssistantPanel({
                 event.currentTarget.form?.requestSubmit();
               }
             }}
-            aria-label="Ask Chromecraft AI"
+            aria-label="Ask Scout"
           />
           <div className="ai-composer-toolbar">
             <button
               ref={plusButtonRef}
               type="button"
               className="ai-composer-plus"
-              onClick={() => setOnlyPopover("attachments")}
+              onClick={(event) => {
+                attachmentAnchorRef.current = event.currentTarget;
+                setOnlyPopover("attachments");
+              }}
               aria-label="Add context"
               title="Add context"
-              aria-haspopup="menu"
+              aria-haspopup="dialog"
               aria-expanded={openPopover === "attachments"}
             >
               {icon("add")}
@@ -780,180 +1041,305 @@ export function AiAssistantPanel({
               ref={contextButtonRef}
               className="ai-page-context"
               type="button"
-              onClick={() => setOnlyPopover("context")}
+              onClick={(event) => {
+                attachmentAnchorRef.current = event.currentTarget;
+                setOnlyPopover("attachments");
+              }}
               aria-haspopup="dialog"
-              aria-expanded={openPopover === "context"}
+              aria-expanded={openPopover === "attachments"}
               title={`Included context for ${pageDisplay}`}
             >
               {icon("language")}
               <span>This page</span>
-              {icon("expand_more")}
+              {included.length > 0 && (
+                <small aria-label={`${included.length} context items`}>
+                  {included.length}
+                </small>
+              )}
             </button>
             <span className="ai-composer-toolbar-spacer" />
             <button
-              type="submit"
-              className="ai-send"
-              disabled={!draft.trim()}
-              aria-label="Send message"
-              title="Send message"
+              ref={powerButtonRef}
+              type="button"
+              className="ai-power-button"
+              onClick={() => setOnlyPopover("power")}
+              aria-label="Scout Power"
+              title="Scout Power"
+              aria-haspopup="dialog"
+              aria-expanded={openPopover === "power"}
+              data-provider={aiTools.provider}
             >
-              {icon("arrow_upward")}
+              {icon("speed")}
+            </button>
+            <button
+              type={sending ? "button" : "submit"}
+              className="ai-send"
+              disabled={(!draft.trim() || powerBusy) && !sending}
+              aria-label={sending ? "Stop response" : "Send message"}
+              title={sending ? "Stop response" : "Send message"}
+              onClick={
+                sending
+                  ? () => void window.chromecraft.cancelAssistantMessage()
+                  : undefined
+              }
+            >
+              {icon(sending ? "stop" : "arrow_upward")}
             </button>
           </div>
         </div>
 
-        {openPopover === "context" && (
+        {openPopover === "attachments" && (
           <AssistantPopover
-            anchorRef={contextButtonRef}
+            anchorRef={attachmentAnchorRef}
             boundaryRef={panelRef}
-            className="ai-context-popover"
+            className="ai-attachment-menu"
             idealWidth={328}
-            label="Included context"
+            label="Context and attachments"
             onClose={() => setOpenPopover(null)}
           >
             <header className="ai-popover-heading">
               <div>
-                <strong>Included context</strong>
-                <small>{pageDisplay}</small>
+                <strong>Add context</strong>
+                <small>Only for this message</small>
               </div>
+            </header>
+            <div className="ai-attachment-actions">
+              <button
+                type="button"
+                autoFocus
+                onClick={() => void startCapture("screenshot")}
+              >
+                {icon("crop")}
+                <span>
+                  <b>Capture screenshot</b>
+                  <small>Select an area of the current page.</small>
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => void startCapture("element")}
+              >
+                {icon("ads_click")}
+                <span>
+                  <b>Select page element</b>
+                  <small>Point to something to ask about it.</small>
+                </span>
+              </button>
               <button
                 type="button"
                 onClick={() => {
+                  void refreshPage().then((next) => {
+                    if (next?.selectedText) {
+                      updateChoice("selected-text", true);
+                      setStatusNote("Selected text added to this message.");
+                    } else {
+                      setStatusNote(
+                        "Highlight text on the webpage, then add selected text again.",
+                      );
+                    }
+                  });
                   setOpenPopover(null);
-                  requestAnimationFrame(() =>
-                    contextButtonRef.current?.focus(),
-                  );
                 }}
-                aria-label="Close included context"
               >
-                {icon("close")}
+                {icon("format_quote")}
+                <span>
+                  <b>Include selected text</b>
+                  <small>Use highlighted text from the webpage.</small>
+                </span>
               </button>
-            </header>
-            <div className="ai-context-options">
-              {(
-                [
-                  "url",
-                  "title",
-                  "description",
-                  "selected-text",
-                  "screenshot",
-                  "element",
-                ] as AssistantAttachmentKind[]
-              ).map((kind) => {
-                const labels = {
-                  url: ["Website URL", "Sensitive query details are removed."],
-                  title: ["Page title", "The title shown by this tab."],
-                  description: [
-                    "Page description",
-                    "Included when the page provides one.",
-                  ],
-                  "selected-text": [
-                    "Selected text",
-                    "Only highlighted text is included.",
-                  ],
-                  screenshot: [
-                    "Screenshot attachment",
-                    "Captured only when you attach one.",
-                  ],
-                  element: [
-                    "Selected page element",
-                    "A sanitised element summary.",
-                  ],
-                } satisfies Record<
-                  Exclude<AssistantAttachmentKind, "page">,
-                  [string, string]
-                >;
-                if (kind === "page") return null;
-                return (
-                  <label key={kind}>
-                    <span>
-                      <b>{labels[kind][0]}</b>
-                      <small>{labels[kind][1]}</small>
-                    </span>
-                    <input
-                      type="checkbox"
-                      role="switch"
-                      checked={choices[kind]}
-                      onChange={(event) =>
-                        updateChoice(kind, event.target.checked)
-                      }
-                    />
-                  </label>
-                );
-              })}
             </div>
-            <footer className="ai-context-popover-footer">
-              <button
-                type="button"
-                onClick={() => setChoices({ ...defaultChoices })}
-              >
-                Restore defaults
-              </button>
-              <button type="button" onClick={saveDefaults}>
-                Save as default
-              </button>
-            </footer>
+            <div className="ai-context-menu-section">
+              <strong>Included in this message</strong>
+              {included.length ? (
+                <div className="ai-context-menu-list">
+                  {included.map((item) => (
+                    <div className="ai-context-menu-row" key={item.id}>
+                      {icon(attachmentIcon(item.kind))}
+                      <span>
+                        <b>{item.label}</b>
+                        {item.detail && <small>{item.detail}</small>}
+                      </span>
+                      <button
+                        type="button"
+                        aria-label={`Remove ${item.label}`}
+                        title={`Remove ${item.label}`}
+                        onClick={() => removeContext(item)}
+                      >
+                        {icon("remove")}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p>No page context is included. Your prompt is always sent.</p>
+              )}
+            </div>
+            {(
+              ["url", "title", "description"] as AssistantAttachmentKind[]
+            ).some((kind) => !choices[kind]) && (
+              <details className="ai-add-context-details">
+                <summary>{icon("add")} Add page context</summary>
+                <div>
+                  {(
+                    ["url", "title", "description"] as AssistantAttachmentKind[]
+                  )
+                    .filter((kind) => !choices[kind])
+                    .map((kind) => {
+                      const label = {
+                        url: "Page URL",
+                        title: "Page title",
+                        description: "Page description",
+                      } as Partial<Record<AssistantAttachmentKind, string>>;
+                      return (
+                        <button
+                          type="button"
+                          key={kind}
+                          onClick={() => updateChoice(kind, true)}
+                        >
+                          {icon(attachmentIcon(kind))}
+                          <span>{label[kind]}</span>
+                        </button>
+                      );
+                    })}
+                </div>
+              </details>
+            )}
           </AssistantPopover>
         )}
 
-        {openPopover === "attachments" && (
+        {openPopover === "power" && (
           <AssistantPopover
-            anchorRef={plusButtonRef}
+            anchorRef={powerButtonRef}
             boundaryRef={panelRef}
-            className="ai-attachment-menu"
-            idealWidth={296}
-            label="Add context"
+            className="ai-power-popover"
+            idealWidth={328}
+            label="Scout Power"
             onClose={() => setOpenPopover(null)}
-            role="menu"
           >
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => void startCapture("screenshot")}
-            >
-              {icon("crop")}
+            <header className="ai-power-heading">
+              <span className="ai-power-heading-icon">{icon("speed")}</span>
               <span>
-                <b>Capture screenshot</b>
-                <small>Select an area of the current page.</small>
+                <strong>Scout Power</strong>
+                <small>
+                  Choose where Scout runs and how much power to use.
+                </small>
               </span>
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => void startCapture("element")}
+            </header>
+            <div
+              className="ai-provider-switch"
+              role="group"
+              aria-label="AI provider"
             >
-              {icon("ads_click")}
-              <span>
-                <b>Select page element</b>
-                <small>Point to something to ask about it.</small>
-              </span>
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                updateChoice("selected-text", true);
-                void refreshPage();
-                setOpenPopover(null);
-              }}
-            >
-              {icon("format_quote")}
-              <span>
-                <b>Include selected text</b>
-                <small>Use highlighted text from the webpage.</small>
-              </span>
-            </button>
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => setOpenPopover("context")}
-            >
-              {icon("tune")}
-              <span>
-                <b>Manage context</b>
-                <small>Choose what information is included.</small>
-              </span>
-            </button>
+              <button
+                type="button"
+                aria-pressed={aiTools.provider === "ollama"}
+                onClick={() => void selectProvider("ollama")}
+                disabled={powerBusy}
+              >
+                Local AI
+              </button>
+              <button
+                type="button"
+                aria-pressed={aiTools.provider === "gemini"}
+                onClick={() => void selectProvider("gemini")}
+                disabled={powerBusy}
+              >
+                Gemini Online
+              </button>
+            </div>
+            <div className="ai-power-model">
+              {powerChoice ? (
+                <>
+                  <div className="ai-power-model-label" aria-live="polite">
+                    <span>{powerChoice.category}</span>
+                    <strong>{powerChoice.displayName}</strong>
+                    {powerChoice.detail && <small>{powerChoice.detail}</small>}
+                  </div>
+                  <input
+                    type="range"
+                    min={0}
+                    max={Math.max(0, powerChoices.length - 1)}
+                    step={1}
+                    value={powerIndex}
+                    disabled={powerBusy || powerChoices.length < 2}
+                    aria-label="Scout model power"
+                    aria-valuetext={`${powerChoice.category}: ${powerChoice.displayName}`}
+                    onChange={(event) =>
+                      void selectPowerModel(Number(event.target.value))
+                    }
+                  />
+                  <div className="ai-power-range-labels" aria-hidden="true">
+                    <span>Faster</span>
+                    <span>More capable</span>
+                  </div>
+                </>
+              ) : (
+                <div className="ai-power-empty">
+                  <strong>
+                    {aiTools.provider === "ollama"
+                      ? "No compatible local models"
+                      : "No Gemini models available"}
+                  </strong>
+                  <p>
+                    {aiTools.provider === "ollama"
+                      ? "Start Ollama and install a text model, then refresh."
+                      : "Add a Gemini API key in Scout settings, then refresh."}
+                  </p>
+                </div>
+              )}
+              {aiTools.provider === "gemini" && (
+                <div className="ai-power-cloud-note">
+                  <p>
+                    {icon("cloud")}
+                    Gemini sends prompts to Google and may use paid quota.
+                  </p>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={geminiContextConsent}
+                      onChange={(event) => {
+                        const enabled = event.target.checked;
+                        setGeminiContextConsent(enabled);
+                        localStorage.setItem(
+                          "chromecraft-scout-gemini-context-consent-v1",
+                          String(enabled),
+                        );
+                      }}
+                    />
+                    <span>
+                      Allow selected page context to be sent to Gemini
+                    </span>
+                  </label>
+                </div>
+              )}
+              {powerError && (
+                <p className="ai-power-error" role="alert">
+                  {powerError}
+                </p>
+              )}
+            </div>
+            <footer className="ai-power-footer">
+              <button
+                type="button"
+                disabled={
+                  powerBusy ||
+                  (aiTools.provider === "gemini" &&
+                    !aiTools.gemini.apiKeyConfigured)
+                }
+                onClick={() =>
+                  void window.chromecraft
+                    .refreshAiModels(aiTools.provider)
+                    .catch(() =>
+                      setPowerError("Scout could not refresh this model list."),
+                    )
+                }
+              >
+                {icon("refresh")} Refresh models
+              </button>
+              <button type="button" onClick={onOpenSettings}>
+                {icon("settings")} Settings
+              </button>
+            </footer>
           </AssistantPopover>
         )}
       </form>

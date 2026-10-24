@@ -30,6 +30,11 @@ describe("GeminiClient", () => {
             supportedGenerationMethods: ["generateContent"],
           },
           {
+            name: "models/gemini-99-unknown",
+            displayName: "Unknown text model",
+            supportedGenerationMethods: ["generateContent"],
+          },
+          {
             name: "models/gemini-embedding-001",
             displayName: "Embedding",
             supportedGenerationMethods: ["embedContent"],

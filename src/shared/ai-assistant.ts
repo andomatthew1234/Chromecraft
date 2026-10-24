@@ -63,6 +63,26 @@ export interface AssistantContextCaptured {
   attachment: AssistantAttachment;
 }
 
+export type AssistantContextPreferences = Record<
+  AssistantAttachmentKind,
+  boolean
+>;
+
+export const SCOUT_CONTEXT_DEFAULTS_STORAGE_KEY =
+  "chromecraft-ai-assistant-context-v1";
+export const SCOUT_REDUCED_MOTION_STORAGE_KEY =
+  "chromecraft-scout-reduced-motion-v1";
+
+export const DEFAULT_ASSISTANT_CONTEXT: AssistantContextPreferences = {
+  page: false,
+  url: true,
+  title: true,
+  description: true,
+  "selected-text": false,
+  screenshot: false,
+  element: false,
+};
+
 /**
  * The UI-owned request envelope. A future local model adapter receives this
  * immutable snapshot rather than reading live tab state after the user sends.
@@ -72,6 +92,23 @@ export interface AssistantMessageRequest {
   messageId: string;
   prompt: string;
   createdAt: number;
-  model: string | null;
+  provider: AiProviderId;
+  model: string;
   context: AssistantAttachment[];
+  history: AssistantConversationTurn[];
+  cloudContextConsent: boolean;
+}
+import type { AiProviderId } from "./ai-tools";
+
+export interface AssistantConversationTurn {
+  role: "user" | "assistant";
+  text: string;
+}
+
+export interface AssistantMessageResponse {
+  messageId: string;
+  provider: AiProviderId;
+  model: string;
+  text: string;
+  createdAt: number;
 }

@@ -13,6 +13,11 @@ import type {
   OrganiseTabsProposal,
   OrganiseTabsRequest,
 } from "../../shared/ai-tools";
+import type {
+  AssistantAttachment,
+  AssistantMessageRequest,
+  AssistantMessageResponse,
+} from "../../shared/ai-assistant";
 import { GeminiClient } from "./gemini-client";
 import { GeminiCredentialStore } from "./gemini-credential-store";
 import {
@@ -100,6 +105,82 @@ function validProvider(value: unknown): value is AiProviderId {
 
 function validGrouping(value: unknown): value is AiGroupingMode {
   return value === "smart" || value === "website";
+}
+
+function assistantError(error: unknown, provider: AiProviderId): string {
+  const detail = error instanceof Error ? error.message.toLowerCase() : "";
+  if (/abort|cancel/u.test(detail)) return "Scout stopped this response.";
+  if (/quota|rate/u.test(detail)) {
+    return "Gemini usage is temporarily limited. Check quota or try again later.";
+  }
+  if (/key|401|403|auth/u.test(detail)) {
+    return "Gemini could not authenticate. Check the API key in Scout settings.";
+  }
+  if (/model|404/u.test(detail)) {
+    return "That model is no longer available. Choose another in Scout Power.";
+  }
+  if (/time|respond|conn|fetch|network/u.test(detail)) {
+    return provider === "ollama"
+      ? "Scout could not reach Ollama. Make sure it is running, then try again."
+      : "Scout could not reach Gemini. Check the connection and try again.";
+  }
+  return "Scout could not finish that response. Try again or choose another model.";
+}
+
+function attachmentText(attachment: AssistantAttachment): string | null {
+  const data = attachment.data;
+  switch (attachment.kind) {
+    case "url":
+      return data.url ? `Page URL: ${data.url}` : null;
+    case "title":
+      return data.title ? `Page title: ${data.title}` : null;
+    case "description":
+      return data.description ? `Page description: ${data.description}` : null;
+    case "selected-text":
+      return data.selectedText ? `Selected text:\n${data.selectedText}` : null;
+    case "element":
+      return data.element
+        ? `Selected element: ${JSON.stringify({
+            tag: data.element.tag,
+            role: data.element.role,
+            label: data.element.label,
+            text: data.element.text,
+            href: data.element.href,
+            alt: data.element.alt,
+            placeholder: data.element.placeholder,
+            type: data.element.type,
+          })}`
+        : null;
+    case "screenshot":
+      return "A screenshot is attached, but this Scout version cannot inspect image pixels yet.";
+    case "page":
+      return [
+        data.url && `Page URL: ${data.url}`,
+        data.title && `Page title: ${data.title}`,
+      ]
+        .filter(Boolean)
+        .join("\n");
+  }
+}
+
+function assistantPrompt(request: AssistantMessageRequest): string {
+  const history = request.history
+    .slice(-12)
+    .map((turn) => `${turn.role === "user" ? "User" : "Scout"}: ${turn.text}`)
+    .join("\n\n")
+    .slice(-12_000);
+  const context = request.context
+    .map(attachmentText)
+    .filter((value): value is string => Boolean(value))
+    .join("\n\n")
+    .slice(0, 16_000);
+  return [
+    history && `Recent conversation:\n${history}`,
+    context && `Context selected by the user:\n${context}`,
+    `Current request:\n${request.prompt}`,
+  ]
+    .filter(Boolean)
+    .join("\n\n---\n\n");
 }
 
 export class AiToolsController {
@@ -298,7 +379,10 @@ export class AiToolsController {
       if (isAbort(error)) {
         this.run = { ...idleRun(), stage: "cancelled", label: "Cancelled" };
       } else {
-        const detail = message(error);
+        const safeDetail =
+          provider === "ollama"
+            ? "Chromecraft could not reach Ollama. Start Ollama, then try again."
+            : assistantError(error, "gemini");
         if (provider === "ollama") {
           this.ollamaState = {
             ...this.ollamaState,
@@ -312,14 +396,14 @@ export class AiToolsController {
             ...this.geminiState,
             connection: "unavailable",
             models: [],
-            error: detail,
+            error: safeDetail,
           };
         }
         this.run = {
           ...idleRun(),
           stage: "failed",
           label: `${provider === "ollama" ? "Ollama" : "Gemini"} unavailable`,
-          error: detail,
+          error: safeDetail,
         };
       }
     } finally {
@@ -431,6 +515,103 @@ export class AiToolsController {
       );
     }
     return snapshot;
+  }
+
+  async sendAssistantMessage(
+    request: AssistantMessageRequest,
+  ): Promise<AssistantMessageResponse> {
+    this.assertAvailable();
+    this.assertNotBusy();
+    if (request.provider === "gemini" && request.context.length) {
+      if (!request.cloudContextConsent) {
+        throw new Error(
+          "Confirm that selected page context may be sent to Gemini, or remove it.",
+        );
+      }
+    }
+    let state =
+      request.provider === "ollama" ? this.ollamaState : this.geminiState;
+    if (
+      state.connection !== "connected" ||
+      !state.models.some((model) => model.name === request.model)
+    ) {
+      const refreshed = await this.refreshModels(request.provider);
+      state =
+        request.provider === "ollama" ? refreshed.ollama : refreshed.gemini;
+    }
+    if (
+      state.connection !== "connected" ||
+      !state.models.some((model) => model.name === request.model)
+    ) {
+      throw new Error(
+        state.error ?? "Choose an available model in Scout Power.",
+      );
+    }
+    const controller = new AbortController();
+    this.abortController = controller;
+    this.run = {
+      ...idleRun(),
+      operationId: randomUUID(),
+      stage: "thinking",
+      label: "Scout is thinking",
+    };
+    this.emit();
+    try {
+      const apiKey =
+        request.provider === "gemini" ? await this.credentials.get() : null;
+      const provider =
+        request.provider === "ollama"
+          ? this.ollama
+          : apiKey
+            ? new GeminiClient(apiKey)
+            : null;
+      if (!provider) {
+        throw new Error("Add a Gemini API key in Scout settings first.");
+      }
+      const result = await provider.chatStructured({
+        model: request.model,
+        system:
+          "You are Scout, Chromecraft's concise and friendly browsing companion. Answer the user's current request using only supplied context when discussing the page. If context is insufficient, say so plainly. Never claim to have performed a browser action you did not perform.",
+        prompt: assistantPrompt(request),
+        schema: {
+          type: "object",
+          properties: { reply: { type: "string" } },
+          required: ["reply"],
+          additionalProperties: false,
+        },
+        signal: controller.signal,
+      });
+      const reply =
+        result && typeof result === "object"
+          ? (result as { reply?: unknown }).reply
+          : null;
+      if (typeof reply !== "string" || !reply.trim() || reply.length > 64_000) {
+        throw new Error("Scout returned an invalid response.");
+      }
+      this.run = idleRun();
+      this.emit();
+      return {
+        messageId: request.messageId,
+        provider: request.provider,
+        model: request.model,
+        text: reply.trim(),
+        createdAt: Date.now(),
+      };
+    } catch (error) {
+      const friendly = assistantError(error, request.provider);
+      this.run = {
+        ...idleRun(),
+        stage: controller.signal.aborted ? "cancelled" : "failed",
+        label: controller.signal.aborted
+          ? "Response stopped"
+          : "Scout needs attention",
+        error: friendly,
+      };
+      this.emit();
+      throw new Error(friendly);
+    } finally {
+      if (this.abortController === controller) this.abortController = null;
+    }
   }
 
   async removeGeminiApiKey(): Promise<AiToolsSnapshot> {

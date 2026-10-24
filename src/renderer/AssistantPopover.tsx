@@ -36,6 +36,9 @@ export function AssistantPopover({
   role?: "dialog" | "menu";
 }) {
   const popoverRef = useRef<HTMLElement>(null);
+  const [popoverElement, setPopoverElement] = useState<HTMLElement | null>(
+    null,
+  );
   const [position, setPosition] = useState<PopoverPosition>({
     left: 0,
     top: 0,
@@ -45,6 +48,7 @@ export function AssistantPopover({
   });
 
   const restoreFocus = useCallback(() => {
+    anchorRef.current?.focus();
     requestAnimationFrame(() => anchorRef.current?.focus());
   }, [anchorRef]);
 
@@ -53,10 +57,15 @@ export function AssistantPopover({
     restoreFocus();
   }, [onClose, restoreFocus]);
 
+  const setPopoverRef = useCallback((element: HTMLElement | null) => {
+    popoverRef.current = element;
+    setPopoverElement(element);
+  }, []);
+
   useLayoutEffect(() => {
     const anchor = anchorRef.current;
     const boundary = boundaryRef.current;
-    const popover = popoverRef.current;
+    const popover = popoverElement;
     if (!anchor || !boundary || !popover) return;
 
     const positionPopover = () => {
@@ -110,6 +119,7 @@ export function AssistantPopover({
       });
     };
 
+    positionPopover();
     const frame = requestAnimationFrame(positionPopover);
     const observer = new ResizeObserver(positionPopover);
     observer.observe(boundary);
@@ -126,13 +136,13 @@ export function AssistantPopover({
       window.visualViewport?.removeEventListener("resize", positionPopover);
       window.visualViewport?.removeEventListener("scroll", positionPopover);
     };
-  }, [anchorRef, boundaryRef, idealWidth, placement]);
+  }, [anchorRef, boundaryRef, idealWidth, placement, popoverElement]);
 
   useLayoutEffect(() => {
     const onPointerDown = (event: PointerEvent) => {
       const target = event.target as Node;
       if (
-        popoverRef.current?.contains(target) ||
+        popoverElement?.contains(target) ||
         anchorRef.current?.contains(target)
       ) {
         return;
@@ -150,21 +160,26 @@ export function AssistantPopover({
       document.removeEventListener("pointerdown", onPointerDown, true);
       document.removeEventListener("keydown", onKeyDown, true);
     };
-  }, [anchorRef, close]);
+  }, [anchorRef, close, popoverElement]);
 
   useLayoutEffect(() => {
-    if (role !== "menu" || position.visibility !== "visible") return;
-    const frame = requestAnimationFrame(() => {
-      popoverRef.current
-        ?.querySelector<HTMLElement>('[role="menuitem"]')
-        ?.focus();
-    });
+    if (!popoverElement || position.visibility !== "visible") return;
+    const focusFirstControl = () => {
+      if (popoverElement.contains(document.activeElement)) return;
+      const selector =
+        role === "menu"
+          ? '[role="menuitem"]'
+          : '[autofocus], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
+      popoverElement.querySelector<HTMLElement>(selector)?.focus();
+    };
+    focusFirstControl();
+    const frame = requestAnimationFrame(focusFirstControl);
     return () => cancelAnimationFrame(frame);
-  }, [position.visibility, role]);
+  }, [popoverElement, position.visibility, role]);
 
   return createPortal(
     <section
-      ref={popoverRef}
+      ref={setPopoverRef}
       className={`ai-popover ${className}`}
       role={role}
       aria-label={label}

@@ -38,6 +38,8 @@ import type {
 } from "../shared/ai-tools";
 import type {
   AssistantContextCaptured,
+  AssistantMessageRequest,
+  AssistantMessageResponse,
   AssistantPageContext,
 } from "../shared/ai-assistant";
 
@@ -580,6 +582,13 @@ const api: ChromecraftApi = {
     ipcRenderer.invoke(channels.startAssistantSelection, kind) as Promise<void>,
   cancelAssistantSelection: () =>
     ipcRenderer.invoke(channels.cancelAssistantSelection) as Promise<void>,
+  sendAssistantMessage: (request) =>
+    ipcRenderer.invoke(
+      channels.sendAssistantMessage,
+      request as AssistantMessageRequest,
+    ) as Promise<AssistantMessageResponse>,
+  cancelAssistantMessage: () =>
+    ipcRenderer.invoke(channels.cancelAssistantMessage) as Promise<void>,
   onSnapshot: (listener) => {
     const handler = (
       _event: Electron.IpcRendererEvent,

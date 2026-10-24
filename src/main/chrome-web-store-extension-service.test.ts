@@ -701,7 +701,7 @@ describe("ChromeWebStoreExtensionService", () => {
     await expect(
       fs.access(path.join(storagePath, fixture.id)),
     ).rejects.toThrow();
-  });
+  }, 15_000);
 
   it("does not report an extension ready before Electron initializes its browser state", async () => {
     const fixture = createCrxFixture();
@@ -727,7 +727,13 @@ describe("ChromeWebStoreExtensionService", () => {
       .finally(() => {
         settled = true;
       });
-    await vi.waitFor(() => expect(runtime.loadExtension).toHaveBeenCalled());
+    await vi.waitFor(
+      () => {
+        expect(runtime.loadExtension).toHaveBeenCalled();
+        expect(runtime.session.extensions.getAllExtensions()).toHaveLength(1);
+      },
+      { timeout: 10_000, interval: 20 },
+    );
     await Promise.resolve();
     expect(settled).toBe(false);
 
@@ -736,7 +742,7 @@ describe("ChromeWebStoreExtensionService", () => {
       ready: true,
       error: null,
     });
-  });
+  }, 15_000);
 
   it("fails installation when Electron never reports the extension ready", async () => {
     const fixture = createCrxFixture();

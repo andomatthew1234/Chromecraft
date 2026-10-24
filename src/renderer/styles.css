@@ -3865,6 +3865,10 @@ input::placeholder {
   font: var(--type-display-small);
 }
 
+.full-settings-header h1:focus {
+  outline: none;
+}
+
 .full-settings-header p {
   color: var(--md-on-surface-variant);
   font: var(--type-body-medium);

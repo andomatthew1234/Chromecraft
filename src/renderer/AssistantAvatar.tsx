@@ -16,7 +16,7 @@ export function StaticAssistantAvatar({
       height={size}
       viewBox="0 0 64 56"
       role="img"
-      aria-label="Chromecraft AI"
+      aria-label="Scout"
     >
       <path
         d="M13 7.5C7.5 10.8 5 17.1 5 27.7c0 10.9 2.7 17.2 8.7 20.4 4.7 2.6 31.9 2.6 36.6 0 6-3.2 8.7-9.5 8.7-20.4 0-10.6-2.5-16.9-8-20.2C46.2 4.6 17.8 4.6 13 7.5Z"
@@ -45,7 +45,11 @@ export function AnimatedAssistantAvatar({
 
   useEffect(() => {
     const element = root.current;
-    if (!element || matchMedia("(prefers-reduced-motion: reduce)").matches)
+    if (
+      !element ||
+      document.documentElement.dataset.scoutReducedMotion === "true" ||
+      matchMedia("(prefers-reduced-motion: reduce)").matches
+    )
       return;
     const render = () => {
       frame.current = null;

@@ -191,4 +191,6 @@ export const channels = {
   assistantCancelSelection: "ai-assistant:cancel-selection-in-page",
   assistantSelectionResult: "ai-assistant:selection-result",
   assistantContextCaptured: "ai-assistant:context-captured",
+  sendAssistantMessage: "ai-assistant:send-message",
+  cancelAssistantMessage: "ai-assistant:cancel-message",
 } as const;

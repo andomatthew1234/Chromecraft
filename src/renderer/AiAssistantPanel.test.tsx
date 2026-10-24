@@ -14,6 +14,8 @@ const activeTab = {
 
 const aiTools: AiToolsSnapshot = {
   provider: "ollama",
+  organiserProvider: "ollama",
+  organiserModels: { ollama: "qwen3:1.7b", gemini: null },
   preferredGroupingMode: "smart",
   eligibleTabCount: 0,
   cloudDataPreview: [],
@@ -89,12 +91,15 @@ describe("AiAssistantPanel", () => {
         aiTools={aiTools}
         close={vi.fn()}
         onOrganiseTabs={vi.fn()}
+        onOpenSettings={vi.fn()}
       />,
     );
 
-    expect(markup).toContain("Chromecraft AI");
+    expect(markup).toContain("Scout");
     expect(markup).toContain("Local AI unavailable");
-    expect(markup).toContain("Ask Chromecraft AI...");
+    expect(markup).toContain("Ask Scout...");
+    expect(markup).toContain('aria-label="Scout Power"');
+    expect(markup).not.toContain("Chromecraft AI");
     expect(markup).toContain("Organise my tabs");
     expect(markup).toContain('id="sidebar-panel-title"');
     expect(markup).toContain('class="ai-composer-toolbar"');

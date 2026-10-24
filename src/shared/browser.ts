@@ -14,6 +14,8 @@ import type {
 } from "./ai-tools";
 import type {
   AssistantContextCaptured,
+  AssistantMessageRequest,
+  AssistantMessageResponse,
   AssistantPageContext,
 } from "./ai-assistant";
 
@@ -899,6 +901,10 @@ export interface ChromecraftApi {
   getAssistantPageContext(tabId: TabId): Promise<AssistantPageContext>;
   startAssistantSelection(kind: "screenshot" | "element"): Promise<void>;
   cancelAssistantSelection(): Promise<void>;
+  sendAssistantMessage(
+    request: AssistantMessageRequest,
+  ): Promise<AssistantMessageResponse>;
+  cancelAssistantMessage(): Promise<void>;
   onSnapshot(listener: (snapshot: BrowserSnapshot) => void): () => void;
   onBrowserData(listener: (snapshot: BrowserDataSnapshot) => void): () => void;
   onDownloads(listener: (snapshot: DownloadSnapshot) => void): () => void;

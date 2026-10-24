@@ -12,6 +12,8 @@ const PREFERRED_MODELS = [
   "gemini-3.1-flash-lite",
   "gemini-2.5-flash-lite",
 ] as const;
+const VERIFIED_TEXT_MODEL =
+  /^gemini-(?:2\.(?:0|5)|3(?:\.\d+)?)-(?:flash(?:-lite)?|pro)(?:-\d{3,4})?$/u;
 
 type FetchLike = typeof fetch;
 
@@ -83,7 +85,7 @@ function compatibleModel(entry: unknown): AiModelSnapshot | null {
     ? value.supportedGenerationMethods
     : [];
   if (
-    !/^gemini-/u.test(name) ||
+    !VERIFIED_TEXT_MODEL.test(name) ||
     !methods.includes("generateContent") ||
     /(?:preview|experimental|exp|live|tts|audio|image|embedding|transcribe|robotics)/iu.test(
       name,

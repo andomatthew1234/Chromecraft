@@ -8,6 +8,7 @@ import type {
   OrganiseTabsProposal,
   OrganiseTabsRequest,
 } from "../../shared/ai-tools";
+import type { AssistantMessageRequest } from "../../shared/ai-assistant";
 import { AiToolsController } from "./controller";
 import type { GeminiCredentialStore } from "./gemini-credential-store";
 import type { OllamaClient } from "./ollama-client";
@@ -70,6 +71,12 @@ function organiser() {
   const prepared: InternalOrganiseTabsProposal = {
     publicProposal: proposal(),
     revision: "revision-1",
+    context: {
+      revision: "revision-1",
+      candidates: [],
+      preservedTabIds: [],
+    },
+    replacesAppliedLayout: false,
   };
   return {
     eligibleTabCount: 2,
@@ -111,6 +118,32 @@ function request(
     customInstructions: "",
     rememberCustomInstructions: false,
     cloudConsent: false,
+    ...overrides,
+  };
+}
+
+function assistantRequest(
+  overrides: Partial<AssistantMessageRequest> = {},
+): AssistantMessageRequest {
+  return {
+    conversationId: "conversation-1",
+    messageId: "message-1",
+    prompt: "Explain this page",
+    createdAt: 1,
+    provider: "ollama",
+    model: "qwen3:1.7b",
+    context: [
+      {
+        id: "title-1",
+        kind: "title",
+        label: "Page title",
+        detail: "Example",
+        createdAt: 1,
+        data: { title: "Example" },
+      },
+    ],
+    history: [{ role: "user", text: "Earlier question" }],
+    cloudContextConsent: false,
     ...overrides,
   };
 }
@@ -329,5 +362,96 @@ describe("AiToolsController", () => {
     expect(snapshot.ollama.connection).toBe("unavailable");
     expect(snapshot.ollama.error).toContain("Start Ollama");
     expect(snapshot.ollama.error).not.toContain("secret");
+  });
+
+  it("uses the exact Scout model and returns a real assistant response", async () => {
+    const chatStructured = vi.fn().mockResolvedValue({
+      reply: "This page is an example.",
+    });
+    const controller = new AiToolsController({
+      stateFilePath: await statePath(),
+      ollama: {
+        listModels: vi.fn().mockResolvedValue([
+          {
+            name: "qwen3:1.7b",
+            size: 1_000,
+            modifiedAt: null,
+            family: "qwen3",
+            parameterSize: "1.7B",
+          },
+        ]),
+        chatStructured,
+      } as unknown as OllamaClient,
+      credentials: credentials(),
+      organiseTabs: organiser(),
+    });
+    await controller.refreshModels("ollama");
+
+    await expect(
+      controller.sendAssistantMessage(assistantRequest()),
+    ).resolves.toMatchObject({
+      messageId: "message-1",
+      provider: "ollama",
+      model: "qwen3:1.7b",
+      text: "This page is an example.",
+    });
+    expect(chatStructured).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: "qwen3:1.7b",
+        prompt: expect.stringContaining("Page title: Example"),
+        schema: expect.objectContaining({ type: "object" }),
+        signal: expect.any(AbortSignal),
+      }),
+    );
+    expect(chatStructured.mock.calls[0]?.[0].prompt).toContain(
+      "Earlier question",
+    );
+    expect(controller.snapshot.run.stage).toBe("idle");
+  });
+
+  it("requires explicit page-context consent for Gemini", async () => {
+    const controller = new AiToolsController({
+      stateFilePath: await statePath(),
+      ollama: { listModels: vi.fn() } as unknown as OllamaClient,
+      credentials: credentials("secret-key"),
+      organiseTabs: organiser(),
+    });
+
+    await expect(
+      controller.sendAssistantMessage(
+        assistantRequest({
+          provider: "gemini",
+          model: "gemini-2.5-flash-lite",
+        }),
+      ),
+    ).rejects.toThrow("Confirm that selected page context");
+  });
+
+  it("does not leak raw provider failures through Scout errors", async () => {
+    const controller = new AiToolsController({
+      stateFilePath: await statePath(),
+      ollama: {
+        listModels: vi.fn().mockResolvedValue([
+          {
+            name: "qwen3:1.7b",
+            size: 1_000,
+            modifiedAt: null,
+            family: "qwen3",
+            parameterSize: "1.7B",
+          },
+        ]),
+        chatStructured: vi
+          .fn()
+          .mockRejectedValue(new Error("ECONNREFUSED secret-token")),
+      } as unknown as OllamaClient,
+      credentials: credentials(),
+      organiseTabs: organiser(),
+    });
+    await controller.refreshModels("ollama");
+
+    await expect(
+      controller.sendAssistantMessage(assistantRequest()),
+    ).rejects.toThrow("Scout could not reach Ollama");
+    expect(JSON.stringify(controller.snapshot)).not.toContain("secret-token");
   });
 });

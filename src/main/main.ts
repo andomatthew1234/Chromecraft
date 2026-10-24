@@ -57,6 +57,11 @@ import type {
   OrganiseTabsProposal,
   OrganiseTabsRequest,
 } from "../shared/ai-tools";
+import type {
+  AssistantAttachment,
+  AssistantElementContext,
+  AssistantMessageRequest,
+} from "../shared/ai-assistant";
 import { isAllowedWebUrl } from "../shared/navigation";
 import { BrowserDataStore } from "./browser-data";
 import {
@@ -851,6 +856,153 @@ function requireOrganiseTabsRequest(value: unknown): OrganiseTabsRequest {
   };
 }
 
+function optionalAssistantText(
+  value: unknown,
+  label: string,
+  maximum: number,
+): string | undefined {
+  return value === undefined || value === null || value === ""
+    ? undefined
+    : requireString(value, label, maximum);
+}
+
+function requireAssistantAttachment(value: unknown): AssistantAttachment {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("Scout context is invalid.");
+  }
+  const attachment = value as Record<string, unknown>;
+  const kinds = [
+    "page",
+    "url",
+    "title",
+    "description",
+    "selected-text",
+    "screenshot",
+    "element",
+  ] as const;
+  if (!kinds.includes(attachment.kind as (typeof kinds)[number])) {
+    throw new TypeError("Scout context has an unknown kind.");
+  }
+  const rawData =
+    attachment.data &&
+    typeof attachment.data === "object" &&
+    !Array.isArray(attachment.data)
+      ? (attachment.data as Record<string, unknown>)
+      : {};
+  let element: AssistantElementContext | undefined;
+  if (rawData.element !== undefined) {
+    if (
+      !rawData.element ||
+      typeof rawData.element !== "object" ||
+      Array.isArray(rawData.element)
+    ) {
+      throw new TypeError("The selected page element is invalid.");
+    }
+    const source = rawData.element as Record<string, unknown>;
+    element = {
+      tag: requireString(source.tag, "element tag", 64),
+      role: optionalAssistantText(source.role, "element role", 128) ?? null,
+      label: optionalAssistantText(source.label, "element label", 500) ?? null,
+      text: optionalAssistantText(source.text, "element text", 2_000) ?? null,
+      href: optionalAssistantText(source.href, "element href", 2_048) ?? null,
+      alt: optionalAssistantText(source.alt, "element alt", 500) ?? null,
+      placeholder:
+        optionalAssistantText(source.placeholder, "element placeholder", 500) ??
+        null,
+      type: optionalAssistantText(source.type, "element type", 128) ?? null,
+      markup: "",
+    };
+  }
+  const screenshotDataUrl = optionalAssistantText(
+    rawData.screenshotDataUrl,
+    "screenshot",
+    3 * 1024 * 1024,
+  );
+  if (
+    screenshotDataUrl &&
+    !/^data:image\/png;base64,[a-z0-9+/=]+$/iu.test(screenshotDataUrl)
+  ) {
+    throw new TypeError("The Scout screenshot is invalid.");
+  }
+  return {
+    id: requireString(attachment.id, "context id", 128),
+    kind: attachment.kind as AssistantAttachment["kind"],
+    label: requireString(attachment.label, "context label", 160),
+    detail:
+      optionalAssistantText(attachment.detail, "context detail", 500) ?? null,
+    createdAt:
+      typeof attachment.createdAt === "number" &&
+      Number.isFinite(attachment.createdAt)
+        ? attachment.createdAt
+        : Date.now(),
+    data: {
+      url: optionalAssistantText(rawData.url, "context URL", 2_048),
+      title: optionalAssistantText(rawData.title, "context title", 240),
+      description: optionalAssistantText(
+        rawData.description,
+        "context description",
+        2_000,
+      ),
+      selectedText: optionalAssistantText(
+        rawData.selectedText,
+        "selected text",
+        8_000,
+      ),
+      screenshotDataUrl,
+      element,
+    },
+  };
+}
+
+function requireAssistantMessageRequest(
+  value: unknown,
+): AssistantMessageRequest {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("The Scout message is invalid.");
+  }
+  const request = value as Record<string, unknown>;
+  if (!Array.isArray(request.context) || request.context.length > 12) {
+    throw new TypeError("Scout can include at most 12 context items.");
+  }
+  if (!Array.isArray(request.history) || request.history.length > 24) {
+    throw new TypeError("Scout conversation history is too large.");
+  }
+  return {
+    conversationId: requireString(
+      request.conversationId,
+      "conversation id",
+      128,
+    ),
+    messageId: requireString(request.messageId, "message id", 128),
+    prompt: requireString(request.prompt, "prompt", 16_000),
+    createdAt:
+      typeof request.createdAt === "number" &&
+      Number.isFinite(request.createdAt)
+        ? request.createdAt
+        : Date.now(),
+    provider: requireAiProvider(request.provider),
+    model: requireString(request.model, "model", 256),
+    context: request.context.map(requireAssistantAttachment),
+    history: request.history.map((entry) => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+        throw new TypeError("Scout conversation history is invalid.");
+      }
+      const turn = entry as Record<string, unknown>;
+      if (turn.role !== "user" && turn.role !== "assistant") {
+        throw new TypeError("Scout conversation history has an invalid role.");
+      }
+      return {
+        role: turn.role,
+        text: requireString(turn.text, "conversation turn", 16_000),
+      };
+    }),
+    cloudContextConsent: requireBoolean(
+      request.cloudContextConsent,
+      "cloudContextConsent",
+    ),
+  };
+}
+
 function requireOrganiseTabsProposal(value: unknown): OrganiseTabsProposal {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new TypeError("The tab proposal is invalid.");
@@ -1082,6 +1234,14 @@ function registerIpc(): void {
   });
   ipcMain.handle(channels.cancelAssistantSelection, (event) => {
     requireManager(event).cancelAssistantSelection();
+  });
+  ipcMain.handle(channels.sendAssistantMessage, (event, request: unknown) =>
+    requireAiTools(event).sendAssistantMessage(
+      requireAssistantMessageRequest(request),
+    ),
+  );
+  ipcMain.handle(channels.cancelAssistantMessage, (event) => {
+    requireAiTools(event).cancel();
   });
   ipcMain.handle(channels.createTab, (event, input?: unknown) =>
     requireManager(event).createTab(

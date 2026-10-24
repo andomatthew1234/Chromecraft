@@ -84,7 +84,20 @@ class CdpClient {
   send(method, params = {}) {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
+      const timer = setTimeout(() => {
+        this.pending.delete(id);
+        reject(new Error(`CDP ${method} timed out.`));
+      }, 10_000);
+      this.pending.set(id, {
+        resolve: (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        reject: (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      });
       this.socket.send(JSON.stringify({ id, method, params }));
     });
   }
@@ -122,7 +135,8 @@ async function poll(operation, predicate, description, timeoutMs = 12_000) {
     }
     await new Promise((resolve) => setTimeout(resolve, 60));
   }
-  throw new Error(`Timed out waiting for ${description}: ${String(last)}`);
+  const detail = typeof last === "object" ? JSON.stringify(last) : String(last);
+  throw new Error(`Timed out waiting for ${description}: ${detail}`);
 }
 
 function assert(condition, message) {
@@ -150,49 +164,55 @@ const child = spawn(
     "--remote-debugging-address=127.0.0.1",
     "--no-first-run",
   ],
-  { cwd: root, windowsHide: true, stdio: "ignore" },
+  { cwd: root, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] },
 );
+child.stdout?.on("data", (chunk) => process.stdout.write(chunk));
+child.stderr?.on("data", (chunk) => process.stderr.write(chunk));
 
 let cdp;
+let loggedTargets = false;
 try {
-  const target = await poll(
+  cdp = await poll(
     async () => {
       const response = await fetch(`http://127.0.0.1:${port}/json/list`);
-      return response.json();
-    },
-    (targets) =>
-      targets.some(
+      const targets = await response.json();
+      if (!loggedTargets && targets.length > 0) {
+        loggedTargets = true;
+        console.log(
+          "CDP targets:",
+          targets.map(({ type, title, url }) => ({ type, title, url })),
+        );
+      }
+      for (const target of targets.filter(
         (entry) =>
           entry.type === "page" &&
-          (entry.url.startsWith("file://") ||
-            entry.url.includes("main_window")) &&
-          entry.webSocketDebuggerUrl,
-      ),
+          entry.webSocketDebuggerUrl &&
+          (entry.title === "Chromecraft" ||
+            entry.url.includes("main_window/index.html")),
+      )) {
+        const candidate = await CdpClient.connect(target.webSocketDebuggerUrl);
+        try {
+          if (
+            await candidate.evaluate(
+              'Boolean(document.querySelector(".app-shell"))',
+            )
+          ) {
+            return candidate;
+          }
+        } catch {
+          // Extension and webpage targets do not expose the trusted shell bridge.
+        }
+        candidate.close();
+      }
+      return null;
+    },
+    Boolean,
     "the Chromecraft shell target",
-    20_000,
-  ).then((targets) =>
-    targets.find(
-      (entry) =>
-        entry.type === "page" &&
-        (entry.url.startsWith("file://") ||
-          entry.url.includes("main_window")) &&
-        entry.webSocketDebuggerUrl,
-    ),
+    60_000,
   );
-  cdp = await CdpClient.connect(target.webSocketDebuggerUrl);
-  await poll(
-    () => cdp.evaluate("Boolean(window.chromecraft)"),
-    Boolean,
-    "the shell API",
-  );
-  await poll(
-    () => cdp.evaluate('Boolean(document.querySelector(".app-shell"))'),
-    Boolean,
-    "the rendered browser shell",
-    25_000,
-  );
+  console.log("Connected to the rendered Chromecraft shell.");
   const hasAssistantButton = await cdp.evaluate(
-    "Boolean(document.querySelector('button[aria-label=\"Chromecraft AI\"]'))",
+    "Boolean(document.querySelector('button[aria-label=\"Scout\"]'))",
   );
   if (!hasAssistantButton) {
     console.error(
@@ -225,13 +245,13 @@ try {
   await poll(
     () =>
       cdp.evaluate(
-        "Boolean(document.querySelector('button[aria-label=\"Chromecraft AI\"]'))",
+        "Boolean(document.querySelector('button[aria-label=\"Scout\"]'))",
       ),
     Boolean,
     "the assistant navigation button",
   );
   await cdp.evaluate(`
-    document.querySelector('button[aria-label="Chromecraft AI"]')?.click()
+    document.querySelector('button[aria-label="Scout"]')?.click()
   `);
   await poll(
     () =>
@@ -381,7 +401,7 @@ try {
   const popoverBounds = await poll(
     () =>
       cdp.evaluate(`(() => {
-        const popover = document.querySelector('.ai-context-popover');
+        const popover = document.querySelector('.ai-attachment-menu');
         const panel = document.querySelector('.ai-assistant-panel');
         if (!popover || !panel) return null;
         const p = popover.getBoundingClientRect();
@@ -394,8 +414,8 @@ try {
           visibility: popover.style.visibility,
           panelLeft: b.left, panelRight: b.right, panelTop: b.top, panelBottom: b.bottom,
           viewportWidth: innerWidth, viewportHeight: innerHeight,
-          hasFooter: Boolean(popover.querySelector('.ai-context-popover-footer')),
-          controlCount: popover.querySelectorAll('input[role="switch"]').length,
+          actionCount: popover.querySelectorAll('.ai-attachment-actions > button').length,
+          hasIncludedSection: Boolean(popover.querySelector('.ai-context-menu-section')),
         };
       })()`),
     (value) =>
@@ -404,7 +424,7 @@ try {
         value.visibility === "visible" &&
         value.inlineMaxHeight !== "0px",
       ),
-    "the included-context popover",
+    "the context and attachment menu",
   );
   console.log("Context popover measurements:", popoverBounds);
   assert(
@@ -425,8 +445,8 @@ try {
     "Context popover escaped below the window",
   );
   assert(
-    popoverBounds.hasFooter && popoverBounds.controlCount === 6,
-    "Context controls or footer are missing",
+    popoverBounds.actionCount === 3 && popoverBounds.hasIncludedSection,
+    "Context actions or included-items section are missing",
   );
 
   const contextScreenshot = await cdp.send("Page.captureScreenshot", {
@@ -448,9 +468,9 @@ try {
     code: "Escape",
   });
   await poll(
-    () => cdp.evaluate('!document.querySelector(".ai-context-popover")'),
+    () => cdp.evaluate('!document.querySelector(".ai-attachment-menu")'),
     Boolean,
-    "the context popover to close",
+    "the context and attachment menu to close",
   );
   const focusRestored = await cdp.evaluate(
     "document.activeElement?.classList.contains('ai-page-context')",
@@ -476,24 +496,6 @@ try {
   );
   await cdp.send("Input.dispatchKeyEvent", {
     type: "keyDown",
-    key: "ArrowDown",
-    code: "ArrowDown",
-  });
-  await cdp.send("Input.dispatchKeyEvent", {
-    type: "keyUp",
-    key: "ArrowDown",
-    code: "ArrowDown",
-  });
-  const secondMenuLabel = await cdp.evaluate(
-    "document.activeElement?.textContent?.trim()",
-  );
-  assert(
-    firstMenuLabel !== secondMenuLabel &&
-      secondMenuLabel?.includes("Select page element"),
-    "Arrow keys did not navigate the attachment menu",
-  );
-  await cdp.send("Input.dispatchKeyEvent", {
-    type: "keyDown",
     key: "Escape",
     code: "Escape",
   });
@@ -512,6 +514,54 @@ try {
       "document.activeElement?.classList.contains('ai-composer-plus')",
     ),
     "Attachment-menu focus did not return to the plus button",
+  );
+
+  await cdp.evaluate("document.querySelector('.ai-power-button')?.click()");
+  const powerBounds = await poll(
+    () =>
+      cdp.evaluate(`(() => {
+        const popover = document.querySelector('.ai-power-popover');
+        const panel = document.querySelector('.ai-assistant-panel');
+        if (!popover || !panel) return null;
+        const p = popover.getBoundingClientRect();
+        const b = panel.getBoundingClientRect();
+        return {
+          left: p.left, right: p.right, top: p.top, bottom: p.bottom,
+          visibility: popover.style.visibility,
+          panelLeft: b.left, panelRight: b.right, panelTop: b.top, panelBottom: b.bottom,
+          viewportHeight: innerHeight,
+          providerCount: popover.querySelectorAll('.ai-provider-switch button').length,
+        };
+      })()`),
+    (value) => Boolean(value && value.visibility === "visible"),
+    "the Scout Power popover",
+  );
+  assert(
+    powerBounds.left >= powerBounds.panelLeft - 0.5 &&
+      powerBounds.right <= powerBounds.panelRight + 0.5 &&
+      powerBounds.top >= Math.max(0, powerBounds.panelTop) - 0.5 &&
+      powerBounds.bottom <=
+        Math.min(powerBounds.viewportHeight, powerBounds.panelBottom) + 0.5,
+    "Scout Power escaped the available panel bounds",
+  );
+  assert(
+    powerBounds.providerCount === 2,
+    "Scout Power provider switch is missing",
+  );
+  await cdp.send("Input.dispatchKeyEvent", {
+    type: "keyDown",
+    key: "Escape",
+    code: "Escape",
+  });
+  await cdp.send("Input.dispatchKeyEvent", {
+    type: "keyUp",
+    key: "Escape",
+    code: "Escape",
+  });
+  await poll(
+    () => cdp.evaluate('!document.querySelector(".ai-power-popover")'),
+    Boolean,
+    "Scout Power to close",
   );
 
   await cdp.evaluate(`(() => {

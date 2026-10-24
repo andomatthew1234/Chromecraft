@@ -17,6 +17,9 @@ const artifacts = {
   light: path.join(root, ".artifacts", "full-settings-light.png"),
   dark: path.join(root, ".artifacts", "full-settings-dark.png"),
   narrow: path.join(root, ".artifacts", "full-settings-narrow.png"),
+  scoutGemini: path.join(root, ".artifacts", "scout-settings-gemini.png"),
+  scoutModels: path.join(root, ".artifacts", "scout-settings-models.png"),
+  scoutPrivacy: path.join(root, ".artifacts", "scout-settings-privacy.png"),
 };
 
 async function freePort() {
@@ -342,6 +345,7 @@ try {
     "privacy",
     "appearance",
     "downloads",
+    "ai",
     "hyperdrive",
     "extensions",
     "advanced",
@@ -371,7 +375,7 @@ try {
           return {
             detail: detail?.getAttribute('data-settings-detail'),
             active: document.querySelector('[data-settings-category].active')?.getAttribute('data-settings-category'),
-            cards: document.querySelectorAll('.settings-category-content > .settings-card').length,
+            cards: document.querySelectorAll('.settings-category-content > .settings-card, .settings-category-content > .scout-settings-shell').length,
             horizontalOverflow: Boolean(detail && detail.scrollWidth > detail.clientWidth + 1),
           };
         })()`),
@@ -383,6 +387,149 @@ try {
       `${category} category`,
     );
   }
+
+  await selectCategory(app.cdp, "ai");
+  const scoutHome = await poll(
+    () =>
+      app.cdp.evaluate(`(() => ({
+        page: document.querySelector('.scout-settings-shell')?.getAttribute('data-page'),
+        cards: document.querySelectorAll('.scout-navigation-card').length,
+        labels: [...document.querySelectorAll('.scout-navigation-card strong')].map((item) => item.textContent),
+        nativeSelects: document.querySelectorAll('.scout-settings-shell select').length,
+        horizontalOverflow: (() => {
+          const detail = document.querySelector('.full-settings-detail');
+          return Boolean(detail && detail.scrollWidth > detail.clientWidth + 1);
+        })(),
+      }))()`),
+    (state) =>
+      state.page === "home" &&
+      state.cards === 3 &&
+      state.labels.includes("AI providers") &&
+      state.labels.includes("Models & performance") &&
+      state.labels.includes("Privacy & context") &&
+      state.nativeSelects === 0 &&
+      !state.horizontalOverflow,
+    "the compact Scout settings homepage",
+  );
+  await app.cdp.evaluate(
+    `[...document.querySelectorAll('.scout-navigation-card')].find((button) => button.textContent?.includes('AI providers'))?.click()`,
+  );
+  await poll(
+    () =>
+      app.cdp.evaluate(
+        "document.querySelector('.scout-settings-shell')?.getAttribute('data-page')",
+      ),
+    (page) => page === "providers",
+    "Scout provider overview",
+  );
+  await app.cdp.evaluate(
+    `[...document.querySelectorAll('.scout-provider-card')].find((button) => button.textContent?.includes('Google Gemini'))?.click()`,
+  );
+  await poll(
+    () =>
+      app.cdp.evaluate(`(() => ({
+        page: document.querySelector('.scout-settings-shell')?.getAttribute('data-page'),
+        hasCredential: Boolean(document.querySelector('.scout-credential-field')),
+        exposedCredential: Boolean(document.querySelector('.scout-credential-field input')?.value),
+        nativeSelects: document.querySelectorAll('.scout-settings-shell select').length,
+      }))()`),
+    (state) =>
+      state.page === "gemini" &&
+      state.hasCredential &&
+      !state.exposedCredential &&
+      state.nativeSelects === 0,
+    "the Gemini provider credential page",
+  );
+  await new Promise((resolve) => setTimeout(resolve, 260));
+  await capture(app.cdp, artifacts.scoutGemini);
+  await app.cdp.evaluate(
+    `document.querySelector('.scout-back-button')?.click()`,
+  );
+  await poll(
+    () =>
+      app.cdp.evaluate(
+        "document.querySelector('.scout-settings-shell')?.getAttribute('data-page')",
+      ),
+    (page) => page === "providers",
+    "back to Scout providers",
+  );
+  await app.cdp.evaluate(
+    `document.querySelector('.scout-back-button')?.click()`,
+  );
+  await poll(
+    () =>
+      app.cdp.evaluate(
+        "document.querySelector('.scout-settings-shell')?.getAttribute('data-page')",
+      ),
+    (page) => page === "home",
+    "back to Scout home",
+  );
+  await app.cdp.evaluate(
+    `[...document.querySelectorAll('.scout-navigation-card')].find((button) => button.textContent?.includes('Privacy & context'))?.click()`,
+  );
+  await poll(
+    () =>
+      app.cdp.evaluate(`(() => ({
+        page: document.querySelector('.scout-settings-shell')?.getAttribute('data-page'),
+        controls: document.querySelectorAll('.scout-context-row input[type="checkbox"]').length,
+        horizontalOverflow: (() => {
+          const detail = document.querySelector('.full-settings-detail');
+          return Boolean(detail && detail.scrollWidth > detail.clientWidth + 1);
+        })(),
+      }))()`),
+    (state) =>
+      state.page === "privacy" &&
+      state.controls === 7 &&
+      !state.horizontalOverflow,
+    "Scout privacy and context settings",
+  );
+  await new Promise((resolve) => setTimeout(resolve, 260));
+  await capture(app.cdp, artifacts.scoutPrivacy);
+  await app.cdp.evaluate(
+    `document.querySelector('.scout-back-button')?.click()`,
+  );
+  await poll(
+    () =>
+      app.cdp.evaluate(
+        "document.querySelector('.scout-settings-shell')?.getAttribute('data-page')",
+      ),
+    (page) => page === "home",
+    "back to Scout home from privacy",
+  );
+  await app.cdp.evaluate(
+    `[...document.querySelectorAll('.scout-navigation-card')].find((button) => button.textContent?.includes('Models & performance'))?.click()`,
+  );
+  const scoutModels = await poll(
+    () =>
+      app.cdp.evaluate(`(() => ({
+        page: document.querySelector('.scout-settings-shell')?.getAttribute('data-page'),
+        pickerCount: document.querySelectorAll('.scout-model-picker').length,
+        hasScout: document.body.textContent?.includes('Scout conversation model'),
+        hasOllama: document.body.textContent?.includes('Ollama organiser model'),
+        hasGemini: document.body.textContent?.includes('Gemini organiser model'),
+        nativeSelects: document.querySelectorAll('.scout-settings-shell select').length,
+      }))()`),
+    (state) =>
+      state.page === "models" &&
+      state.pickerCount === 3 &&
+      state.hasScout &&
+      state.hasOllama &&
+      state.hasGemini &&
+      state.nativeSelects === 0,
+    "independent Scout and organiser model pickers",
+  );
+  await new Promise((resolve) => setTimeout(resolve, 260));
+  await capture(app.cdp, artifacts.scoutModels);
+  await selectCategory(app.cdp, "general");
+  await selectCategory(app.cdp, "ai");
+  await poll(
+    () =>
+      app.cdp.evaluate(
+        "document.querySelector('.scout-settings-shell')?.getAttribute('data-page')",
+      ),
+    (page) => page === "home",
+    "the Scout homepage after category navigation",
+  );
 
   await selectCategory(app.cdp, "downloads");
   await app.cdp.evaluate(
@@ -458,7 +605,7 @@ try {
 
   await app.cdp.evaluate(`(() => {
     document.querySelector('.settings-search-clear')?.click();
-    document.querySelector('[data-settings-category="hyperdrive"]')?.click();
+    document.querySelector('[data-settings-category="ai"]')?.click();
     const detail = document.querySelector('.full-settings-detail');
     if (detail) detail.scrollTop = 0;
   })()`);
@@ -471,6 +618,17 @@ try {
   const darkSurface = await app.cdp.evaluate(
     "getComputedStyle(document.documentElement).getPropertyValue('--md-surface').trim()",
   );
+  const darkVisual = await app.cdp.evaluate(`(() => {
+    const card = document.querySelector('.scout-navigation-card');
+    const shell = document.querySelector('.scout-settings-shell');
+    return {
+      cardBackground: card ? getComputedStyle(card).backgroundColor : null,
+      cardColor: card ? getComputedStyle(card).color : null,
+      cardOpacity: card ? getComputedStyle(card).opacity : null,
+      shellOpacity: shell ? getComputedStyle(shell).opacity : null,
+      openBackdropCount: document.querySelectorAll('.dialog-backdrop, .palette-backdrop, .scout-model-picker__backdrop').length,
+    };
+  })()`);
   await app.cdp.send("Emulation.setDeviceMetricsOverride", {
     width: 700,
     height: 860,
@@ -549,6 +707,7 @@ try {
       ),
     Boolean,
     "uBlock Origin to become ready",
+    30_000,
   );
   for (const [settingId, expression, description] of [
     [
@@ -749,10 +908,13 @@ try {
         initialLayout,
         galleryEntryPoints,
         categoryChecks,
+        scoutHome,
+        scoutModels,
         smartDownloads,
         searchResult,
         searchNavigation,
         darkSurface,
+        darkVisual,
         narrowLayout,
         controlChecks,
         persistedRestoreSession,
