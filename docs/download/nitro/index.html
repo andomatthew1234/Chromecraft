@@ -14,9 +14,10 @@
       href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="../download.css" />
+    <link rel="stylesheet" href="../download.css?v=20261024-nitro-hud" />
   </head>
   <body class="platform-page nitro" data-edition="Chromecraft Nitro">
+    <div class="nitro-atmosphere" aria-hidden="true"></div>
     <header class="download-header">
       <a class="download-wordmark" href="../../index.html"
         >Chromecraft <span>Nitro</span></a
@@ -24,23 +25,53 @@
       <a class="back-link" href="../index.html">All editions</a>
     </header>
 
-    <main class="platform-main">
-      <div class="platform-intro">
-        <p class="download-kicker">Zero distraction / maximum speed</p>
-        <h1>Chromecraft Nitro</h1>
-        <p>
-          The Chromecraft for gamers across the world. Choose your platform to
-          see availability.
-        </p>
+    <main class="platform-main nitro-main">
+      <section class="nitro-hero" aria-labelledby="nitro-title">
+        <div class="platform-intro nitro-intro">
+          <p class="download-kicker">Zero distraction / maximum speed</p>
+          <h1 id="nitro-title">
+            <span>Chromecraft</span> <strong>Nitro</strong>
+          </h1>
+          <p>
+            The Chromecraft for gamers across the world. Choose your platform to
+            see availability.
+          </p>
+        </div>
+
+        <div class="nitro-performance-hud" aria-label="Nitro performance HUD">
+          <div class="nitro-hud-header">
+            <span>PERFORMANCE PROFILE</span><b>ARMED</b>
+          </div>
+          <div class="nitro-hud-primary">
+            <span>FRAME RATE</span>
+            <strong data-nitro-counter="144">000</strong>
+            <b>FPS</b>
+          </div>
+          <div class="nitro-hud-metrics">
+            <span><b>INPUT</b><i></i><em data-nitro-counter="7">0</em> MS</span>
+            <span><b>MEM</b><i></i><em data-nitro-counter="32">0</em>%</span>
+            <span><b>BOOST</b><i></i><em data-nitro-counter="98">0</em>%</span>
+          </div>
+        </div>
+      </section>
+
+      <div class="nitro-mode-strip" aria-label="Nitro gaming features">
+        <span><i></i>GPU priority</span>
+        <span><i></i>Background throttling</span>
+        <span><i></i>Low-latency UI</span>
+        <span><i></i>Memory control</span>
       </div>
 
-      <div class="platform-grid">
+      <div class="platform-grid nitro-platform-grid">
         <button
           class="platform-option"
           type="button"
           data-platform="macOS"
           aria-pressed="false"
         >
+          <span class="nitro-module-index" aria-hidden="true">01 / MAC</span>
+          <span class="nitro-card-scan" aria-hidden="true"></span>
+          <span class="nitro-card-corners" aria-hidden="true"></span>
           <span class="platform-logo"
             ><img src="https://cdn.simpleicons.org/apple/000000" alt="Apple"
           /></span>
@@ -54,6 +85,9 @@
           data-platform="Windows"
           aria-pressed="false"
         >
+          <span class="nitro-module-index" aria-hidden="true">02 / WIN</span>
+          <span class="nitro-card-scan" aria-hidden="true"></span>
+          <span class="nitro-card-corners" aria-hidden="true"></span>
           <span class="platform-logo" aria-hidden="true">
             <span class="windows-mark">
               <span></span><span></span><span></span><span></span>
@@ -69,6 +103,9 @@
           data-platform="Linux"
           aria-pressed="false"
         >
+          <span class="nitro-module-index" aria-hidden="true">03 / LNX</span>
+          <span class="nitro-card-scan" aria-hidden="true"></span>
+          <span class="nitro-card-corners" aria-hidden="true"></span>
           <span class="platform-logo"
             ><img src="https://cdn.simpleicons.org/linux/000000" alt="Linux"
           /></span>
@@ -78,11 +115,30 @@
         </button>
       </div>
 
+      <div class="nitro-terminal" aria-live="polite">
+        <div class="nitro-terminal-bar">
+          <span>CHROMECRAFT_NITRO.EXE</span><b>STANDBY</b>
+        </div>
+        <div class="nitro-terminal-output">
+          <p>
+            <span>&gt;</span> PLATFORM:
+            <b data-terminal-platform>NOT SELECTED</b>
+          </p>
+          <p>
+            <span>&gt;</span> NITRO BUILD: <b data-terminal-build>WAITING</b>
+          </p>
+          <p>
+            <span>&gt;</span> STATUS:
+            <b data-terminal-status>CHOOSE A MODULE</b>
+          </p>
+        </div>
+      </div>
+
       <p class="coming-notice">
         All versions for every operating system are coming soon.
       </p>
       <p class="download-status" role="status" aria-live="polite"></p>
     </main>
-    <script src="../download.js"></script>
+    <script src="../download.js?v=20261024-nitro-hud"></script>
   </body>
 </html>
