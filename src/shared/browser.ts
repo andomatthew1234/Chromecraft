@@ -331,6 +331,7 @@ export interface SmartDownloadsSnapshot {
 
 export type NewTabTheme = "overworld" | "nether" | "end" | "minimal";
 export type SearchEngine = "duckduckgo";
+export type ToolbarAction = "bookmark" | "find" | "hyperdrive" | "ublock";
 export type HyperdriveMode = "off" | "balanced" | "aggressive" | "maximum";
 export type HyperdrivePreparationState =
   | "predicted"
@@ -376,6 +377,7 @@ export interface BrowserPreferencesSnapshot {
   hyperdriveMonitorOpen: boolean;
   hyperdriveDeveloperMode: boolean;
   extensionDeveloperMode: boolean;
+  hiddenToolbarActions: ToolbarAction[];
   showDownloadProgressInToolbar: boolean;
   showDownloadCompletionNotification: boolean;
   addVideosToGallery: boolean;
@@ -486,6 +488,7 @@ export interface BrowserExtensionSnapshot {
   optionsUrl: string | null;
   popupUrl: string | null;
   iconDataUrl: string | null;
+  toolbarPinned: boolean;
   action: {
     kind: "action" | "browserAction" | "pageAction";
     title: string;
@@ -790,7 +793,9 @@ export interface ChromecraftApi {
     extensionId: string,
   ): Promise<void>;
   setExtensionEnabled(id: string, enabled: boolean): Promise<void>;
+  setExtensionToolbarPinned(id: string, pinned: boolean): Promise<void>;
   setExtensionDeveloperMode(enabled: boolean): Promise<void>;
+  setToolbarActionPinned(action: ToolbarAction, pinned: boolean): Promise<void>;
   importUnpackedExtension(): Promise<boolean>;
   removeExtension(id: string): Promise<void>;
   openExtensionPage(id: string, page: "options"): Promise<void>;

@@ -37,6 +37,7 @@ const snapshot: BrowserSnapshot = {
     hyperdriveMonitorOpen: false,
     hyperdriveDeveloperMode: false,
     extensionDeveloperMode: false,
+    hiddenToolbarActions: [],
     showDownloadProgressInToolbar: true,
     showDownloadCompletionNotification: true,
     addVideosToGallery: true,

@@ -261,6 +261,7 @@ describe("tab organisation renderer", () => {
         onToggleBrandMenu={vi.fn()}
         onSetSidebarAttached={vi.fn()}
         onOpenUpdates={vi.fn()}
+        onOpenToolbarManager={vi.fn()}
         aiTools={aiTools}
         onOpenOrganiseTabs={vi.fn()}
         onHoverCardOpenChange={vi.fn()}
@@ -294,6 +295,7 @@ describe("tab organisation renderer", () => {
         onToggleBrandMenu={vi.fn()}
         onSetSidebarAttached={vi.fn()}
         onOpenUpdates={vi.fn()}
+        onOpenToolbarManager={vi.fn()}
         aiTools={aiTools}
         onOpenOrganiseTabs={vi.fn()}
         onHoverCardOpenChange={vi.fn()}
@@ -308,6 +310,21 @@ describe("tab organisation renderer", () => {
     expect(markup).toContain('aria-label="Pin selected tabs"');
     expect(markup).toContain("AI tools");
     expect(markup).toContain("Organise tabs");
+    expect(markup).toContain("Manage toolbar");
+    expect(markup.indexOf('class="window-drag-region"')).toBeLessThan(
+      markup.indexOf('aria-label="Search tabs"'),
+    );
+
+    const stylesheet = readFileSync(
+      new URL("./styles.css", import.meta.url),
+      "utf8",
+    );
+    expect(stylesheet).toMatch(
+      /\.tab\.active\s*\{[\s\S]*?border-radius:\s*var\(--shape-md\) var\(--shape-md\) 0 0;/,
+    );
+    expect(stylesheet).toMatch(
+      /\.brand\.menu-open\s*\{[\s\S]*?box-shadow:\s*inset/,
+    );
   });
 
   it("shows open tabs, saved groups, recently closed tabs and closed windows", () => {

@@ -151,6 +151,57 @@ describe("PreferencesStore search suggestions", () => {
     expect(reloaded.snapshot.extensionDeveloperMode).toBe(true);
   });
 
+  it("keeps toolbar actions visible by default and persists hidden actions", async () => {
+    const extensionId = "a".repeat(32);
+    const preferences = new PreferencesStore(filePath);
+    await preferences.load();
+
+    expect(preferences.snapshot.hiddenToolbarExtensionIds).toEqual([]);
+    expect(preferences.snapshot.hiddenToolbarActions).toEqual([]);
+
+    await preferences.setExtensionToolbarPinned(extensionId, false);
+    await preferences.setToolbarActionPinned("bookmark", false);
+    await preferences.setToolbarActionPinned("find", false);
+
+    const reloaded = new PreferencesStore(filePath);
+    await reloaded.load();
+    expect(reloaded.snapshot.hiddenToolbarExtensionIds).toEqual([extensionId]);
+    expect(reloaded.snapshot.hiddenToolbarActions).toEqual([
+      "bookmark",
+      "find",
+    ]);
+
+    await reloaded.setExtensionToolbarPinned(extensionId, true);
+    await reloaded.setToolbarActionPinned("bookmark", true);
+    expect(reloaded.snapshot.hiddenToolbarExtensionIds).toEqual([]);
+    expect(reloaded.snapshot.hiddenToolbarActions).toEqual(["find"]);
+  });
+
+  it("rejects malformed persisted toolbar visibility preferences", async () => {
+    const extensionId = "b".repeat(32);
+    await fs.writeFile(
+      filePath,
+      JSON.stringify({
+        hiddenToolbarExtensionIds: [
+          extensionId,
+          extensionId,
+          "B".repeat(32),
+          "not-an-extension",
+          42,
+        ],
+        hiddenToolbarActions: ["find", "unknown", "find", 42],
+      }),
+      "utf8",
+    );
+
+    const preferences = new PreferencesStore(filePath);
+    await preferences.load();
+    expect(preferences.snapshot.hiddenToolbarExtensionIds).toEqual([
+      extensionId,
+    ]);
+    expect(preferences.snapshot.hiddenToolbarActions).toEqual(["find"]);
+  });
+
   it("persists explicit opt-in and validates malformed stored values", async () => {
     const preferences = new PreferencesStore(filePath);
     await preferences.load();

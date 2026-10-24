@@ -31,6 +31,7 @@ import type {
   HyperdriveSnapshot,
   NewTabTheme,
   SmartDownloadsSnapshot,
+  ToolbarAction,
   UblockSnapshot,
   WebsiteControlSnapshot,
   WebsiteControlsSnapshot,
@@ -324,6 +325,17 @@ function Icon({ name }: { name: IconName }) {
     </span>
   );
 }
+
+const toolbarActionDefinitions: ReadonlyArray<{
+  id: ToolbarAction;
+  label: string;
+  icon: IconName;
+}> = [
+  { id: "bookmark", label: "Bookmark this page", icon: "bookmark" },
+  { id: "find", label: "Find in page", icon: "find" },
+  { id: "hyperdrive", label: "Hyperdrive", icon: "bolt" },
+  { id: "ublock", label: "uBlock Origin", icon: "shield" },
+];
 
 type MaterialSelectOption<T extends string> = {
   value: T;
@@ -1528,6 +1540,7 @@ export function TabStrip({
   onToggleBrandMenu,
   onSetSidebarAttached,
   onOpenUpdates,
+  onOpenToolbarManager,
   aiTools,
   onOpenOrganiseTabs,
   onHoverCardOpenChange,
@@ -1540,6 +1553,7 @@ export function TabStrip({
   onToggleBrandMenu: () => void;
   onSetSidebarAttached: (attached: boolean) => void;
   onOpenUpdates: () => void;
+  onOpenToolbarManager: () => void;
   aiTools: AiToolsSnapshot;
   onOpenOrganiseTabs: () => void;
   onHoverCardOpenChange: (open: boolean) => void;
@@ -1858,6 +1872,21 @@ export function TabStrip({
               </span>
               <Icon name="chevronRight" />
             </button>
+            <button
+              type="button"
+              className="brand-menu-item"
+              role="menuitem"
+              onClick={onOpenToolbarManager}
+            >
+              <span className="brand-menu-item-icon" aria-hidden="true">
+                <Icon name="tune" />
+              </span>
+              <span className="brand-menu-item-copy">
+                <strong>Manage toolbar</strong>
+                <small>Re-add icons you have unpinned</small>
+              </span>
+              <Icon name="chevronRight" />
+            </button>
             <div className="brand-menu-section-label">AI tools</div>
             <button
               type="button"
@@ -1898,6 +1927,10 @@ export function TabStrip({
           <Icon name="add" />
         </button>
       </div>
+      {selectedIds.length > 0 && (
+        <TabSelectionBar snapshot={snapshot} selectedIds={selectedIds} />
+      )}
+      <span className="window-drag-region" aria-hidden="true" />
       <button
         type="button"
         className={`tab-search-button ${overviewOpen ? "selected" : ""}`}
@@ -1913,10 +1946,6 @@ export function TabStrip({
       >
         <Icon name="tabSearch" />
       </button>
-      {selectedIds.length > 0 && (
-        <TabSelectionBar snapshot={snapshot} selectedIds={selectedIds} />
-      )}
-      <span className="window-drag-region" aria-hidden="true" />
       {hoverPreview && (
         <aside
           className="tab-hover-card"
@@ -2423,8 +2452,18 @@ function Toolbar({
   const canBookmark = /^https?:\/\//.test(tab.url);
   const actionExtensions = extensions.items.filter(
     (extension) =>
-      extension.enabled && extension.ready && extension.action !== null,
+      extension.enabled &&
+      extension.ready &&
+      extension.toolbarPinned &&
+      extension.action !== null,
   );
+  const hiddenToolbarActions = new Set(
+    snapshot.preferences.hiddenToolbarActions,
+  );
+  const unpinToolbarAction = (event: MouseEvent, action: ToolbarAction) => {
+    event.preventDefault();
+    void window.chromecraft.setToolbarActionPinned(action, false);
+  };
   return (
     <div className="toolbar">
       <div className="toolbar-navigation">
@@ -2473,31 +2512,37 @@ function Toolbar({
         onExpandedChange={onOmniboxExpandedChange}
       />
       <div className="toolbar-actions">
-        <button
-          type="button"
-          className={`tool-button bookmark-button ${bookmarked ? "selected" : ""}`}
-          disabled={!canBookmark || bookmarked}
-          onClick={() =>
-            void window.chromecraft.addBookmark({
-              title: tabLabel(tab),
-              url: tab.url,
-            })
-          }
-          aria-label="Bookmark this page"
-          aria-pressed={bookmarked}
-          title={bookmarked ? "Bookmarked" : "Bookmark this page"}
-        >
-          <Icon name={bookmarked ? "bookmarkFilled" : "bookmark"} />
-        </button>
-        <button
-          type="button"
-          className="tool-button"
-          onClick={onFind}
-          aria-label="Find in page"
-          title="Find (Ctrl+F)"
-        >
-          <Icon name="find" />
-        </button>
+        {!hiddenToolbarActions.has("bookmark") && (
+          <button
+            type="button"
+            className={`tool-button bookmark-button ${bookmarked ? "selected" : ""}`}
+            disabled={!canBookmark || bookmarked}
+            onClick={() =>
+              void window.chromecraft.addBookmark({
+                title: tabLabel(tab),
+                url: tab.url,
+              })
+            }
+            onContextMenu={(event) => unpinToolbarAction(event, "bookmark")}
+            aria-label="Bookmark this page"
+            aria-pressed={bookmarked}
+            title={`${bookmarked ? "Bookmarked" : "Bookmark this page"} · right-click to unpin`}
+          >
+            <Icon name={bookmarked ? "bookmarkFilled" : "bookmark"} />
+          </button>
+        )}
+        {!hiddenToolbarActions.has("find") && (
+          <button
+            type="button"
+            className="tool-button"
+            onClick={onFind}
+            onContextMenu={(event) => unpinToolbarAction(event, "find")}
+            aria-label="Find in page"
+            title="Find (Ctrl+F) · right-click to unpin"
+          >
+            <Icon name="find" />
+          </button>
+        )}
         {actionExtensions.map((extension) => (
           <button
             type="button"
@@ -2596,51 +2641,79 @@ function Toolbar({
                     extension.action.enabled,
                   );
                   return (
-                    <button
-                      type="button"
-                      role="menuitem"
+                    <div
+                      role="none"
                       className={`extensions-menu-item ${selected ? "selected" : ""}`}
                       key={extension.id}
-                      disabled={!actionable}
-                      onClick={(event) =>
-                        actionable &&
-                        onToggleExtensionPopup(
-                          extension,
-                          event.currentTarget.getBoundingClientRect(),
-                        )
-                      }
                     >
-                      <span className="extensions-menu-icon" aria-hidden="true">
-                        {extension.action?.iconUrl || extension.iconDataUrl ? (
-                          <img
-                            src={
-                              extension.action?.iconUrl ??
-                              extension.iconDataUrl ??
-                              ""
-                            }
-                            alt=""
-                          />
-                        ) : (
-                          extension.name.slice(0, 1).toUpperCase()
-                        )}
-                      </span>
-                      <span className="extensions-menu-copy">
-                        <strong>{extension.name}</strong>
-                        <small>
-                          {selected
-                            ? "Open"
-                            : extension.enabled
-                              ? extension.ready
-                                ? "Ready"
-                                : "Loading"
-                              : "Off"}
-                        </small>
-                      </span>
-                      <span
-                        className={`extensions-menu-state ${selected ? "open" : ""}`}
-                        aria-hidden="true"
-                      />
-                    </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="extensions-menu-open"
+                        disabled={!actionable}
+                        onClick={(event) =>
+                          actionable &&
+                          onToggleExtensionPopup(
+                            extension,
+                            event.currentTarget.getBoundingClientRect(),
+                          )
+                        }
+                      >
+                        <span
+                          className="extensions-menu-icon"
+                          aria-hidden="true"
+                        >
+                          {extension.action?.iconUrl ||
+                          extension.iconDataUrl ? (
+                            <img
+                              src={
+                                extension.action?.iconUrl ??
+                                extension.iconDataUrl ??
+                                ""
+                              }
+                              alt=""
+                            />
+                          ) : (
+                            extension.name.slice(0, 1).toUpperCase()
+                          )}
+                        </span>
+                        <span className="extensions-menu-copy">
+                          <strong>{extension.name}</strong>
+                          <small>
+                            {selected
+                              ? "Open"
+                              : extension.enabled
+                                ? extension.ready
+                                  ? "Ready"
+                                  : "Loading"
+                                : "Off"}
+                          </small>
+                        </span>
+                        <span
+                          className={`extensions-menu-state ${selected ? "open" : ""}`}
+                          aria-hidden="true"
+                        />
+                      </button>
+                      <button
+                        type="button"
+                        className="extensions-menu-pin"
+                        aria-label={`${extension.toolbarPinned ? "Unpin" : "Pin"} ${extension.name} ${extension.toolbarPinned ? "from" : "to"} toolbar`}
+                        title={
+                          extension.toolbarPinned
+                            ? "Unpin from toolbar"
+                            : "Pin to toolbar"
+                        }
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void window.chromecraft.setExtensionToolbarPinned(
+                            extension.id,
+                            !extension.toolbarPinned,
+                          );
+                        }}
+                      >
+                        <Icon name="pin" />
+                      </button>
+                    </div>
                   );
                 })}
               </div>
@@ -2656,48 +2729,159 @@ function Toolbar({
             </section>
           )}
         </div>
-        <button
-          type="button"
-          className={`tool-button hyperdrive-button ${snapshot.preferences.hyperdriveMonitorOpen ? "selected" : ""}`}
-          data-enabled={isHyperdriveEnabled(
-            snapshot.preferences.hyperdriveMode,
-          )}
-          onClick={() =>
-            void window.chromecraft.setHyperdriveMonitorOpen(
-              !snapshot.preferences.hyperdriveMonitorOpen,
-            )
-          }
-          aria-label={`${snapshot.preferences.hyperdriveMonitorOpen ? "Close" : "Open"} Hyperdrive Monitor`}
-          aria-pressed={snapshot.preferences.hyperdriveMonitorOpen}
-          title={`Hyperdrive: ${hyperdrive.status.replace("-", " ")}`}
-        >
-          <Icon name="bolt" />
-          <span className="toolbar-status-dot" aria-hidden="true" />
-        </button>
-        <button
-          type="button"
-          className="tool-button ublock-button"
-          data-state={
-            snapshot.ublock.initializing
-              ? "starting"
-              : snapshot.ublock.ready && snapshot.ublock.enabled
-                ? "active"
-                : snapshot.ublock.error
-                  ? "error"
-                  : "inactive"
-          }
-          onClick={() =>
-            snapshot.ublock.ready &&
-            void window.chromecraft.openUblockDashboard()
-          }
-          title={snapshot.ublock.error ?? "Open uBlock Origin dashboard"}
-          aria-label={`${ublockLabel(snapshot.ublock)}. Open uBlock Origin dashboard`}
-        >
-          <Icon name="shield" />
-          <span className="toolbar-status-dot" aria-hidden="true" />
-        </button>
+        {!hiddenToolbarActions.has("hyperdrive") && (
+          <button
+            type="button"
+            className={`tool-button hyperdrive-button ${snapshot.preferences.hyperdriveMonitorOpen ? "selected" : ""}`}
+            data-enabled={isHyperdriveEnabled(
+              snapshot.preferences.hyperdriveMode,
+            )}
+            onClick={() =>
+              void window.chromecraft.setHyperdriveMonitorOpen(
+                !snapshot.preferences.hyperdriveMonitorOpen,
+              )
+            }
+            aria-label={`${snapshot.preferences.hyperdriveMonitorOpen ? "Close" : "Open"} Hyperdrive Monitor`}
+            aria-pressed={snapshot.preferences.hyperdriveMonitorOpen}
+            onContextMenu={(event) => unpinToolbarAction(event, "hyperdrive")}
+            title={`Hyperdrive: ${hyperdrive.status.replace("-", " ")} · right-click to unpin`}
+          >
+            <Icon name="bolt" />
+            <span className="toolbar-status-dot" aria-hidden="true" />
+          </button>
+        )}
+        {!hiddenToolbarActions.has("ublock") && (
+          <button
+            type="button"
+            className="tool-button ublock-button"
+            data-state={
+              snapshot.ublock.initializing
+                ? "starting"
+                : snapshot.ublock.ready && snapshot.ublock.enabled
+                  ? "active"
+                  : snapshot.ublock.error
+                    ? "error"
+                    : "inactive"
+            }
+            onClick={() =>
+              snapshot.ublock.ready &&
+              void window.chromecraft.openUblockDashboard()
+            }
+            onContextMenu={(event) => unpinToolbarAction(event, "ublock")}
+            title={`${snapshot.ublock.error ?? "Open uBlock Origin dashboard"} · right-click to unpin`}
+            aria-label={`${ublockLabel(snapshot.ublock)}. Open uBlock Origin dashboard`}
+          >
+            <Icon name="shield" />
+            <span className="toolbar-status-dot" aria-hidden="true" />
+          </button>
+        )}
       </div>
     </div>
+  );
+}
+
+function ToolbarManager({
+  snapshot,
+  extensions,
+  close,
+}: {
+  snapshot: BrowserSnapshot;
+  extensions: ExtensionsSnapshot;
+  close: () => void;
+}) {
+  const hiddenActions = new Set(snapshot.preferences.hiddenToolbarActions);
+  const unpinnedActions = toolbarActionDefinitions.filter(({ id }) =>
+    hiddenActions.has(id),
+  );
+  const unpinnedExtensions = extensions.items.filter(
+    (extension) => extension.action !== null && !extension.toolbarPinned,
+  );
+  const hasUnpinnedItems =
+    unpinnedActions.length > 0 || unpinnedExtensions.length > 0;
+  return (
+    <section
+      className="toolbar-manager"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="toolbar-manager-title"
+      onClick={(event) => event.stopPropagation()}
+    >
+      <header className="toolbar-manager-header">
+        <span className="toolbar-manager-mark" aria-hidden="true">
+          <Icon name="tune" />
+        </span>
+        <span>
+          <strong id="toolbar-manager-title">Manage toolbar</strong>
+          <small>Re-add controls to the address bar</small>
+        </span>
+        <button
+          type="button"
+          onClick={close}
+          aria-label="Close toolbar manager"
+        >
+          <Icon name="close" />
+        </button>
+      </header>
+      {hasUnpinnedItems ? (
+        <div className="toolbar-manager-list">
+          {unpinnedActions.map((action) => (
+            <div className="toolbar-manager-item" key={action.id}>
+              <span className="toolbar-manager-icon" aria-hidden="true">
+                <Icon name={action.icon} />
+              </span>
+              <strong>{action.label}</strong>
+              <button
+                type="button"
+                onClick={() =>
+                  void window.chromecraft.setToolbarActionPinned(
+                    action.id,
+                    true,
+                  )
+                }
+              >
+                Add
+              </button>
+            </div>
+          ))}
+          {unpinnedExtensions.map((extension) => (
+            <div className="toolbar-manager-item" key={extension.id}>
+              <span className="toolbar-manager-icon" aria-hidden="true">
+                {extension.action?.iconUrl || extension.iconDataUrl ? (
+                  <img
+                    src={
+                      extension.action?.iconUrl ?? extension.iconDataUrl ?? ""
+                    }
+                    alt=""
+                  />
+                ) : (
+                  extension.name.slice(0, 1).toUpperCase()
+                )}
+              </span>
+              <strong>{extension.name}</strong>
+              <button
+                type="button"
+                onClick={() =>
+                  void window.chromecraft.setExtensionToolbarPinned(
+                    extension.id,
+                    true,
+                  )
+                }
+              >
+                Add
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="toolbar-manager-empty">
+          <span aria-hidden="true">
+            <Icon name="check" />
+          </span>
+          <strong>Everything is on your toolbar</strong>
+          <small>Right-click an icon to unpin it.</small>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -6640,6 +6824,7 @@ export function App() {
     null,
   );
   const [brandMenuOpen, setBrandMenuOpen] = useState(false);
+  const [toolbarManagerOpen, setToolbarManagerOpen] = useState(false);
   const [updatesOpen, setUpdatesOpen] = useState(false);
   const [extensionsPageOpen, setExtensionsPageOpen] = useState(false);
   const [extensionsMenuOpen, setExtensionsMenuOpen] = useState(false);
@@ -6812,6 +6997,7 @@ export function App() {
       paletteOpen ||
       youtubeProgressExpanded ||
       brandMenuOpen ||
+      toolbarManagerOpen ||
       updatesOpen ||
       aiPanelOpen ||
       extensionsPageOpen ||
@@ -6827,6 +7013,7 @@ export function App() {
     };
   }, [
     brandMenuOpen,
+    toolbarManagerOpen,
     aiPanelOpen,
     dialog,
     extensionsPageOpen,
@@ -6858,6 +7045,7 @@ export function App() {
       if (event.key === "Escape") {
         void window.chromecraft.closeExtensionPopup();
         setBrandMenuOpen(false);
+        setToolbarManagerOpen(false);
         setExtensionsPageOpen(false);
         setExtensionsMenuOpen(false);
         setUpdatesOpen(false);
@@ -7082,6 +7270,7 @@ export function App() {
       }
       onClick={() => {
         setBrandMenuOpen(false);
+        setToolbarManagerOpen(false);
         setExtensionsMenuOpen(false);
         setSiteControlsOpen(false);
         setTabMenu(null);
@@ -7096,6 +7285,7 @@ export function App() {
           brandMenuOpen={brandMenuOpen}
           onToggleBrandMenu={() => {
             setExtensionsMenuOpen(false);
+            setToolbarManagerOpen(false);
             setBrandMenuOpen((open) => !open);
           }}
           onHoverCardOpenChange={setTabHoverCardOpen}
@@ -7108,6 +7298,10 @@ export function App() {
             setExtensionsPageOpen(false);
             setUpdatesOpen(true);
             setBrandMenuOpen(false);
+          }}
+          onOpenToolbarManager={() => {
+            setBrandMenuOpen(false);
+            setToolbarManagerOpen(true);
           }}
           onOpenOrganiseTabs={openOrganiseTabs}
           onMenu={(event, tab) => {
@@ -7282,6 +7476,13 @@ export function App() {
         )}
         {findOpen && <FindBar tabId={activeTab.id} onClose={closeFind} />}
       </header>
+      {toolbarManagerOpen && (
+        <ToolbarManager
+          snapshot={snapshot}
+          extensions={extensions}
+          close={() => setToolbarManagerOpen(false)}
+        />
+      )}
       <Sidebar
         snapshot={snapshot}
         data={data}

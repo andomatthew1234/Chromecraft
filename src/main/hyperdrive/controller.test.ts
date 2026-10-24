@@ -26,6 +26,8 @@ function makePreferences(
     hyperdriveMonitorOpen: false,
     hyperdriveDeveloperMode: false,
     extensionDeveloperMode: false,
+    hiddenToolbarExtensionIds: [],
+    hiddenToolbarActions: [],
     showDownloadProgressInToolbar: true,
     showDownloadCompletionNotification: true,
     addVideosToGallery: true,

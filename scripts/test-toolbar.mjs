@@ -157,17 +157,34 @@ try {
 
   const layout = await cdp.evaluate(`(() => {
     const tab = [...document.querySelectorAll('.tab')].at(-1).getBoundingClientRect();
+    const activeTab = document.querySelector('.tab.active');
     const plus = document.querySelector('.new-tab-button').getBoundingClientRect();
+    const tabSearch = document.querySelector('.tab-search-button').getBoundingClientRect();
+    const toolbar = document.querySelector('.toolbar');
     const dots = [...document.querySelectorAll('.toolbar-status-dot')]
       .map((dot) => dot.getBoundingClientRect())
       .map(({ width, height }) => ({ width, height }));
+    const activeTabStyle = activeTab ? getComputedStyle(activeTab) : null;
+    const toolbarStyle = toolbar ? getComputedStyle(toolbar) : null;
     return {
       adjacent: plus.left - tab.right >= 0 && plus.left - tab.right <= 12,
       plusInsideScroller: document.querySelector('.new-tab-button').parentElement.classList.contains('tab-scroller'),
+      selectedTabMerged: Boolean(
+        activeTab && toolbar && activeTab.getBoundingClientRect().bottom === toolbar.getBoundingClientRect().top &&
+        activeTabStyle?.borderBottomLeftRadius === '0px' &&
+        activeTabStyle?.borderBottomRightRadius === '0px' &&
+        activeTabStyle.backgroundColor === toolbarStyle?.backgroundColor,
+      ),
+      searchByWindowControls: tabSearch.right > innerWidth - 200,
       dots
     };
   })()`);
-  if (!layout.adjacent || !layout.plusInsideScroller) {
+  if (
+    !layout.adjacent ||
+    !layout.plusInsideScroller ||
+    !layout.selectedTabMerged ||
+    !layout.searchByWindowControls
+  ) {
     throw new Error(`New-tab placement regression: ${JSON.stringify(layout)}`);
   }
   if (

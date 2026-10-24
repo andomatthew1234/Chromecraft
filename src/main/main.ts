@@ -414,6 +414,7 @@ function mapExtension(
         : extension.ready
           ? "ready"
           : "loading",
+    toolbarPinned: tabManager?.isExtensionToolbarPinned(extension.id) ?? true,
     action: action
       ? {
           ...action,
@@ -1763,12 +1764,47 @@ function registerIpc(): void {
     },
   );
   ipcMain.handle(
+    channels.setExtensionToolbarPinned,
+    async (event, id: unknown, pinned: unknown) => {
+      const service = requireExtensions(event);
+      if (typeof pinned !== "boolean") {
+        throw new TypeError("pinned must be a boolean.");
+      }
+      const extensionId = requireString(id, "id", 32);
+      const installed = await service.listInstalled();
+      if (!installed.some((extension) => extension.id === extensionId)) {
+        throw new Error("That extension is not installed.");
+      }
+      await requireManager(event).setExtensionToolbarPinned(
+        extensionId,
+        pinned,
+      );
+    },
+  );
+  ipcMain.handle(
     channels.setExtensionDeveloperMode,
     async (event, enabled: unknown) => {
       if (typeof enabled !== "boolean") {
         throw new TypeError("enabled must be a boolean.");
       }
       await requireManager(event).setExtensionDeveloperMode(enabled);
+    },
+  );
+  ipcMain.handle(
+    channels.setToolbarActionPinned,
+    async (event, action: unknown, pinned: unknown) => {
+      if (typeof pinned !== "boolean") {
+        throw new TypeError("pinned must be a boolean.");
+      }
+      if (
+        action !== "bookmark" &&
+        action !== "find" &&
+        action !== "hyperdrive" &&
+        action !== "ublock"
+      ) {
+        throw new TypeError("Unknown toolbar action.");
+      }
+      await requireManager(event).setToolbarActionPinned(action, pinned);
     },
   );
   ipcMain.handle(channels.importUnpackedExtension, async (event) => {

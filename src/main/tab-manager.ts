@@ -29,6 +29,7 @@ import type {
   TabId,
   TabSearchResult,
   TabSelectionMode,
+  ToolbarAction,
   WebStoreListingSnapshot,
   YouTubeWatchSnapshot,
 } from "../shared/browser";
@@ -543,6 +544,9 @@ export class TabManager {
           this.preferences.snapshot.hyperdriveDeveloperMode,
         extensionDeveloperMode:
           this.preferences.snapshot.extensionDeveloperMode,
+        hiddenToolbarActions: [
+          ...this.preferences.snapshot.hiddenToolbarActions,
+        ],
         showDownloadProgressInToolbar:
           this.preferences.snapshot.showDownloadProgressInToolbar,
         showDownloadCompletionNotification:
@@ -564,6 +568,12 @@ export class TabManager {
 
   get extensionPopupId(): string | null {
     return this.extensionPopup?.openExtensionId ?? null;
+  }
+
+  isExtensionToolbarPinned(extensionId: string): boolean {
+    return !this.preferences.snapshot.hiddenToolbarExtensionIds.includes(
+      extensionId,
+    );
   }
 
   get activeExtensionTabId(): number | null {
@@ -2026,6 +2036,26 @@ export class TabManager {
 
   async setExtensionDeveloperMode(enabled: boolean): Promise<void> {
     await this.preferences.setExtensionDeveloperMode(enabled);
+    this.emitSnapshot();
+  }
+
+  async setExtensionToolbarPinned(
+    extensionId: string,
+    pinned: boolean,
+  ): Promise<void> {
+    await this.preferences.setExtensionToolbarPinned(extensionId, pinned);
+    if (!pinned && this.extensionPopupId === extensionId) {
+      this.closeExtensionPopup();
+    } else {
+      this.onExtensionsChanged();
+    }
+  }
+
+  async setToolbarActionPinned(
+    action: ToolbarAction,
+    pinned: boolean,
+  ): Promise<void> {
+    await this.preferences.setToolbarActionPinned(action, pinned);
     this.emitSnapshot();
   }
 

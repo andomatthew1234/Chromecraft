@@ -257,10 +257,22 @@ const api: ChromecraftApi = {
       id,
       enabled,
     ) as Promise<void>,
+  setExtensionToolbarPinned: (id, pinned) =>
+    ipcRenderer.invoke(
+      channels.setExtensionToolbarPinned,
+      id,
+      pinned,
+    ) as Promise<void>,
   setExtensionDeveloperMode: (enabled) =>
     ipcRenderer.invoke(
       channels.setExtensionDeveloperMode,
       enabled,
+    ) as Promise<void>,
+  setToolbarActionPinned: (action, pinned) =>
+    ipcRenderer.invoke(
+      channels.setToolbarActionPinned,
+      action,
+      pinned,
     ) as Promise<void>,
   importUnpackedExtension: () =>
     ipcRenderer.invoke(channels.importUnpackedExtension) as Promise<boolean>,

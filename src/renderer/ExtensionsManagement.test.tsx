@@ -29,6 +29,7 @@ const snapshot: ExtensionsSnapshot = {
       optionsUrl: null,
       popupUrl: null,
       iconDataUrl: "data:image/png;base64,AA==",
+      toolbarPinned: true,
       action: null,
     },
   ],
