@@ -1313,7 +1313,9 @@ export class TabManager {
     color: TabGroupColor = "grey",
   ): string {
     this.assertTabTopologyMutable();
-    const tabIds = this.requireTabIds(requestedTabIds);
+    const tabIds = this.requireTabIds(requestedTabIds).sort(
+      (left, right) => this.order.indexOf(left) - this.order.indexOf(right),
+    );
     if (tabIds.length === 0) {
       throw new RangeError("A tab group must contain at least one tab.");
     }
@@ -1326,10 +1328,34 @@ export class TabManager {
       createdAt: Date.now(),
     };
     this.tabGroups.set(group.id, group);
+    const previousGroupIds = new Set(
+      tabIds
+        .map((tabId) => this.requireTab(tabId).groupId)
+        .filter((id): id is string => id !== null),
+    );
+    const moving = new Set(tabIds);
+    const earliestSelectedIndex = Math.min(
+      ...tabIds.map((tabId) => this.order.indexOf(tabId)),
+    );
+    const remaining = this.order.filter((tabId) => !moving.has(tabId));
+    const insertion = this.order
+      .slice(0, earliestSelectedIndex)
+      .filter((tabId) => !moving.has(tabId)).length;
+    remaining.splice(insertion, 0, ...tabIds);
+    this.order.splice(0, this.order.length, ...remaining);
     for (const tabId of tabIds) {
       const tab = this.requireTab(tabId);
       tab.pinned = false;
       tab.groupId = group.id;
+    }
+    this.removeUnreferencedGroups();
+    for (const previousGroupId of previousGroupIds) {
+      const previousGroup = this.tabGroups.get(previousGroupId);
+      if (previousGroup?.saved) {
+        void this.syncSavedTabGroup(previousGroup).catch((error) =>
+          console.warn("Could not update the saved tab group.", error),
+        );
+      }
     }
     this.sortPinnedTabsFirst();
     this.emitSnapshot();
@@ -1345,7 +1371,39 @@ export class TabManager {
         group.name = requireTabGroupName(update.name);
       if (update.color !== undefined)
         group.color = requireTabGroupColor(update.color);
-      if (update.collapsed !== undefined) group.collapsed = update.collapsed;
+      if (update.collapsed !== undefined) {
+        if (
+          update.collapsed &&
+          !group.collapsed &&
+          this.requireTab(this.activeTabId).groupId === group.id
+        ) {
+          const activeIndex = this.order.indexOf(this.activeTabId);
+          let nextVisibleTabId: TabId | null = null;
+          for (let distance = 1; distance < this.order.length; distance += 1) {
+            const candidates = [
+              this.order[activeIndex + distance],
+              this.order[activeIndex - distance],
+            ];
+            nextVisibleTabId =
+              candidates.find((tabId) => {
+                if (!tabId) return false;
+                const tab = this.requireTab(tabId);
+                if (tab.groupId === group.id) return false;
+                return (
+                  tab.groupId === null ||
+                  this.tabGroups.get(tab.groupId)?.collapsed !== true
+                );
+              }) ?? null;
+            if (nextVisibleTabId) break;
+          }
+          if (nextVisibleTabId) {
+            this.activateTab(nextVisibleTabId);
+            group.collapsed = true;
+          }
+        } else {
+          group.collapsed = update.collapsed;
+        }
+      }
       if (update.saved !== undefined) group.saved = update.saved;
       if (group.saved) await this.syncSavedTabGroup(group);
       else if (update.saved === false) {
@@ -1484,6 +1542,12 @@ export class TabManager {
     if (moving.length === 0) return;
     if (groupId !== undefined && groupId !== null)
       this.requireTabGroup(groupId);
+    const affectedGroupIds = new Set(
+      moving
+        .map((tabId) => this.requireTab(tabId).groupId)
+        .filter((id): id is string => id !== null),
+    );
+    if (groupId) affectedGroupIds.add(groupId);
     const remaining = this.order.filter((tabId) => !moving.includes(tabId));
     const insertion = Math.max(0, Math.min(targetIndex, remaining.length));
     remaining.splice(insertion, 0, ...moving);
@@ -1497,6 +1561,14 @@ export class TabManager {
     }
     this.sortPinnedTabsFirst();
     this.removeUnreferencedGroups();
+    for (const affectedGroupId of affectedGroupIds) {
+      const group = this.tabGroups.get(affectedGroupId);
+      if (group?.saved) {
+        void this.syncSavedTabGroup(group).catch((error) =>
+          console.warn("Could not update the saved tab group.", error),
+        );
+      }
+    }
     this.emitSnapshot();
     this.scheduleSessionSave();
   }
@@ -1611,7 +1683,8 @@ export class TabManager {
         preserveUndoToken &&
         (!preservedUndo ||
           preservedUndo.token !== preserveUndoToken ||
-          preservedUndo.afterRevision !== context.revision)
+          preservedUndo.afterRevision !==
+            this.tabOrganizationTopologyRevision())
       ) {
         throw new AiTabOrganizationUndoUnavailableError(
           "Your tabs changed after they were organised, so the original layout can no longer be replaced safely.",
@@ -1679,7 +1752,7 @@ export class TabManager {
       this.aiTabOrganizationUndo = {
         token: undoToken,
         before: preservedUndo?.before ?? previous,
-        afterRevision: this.aiTabOrganizationRevision(),
+        afterRevision: this.tabOrganizationTopologyRevision(),
         organisedTabCount:
           preservedUndo?.organisedTabCount ?? candidateIds.length,
         groupCount: plan.groups.length,
@@ -1706,7 +1779,7 @@ export class TabManager {
           "There is no AI tab organisation to undo.",
         );
       }
-      if (this.aiTabOrganizationRevision() !== undo.afterRevision) {
+      if (this.tabOrganizationTopologyRevision() !== undo.afterRevision) {
         this.aiTabOrganizationUndo = null;
         throw new AiTabOrganizationUndoUnavailableError(
           "Your tabs changed after they were organised, so this action can no longer be undone safely.",
@@ -1800,7 +1873,7 @@ export class TabManager {
       for (const group of closed.tabGroups) {
         const nextId = this.tabGroups.has(group.id) ? randomUUID() : group.id;
         groupIdMap.set(group.id, nextId);
-        this.tabGroups.set(nextId, { ...group, id: nextId, collapsed: false });
+        this.tabGroups.set(nextId, { ...group, id: nextId });
       }
       const created: TabId[] = [];
       let activeId: TabId | null = null;
@@ -3503,6 +3576,21 @@ export class TabManager {
       .sort((left, right) => left.id.localeCompare(right.id));
     return createHash("sha256")
       .update(JSON.stringify({ tabs, groups }))
+      .digest("hex");
+  }
+
+  private tabOrganizationTopologyRevision(): string {
+    return createHash("sha256")
+      .update(
+        JSON.stringify({
+          order: this.order,
+          pinned: this.order.map((tabId) => this.requireTab(tabId).pinned),
+          groupIds: this.order.map((tabId) => this.requireTab(tabId).groupId),
+          groups: [...this.tabGroups.values()]
+            .map((group) => ({ ...group }))
+            .sort((left, right) => left.id.localeCompare(right.id)),
+        }),
+      )
       .digest("hex");
   }
 

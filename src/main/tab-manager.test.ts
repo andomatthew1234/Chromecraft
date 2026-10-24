@@ -268,6 +268,164 @@ describe("tab organization", () => {
     ).toEqual(new Set());
   });
 
+  it("keeps newly grouped tabs contiguous in their authoritative order", () => {
+    const { manager } = organizedManager();
+
+    manager.createTabGroup(["c", "a"], "Research", "blue");
+
+    expect((manager as unknown as { order: string[] }).order).toEqual([
+      "a",
+      "c",
+      "b",
+    ]);
+  });
+
+  it("moves away from an active group before collapsing it", async () => {
+    const { manager } = organizedManager();
+    const groupId = manager.createTabGroup(["a", "b"], "Research", "blue");
+    const activated: string[] = [];
+    Object.assign(manager as unknown as Record<string, unknown>, {
+      activateTab(tabId: string) {
+        activated.push(tabId);
+        Object.assign(manager as unknown as Record<string, unknown>, {
+          activeTabId: tabId,
+        });
+      },
+    });
+
+    await manager.updateTabGroup(groupId, { collapsed: true });
+
+    expect(activated).toEqual(["c"]);
+    expect(
+      (
+        manager as unknown as {
+          tabGroups: Map<string, { collapsed: boolean }>;
+        }
+      ).tabGroups.get(groupId)?.collapsed,
+    ).toBe(true);
+  });
+
+  it("keeps an active group expanded when no visible tab exists", async () => {
+    const { manager } = organizedManager();
+    const groupId = manager.createTabGroup(
+      ["a", "b", "c"],
+      "Everything",
+      "blue",
+    );
+
+    await manager.updateTabGroup(groupId, { collapsed: true });
+
+    expect(
+      (
+        manager as unknown as {
+          tabGroups: Map<string, { collapsed: boolean }>;
+        }
+      ).tabGroups.get(groupId)?.collapsed,
+    ).toBe(false);
+  });
+
+  it("syncs saved groups affected by membership changes", async () => {
+    const { manager } = organizedManager();
+    const synced: Array<{ id: string; tabs: Array<{ url: string }> }> = [];
+    Object.assign(manager as unknown as Record<string, unknown>, {
+      browserData: {
+        listSavedTabGroups: () => [],
+        upsertSavedTabGroup: async (entry: {
+          id: string;
+          tabs: Array<{ url: string }>;
+        }) => {
+          synced.push(structuredClone(entry));
+          return entry;
+        },
+      },
+    });
+    const groupId = manager.createTabGroup(["a", "b"], "Saved", "green");
+    await manager.updateTabGroup(groupId, { saved: true });
+    synced.splice(0);
+
+    manager.moveTabs(["c"], 2, groupId);
+    await Promise.resolve();
+
+    expect(synced.at(-1)).toEqual(
+      expect.objectContaining({
+        id: groupId,
+        tabs: [
+          expect.objectContaining({ url: "https://a.example/" }),
+          expect.objectContaining({ url: "https://b.example/" }),
+          expect.objectContaining({ url: "https://c.example/" }),
+        ],
+      }),
+    );
+  });
+
+  it("preserves collapsed groups when reopening a closed window", async () => {
+    const manager = Object.create(TabManager.prototype) as TabManager;
+    const tabs = new Map<string, Record<string, unknown>>();
+    let nextTab = 0;
+    Object.assign(manager as unknown as Record<string, unknown>, {
+      tabs,
+      order: [],
+      tabGroups: new Map(),
+      selectedTabIds: new Set(),
+      activeTabId: "",
+      tabTopologyMutationOperations: 0,
+      aiTabOrganizationMutationInProgress: false,
+      browserData: {
+        takeRecentlyClosedWindow: async () => ({
+          id: "closed-window",
+          tabs: [
+            {
+              id: "old-tab",
+              title: "Restored tab",
+              url: "https://example.com/",
+              isNewTab: false,
+              pinned: false,
+              groupId: "old-group",
+            },
+          ],
+          tabGroups: [
+            {
+              id: "old-group",
+              name: "Collapsed",
+              color: "purple",
+              collapsed: true,
+              saved: false,
+              createdAt: 1,
+            },
+          ],
+          activeTabId: "old-tab",
+          closedAt: 2,
+        }),
+      },
+      createTab(url: string) {
+        const id = `restored-${(nextTab += 1)}`;
+        tabs.set(id, { id, url, groupId: null, pinned: false });
+        (manager as unknown as { order: string[] }).order.push(id);
+        return id;
+      },
+      activateTab(tabId: string) {
+        Object.assign(manager as unknown as Record<string, unknown>, {
+          activeTabId: tabId,
+        });
+      },
+      onBrowserDataChanged() {},
+      emitSnapshot() {},
+      scheduleSessionSave() {},
+    });
+
+    await manager.reopenClosedWindow();
+
+    expect(
+      [
+        ...(
+          manager as unknown as {
+            tabGroups: Map<string, { collapsed: boolean }>;
+          }
+        ).tabGroups.values(),
+      ][0]?.collapsed,
+    ).toBe(true);
+  });
+
   it("pins selected tabs first while preserving their relative order", () => {
     const { manager, tabs } = organizedManager();
     manager.setTabsPinned(["c", "b"], true);
@@ -422,6 +580,26 @@ describe("tab organization", () => {
       null,
       null,
     ]);
+  });
+
+  it("keeps Scout Undo available across normal title and URL changes", async () => {
+    const { manager, tabs } = organizedManager();
+    const context = manager.getAiTabOrganizationContext();
+    const applied = await manager.applyAiTabOrganization({
+      revision: context.revision,
+      groups: [{ name: "Work", color: "green", tabIds: ["a", "b"] }],
+      ungroupedTabIds: ["c"],
+    });
+    const changed = tabs.get("a");
+    if (!changed) throw new Error("Missing test tab.");
+    changed.title = "A page changed its title";
+    changed.url = "https://a.example/another-page";
+
+    await expect(
+      manager.undoAiTabOrganization(applied.undoToken),
+    ).resolves.toMatchObject({ organisedTabCount: 3 });
+    expect(tabs.get("a")?.groupId).toBeNull();
+    expect(tabs.get("b")?.groupId).toBeNull();
   });
 
   it("keeps AI-created group members contiguous around protected tabs", async () => {

@@ -734,11 +734,7 @@ input::placeholder {
   padding: 0;
   border-radius: var(--shape-md);
   color: var(--md-on-surface-variant);
-  background: color-mix(
-    in srgb,
-    var(--md-surface-container-highest) 68%,
-    var(--md-surface-container)
-  );
+  background: transparent;
   isolation: isolate;
   transition:
     color var(--motion-standard),
@@ -774,8 +770,12 @@ input::placeholder {
 
 .tab:hover {
   color: var(--md-on-surface);
-  background: var(--md-hover);
-  transform: translateY(-1px);
+  background: color-mix(
+    in srgb,
+    var(--md-on-surface) 7%,
+    var(--md-surface-container)
+  );
+  transform: none;
 }
 
 .tab:active {
@@ -1172,67 +1172,47 @@ input::placeholder {
 
 .tab-group {
   --tab-group-color: var(--md-outline);
+  --tab-group-ink: #fff;
   min-width: 0;
   height: 38px;
   display: flex;
   flex: 0 0 auto;
   align-items: end;
   gap: 2px;
-  padding-inline: 2px;
-  border-radius: var(--shape-md) var(--shape-md) var(--shape-xs) var(--shape-xs);
-  background: color-mix(in srgb, var(--tab-group-color) 10%, transparent);
-  box-shadow: inset 0 -2px
-    color-mix(in srgb, var(--tab-group-color) 48%, transparent);
+  padding: 0;
+  background: transparent;
   transition:
-    background-color var(--motion-standard),
-    box-shadow var(--motion-standard),
-    transform var(--motion-standard);
-}
-
-.tab-group:hover,
-.tab-group:focus-within {
-  background: color-mix(in srgb, var(--tab-group-color) 14%, transparent);
-  box-shadow: inset 0 -2px
-    color-mix(in srgb, var(--tab-group-color) 64%, transparent);
+    gap 180ms cubic-bezier(0.2, 0, 0, 1),
+    opacity 150ms cubic-bezier(0.2, 0, 0, 1);
 }
 
 .tab-group.drop-target {
-  background: color-mix(
-    in srgb,
-    var(--tab-group-color) 24%,
-    var(--md-surface-container)
-  );
-  box-shadow:
-    inset 0 0 0 2px color-mix(in srgb, var(--tab-group-color) 72%, transparent),
-    0 4px 14px color-mix(in srgb, var(--tab-group-color) 24%, transparent);
-  transform: translateY(-1px) scale(1.012);
+  gap: 5px;
 }
 
 .tab-group.drop-target .tab-group-pill {
-  background: color-mix(
-    in srgb,
-    var(--tab-group-color) 30%,
-    var(--md-surface-container)
-  );
+  box-shadow:
+    0 0 0 3px var(--md-surface-container),
+    0 0 0 5px color-mix(in srgb, var(--tab-group-color) 68%, transparent);
+  transform: translateY(-1px);
 }
 
 .tab-group.collapsed {
   flex: 0 0 auto;
-  padding-inline: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
-.tab-group.collapsed:hover,
-.tab-group.collapsed:focus-within {
-  background: transparent;
-  box-shadow: none;
 }
 
 .tab-group .tab {
-  min-width: 112px;
-  width: 196px;
-  flex-basis: 196px;
+  min-width: 120px;
+  width: 220px;
+  flex-basis: 220px;
+  box-shadow: inset 0 -2px
+    color-mix(in srgb, var(--tab-group-color) 66%, transparent);
+}
+
+.tab-group .tab.active {
+  box-shadow:
+    inset 0 -1px var(--md-surface-lowest),
+    inset 0 -3px color-mix(in srgb, var(--tab-group-color) 82%, transparent);
 }
 
 .group-grey {
@@ -1246,6 +1226,7 @@ input::placeholder {
 }
 .group-yellow {
   --tab-group-color: #b06d00;
+  --tab-group-ink: #fff8e1;
 }
 .group-green {
   --tab-group-color: #188038;
@@ -1264,37 +1245,33 @@ input::placeholder {
 }
 
 .tab-group-pill {
-  --tab-group-color: var(--md-outline);
-  height: 32px;
+  height: 28px;
   min-width: 0;
-  max-width: 180px;
+  max-width: 156px;
   display: flex;
   flex: 0 0 auto;
   align-items: center;
-  margin: 0 2px 2px 0;
+  margin: 0 2px 4px 1px;
   overflow: hidden;
   border-radius: var(--shape-full);
-  color: color-mix(in srgb, var(--tab-group-color) 86%, var(--md-on-surface));
-  background: color-mix(
-    in srgb,
-    var(--tab-group-color) 14%,
-    var(--md-surface-container)
-  );
+  color: var(--tab-group-ink);
+  background: var(--tab-group-color);
   transition:
     color var(--motion-standard),
     background-color var(--motion-standard),
     transform var(--motion-standard),
     box-shadow var(--motion-standard);
+  cursor: grab;
+}
+
+.tab-group-pill:active {
+  cursor: grabbing;
 }
 
 .tab-group-pill:hover,
 .tab-group-pill:focus-within,
 .tab-group-pill.active {
-  background: color-mix(
-    in srgb,
-    var(--tab-group-color) 22%,
-    var(--md-surface-container)
-  );
+  background: color-mix(in srgb, var(--tab-group-color), white 10%);
 }
 
 .tab-group-pill:active {
@@ -1302,8 +1279,9 @@ input::placeholder {
 }
 
 .tab-group-pill.active {
-  box-shadow: inset 0 0 0 1px
-    color-mix(in srgb, var(--tab-group-color) 52%, transparent);
+  box-shadow:
+    0 0 0 2px var(--md-surface-container),
+    0 0 0 3px color-mix(in srgb, var(--tab-group-color) 78%, transparent);
 }
 
 .tab-group-toggle {
@@ -1312,9 +1290,9 @@ input::placeholder {
   display: flex;
   flex: 1;
   align-items: center;
-  gap: 7px;
+  gap: 4px;
   overflow: hidden;
-  padding: 0 6px 0 10px;
+  padding: 0 6px 0 8px;
   color: inherit;
   background: transparent;
   font: var(--type-label-medium);
@@ -1326,6 +1304,14 @@ input::placeholder {
     color-mix(in srgb, var(--tab-group-color) 62%, transparent);
 }
 
+.tab-group-toggle > .material-icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+  font-size: 16px;
+  line-height: 16px;
+}
+
 .tab-group-toggle > span:nth-child(2) {
   overflow: hidden;
   white-space: nowrap;
@@ -1333,33 +1319,21 @@ input::placeholder {
 }
 
 .tab-group-toggle small {
-  min-width: 20px;
-  height: 20px;
+  min-width: 17px;
+  height: 17px;
   display: grid;
   place-items: center;
   border-radius: var(--shape-full);
-  color: var(--md-on-surface-variant);
-  background: color-mix(
-    in srgb,
-    var(--md-surface-container-highest) 78%,
-    transparent
-  );
+  color: inherit;
+  background: color-mix(in srgb, white 18%, transparent);
   font: var(--type-label-small);
 }
 
-.tab-group-dot {
-  width: 8px;
-  height: 8px;
-  flex: 0 0 8px;
-  border-radius: 50%;
-  background: var(--tab-group-color);
-}
-
 .tab-group-more {
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   display: grid;
-  flex: 0 0 28px;
+  flex: 0 0 24px;
   place-items: center;
   margin-right: 2px;
   border-radius: 50%;
@@ -1378,7 +1352,32 @@ input::placeholder {
 }
 
 .tab-group-more:hover {
-  background: var(--md-hover);
+  background: color-mix(in srgb, white 18%, transparent);
+}
+
+.tab.drop-before::before,
+.tab.drop-after::after,
+.tab-scroller.drop-at-end::after {
+  content: "";
+  z-index: 4;
+  width: 3px;
+  height: 28px;
+  align-self: center;
+  flex: 0 0 3px;
+  border-radius: 3px;
+  background: var(--md-primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--md-primary) 18%, transparent);
+  pointer-events: none;
+}
+
+.tab.drop-before::before {
+  position: absolute;
+  left: 0;
+}
+
+.tab.drop-after::after {
+  position: absolute;
+  right: 0;
 }
 
 .tab-group-more:active {
@@ -1465,9 +1464,12 @@ input::placeholder {
   position: fixed;
   z-index: 42;
   width: 296px;
+  max-height: min(446px, calc(100vh - 16px));
   display: grid;
   gap: 3px;
   padding: var(--space-3) var(--space-2) var(--space-2);
+  overflow-x: hidden;
+  overflow-y: auto;
   border: 1px solid color-mix(in srgb, var(--md-outline) 24%, transparent);
   border-radius: 20px;
   color: var(--md-on-surface);
@@ -1489,7 +1491,7 @@ input::placeholder {
 
 .tab-group-name-field input {
   width: 100%;
-  height: 42px;
+  height: 38px;
   padding: 0 var(--space-3);
   border: 0;
   border-radius: var(--shape-md);
@@ -1541,7 +1543,7 @@ input::placeholder {
 }
 
 .tab-group-menu > button {
-  min-height: 44px;
+  min-height: 38px;
   display: flex;
   align-items: center;
   gap: var(--space-3);

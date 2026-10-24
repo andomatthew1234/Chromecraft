@@ -297,9 +297,133 @@ try {
     "the Material tab hover card",
   );
 
+  const groupSetup = await cdp.evaluate(`(async () => {
+    const ids = [];
+    for (let index = 0; index < 8; index += 1) ids.push(await window.chromecraft.createTab());
+    const firstGroupId = await window.chromecraft.createTabGroup(
+      [ids[0], ids[2], ids[4], ids[6]],
+      "Long research group name",
+      "blue",
+    );
+    const secondGroupId = await window.chromecraft.createTabGroup(
+      [ids[1], ids[3], ids[5]],
+      "Planning",
+      "pink",
+    );
+    return { ids, firstGroupId, secondGroupId };
+  })()`);
+  await poll(
+    () => cdp.evaluate("document.querySelectorAll('.tab-group').length"),
+    (count) => count === 2,
+    "two rendered tab groups",
+  );
+  const groupVisual = await cdp.evaluate(`(() => {
+    const groups = [...document.querySelectorAll('.tab-group')];
+    const pills = [...document.querySelectorAll('.tab-group-pill')];
+    const groupedTabs = [...document.querySelectorAll('.tab-group .tab')];
+    const firstGroupStyle = getComputedStyle(groups[0]);
+    const firstPillStyle = getComputedStyle(pills[0]);
+    return {
+      groupCount: groups.length,
+      groupedTabCount: groupedTabs.length,
+      groupBackground: firstGroupStyle.backgroundColor,
+      pillHeight: pills[0].getBoundingClientRect().height,
+      pillRadius: firstPillStyle.borderRadius,
+      pillBackground: firstPillStyle.backgroundColor,
+      pillBackgrounds: pills.map((pill) => getComputedStyle(pill).backgroundColor),
+      stripScrollable: document.querySelector('.tab-scroller').scrollWidth > document.querySelector('.tab-scroller').clientWidth,
+      normalTabShape: groupedTabs.every((tab) => getComputedStyle(tab).borderTopLeftRadius !== '9999px'),
+    };
+  })()`);
+  if (
+    groupVisual.groupCount !== 2 ||
+    groupVisual.groupedTabCount !== 7 ||
+    groupVisual.groupBackground !== "rgba(0, 0, 0, 0)" ||
+    groupVisual.pillHeight > 30 ||
+    new Set(groupVisual.pillBackgrounds).size !== 2 ||
+    !groupVisual.normalTabShape
+  ) {
+    throw new Error(
+      `Tab-group visual regression: ${JSON.stringify(groupVisual)}`,
+    );
+  }
+
+  await cdp.evaluate(`(() => {
+    const pill = document.querySelector('.tab-group-pill');
+    const rect = pill.getBoundingClientRect();
+    pill.dispatchEvent(new MouseEvent('contextmenu', {
+      bubbles: true,
+      cancelable: true,
+      clientX: rect.left + rect.width / 2,
+      clientY: rect.bottom,
+    }));
+  })()`);
+  const groupMenu = await poll(
+    () =>
+      cdp.evaluate(`(() => {
+      const menu = document.querySelector('.tab-group-menu');
+      if (!menu) return null;
+      const rect = menu.getBoundingClientRect();
+      return {
+        text: menu.textContent,
+        insideViewport: rect.left >= 0 && rect.top >= 0 && rect.right <= innerWidth && rect.bottom <= innerHeight,
+      };
+    })()`),
+    (value) =>
+      value?.insideViewport &&
+      value.text.includes("New tab in group") &&
+      value.text.includes("Collapse group"),
+    "the group context menu",
+  );
+  await cdp.evaluate("document.body.click()");
+
+  const beforeCollapse = await cdp.evaluate("window.chromecraft.getSnapshot()");
+  await cdp.evaluate(
+    `window.chromecraft.updateTabGroup(${JSON.stringify(groupSetup.firstGroupId)}, { collapsed: true })`,
+  );
+  const collapsed = await poll(
+    () =>
+      cdp.evaluate(`(async () => {
+      const snapshot = await window.chromecraft.getSnapshot();
+      const group = snapshot.tabGroups.find((item) => item.id === ${JSON.stringify(groupSetup.firstGroupId)});
+      return {
+        collapsed: group?.collapsed,
+        tabCount: snapshot.tabs.length,
+        visibleMembers: document.querySelectorAll('.tab-group.group-blue .tab').length,
+        activeTabId: snapshot.activeTabId,
+      };
+    })()`),
+    (value) => value?.collapsed && value.visibleMembers === 0,
+    "the group to collapse without destroying tabs",
+  );
+  if (collapsed.tabCount !== beforeCollapse.tabs.length) {
+    throw new Error("Collapsing a tab group destroyed one or more tabs.");
+  }
+
+  const screenshot = await cdp.send("Page.captureScreenshot", {
+    format: "png",
+    captureBeyondViewport: false,
+  });
+  const groupScreenshotPath = path.join(profile, "tab-groups-toolbar.png");
+  await fs.writeFile(
+    groupScreenshotPath,
+    Buffer.from(screenshot.data, "base64"),
+  );
+
   console.log(
     JSON.stringify(
-      { pass: true, layout, menu, findBefore, findAfter, hoverCard },
+      {
+        pass: true,
+        layout,
+        menu,
+        findBefore,
+        findAfter,
+        hoverCard,
+        groupVisual,
+        groupMenu,
+        collapsed,
+        groupScreenshotPath,
+      },
       null,
       2,
     ),

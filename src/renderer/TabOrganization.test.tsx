@@ -12,6 +12,7 @@ import {
   getSelectedTabIds,
   getTabGroups,
   performTabGroupDrop,
+  tabDropIndex,
   TabOverview,
   TabStrip,
 } from "./App";
@@ -237,6 +238,20 @@ const aiTools: AiToolsSnapshot = {
 };
 
 describe("tab organisation renderer", () => {
+  it("calculates stable exact insertion slots while moving tabs", () => {
+    const tabs = [
+      tab("a", "A", "https://a.example/"),
+      tab("b", "B", "https://b.example/"),
+      tab("c", "C", "https://c.example/"),
+      tab("d", "D", "https://d.example/"),
+    ];
+
+    expect(tabDropIndex(tabs, ["b"], "d", "before")).toBe(2);
+    expect(tabDropIndex(tabs, ["b"], "d", "after")).toBe(3);
+    expect(tabDropIndex(tabs, ["b", "c"], "a", "after")).toBe(1);
+    expect(tabDropIndex(tabs, ["a"], "a", "before")).toBe(0);
+  });
+
   it("renders discovered website favicons and Material icons for internal pages", () => {
     const current = snapshot();
     current.tabs = [
