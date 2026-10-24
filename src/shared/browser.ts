@@ -751,6 +751,7 @@ export interface ChromecraftApi {
   findInPage(tabId: TabId, text: string, forward: boolean): Promise<void>;
   stopFindInPage(tabId: TabId): Promise<void>;
   setFullscreen(fullscreen: boolean): Promise<void>;
+  openPerformanceCentre(): Promise<void>;
   setChromeOverlayOpen(open: boolean): Promise<void>;
   setSidebarAttached(attached: boolean): Promise<void>;
   setSidebarOpen(open: boolean): Promise<void>;

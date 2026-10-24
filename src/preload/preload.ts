@@ -121,6 +121,8 @@ const api: ChromecraftApi = {
     ipcRenderer.invoke(channels.stopFindInPage, tabId) as Promise<void>,
   setFullscreen: (fullscreen) =>
     ipcRenderer.invoke(channels.setFullscreen, fullscreen) as Promise<void>,
+  openPerformanceCentre: () =>
+    ipcRenderer.invoke(channels.openPerformanceCentre) as Promise<void>,
   setChromeOverlayOpen: (open) =>
     ipcRenderer.invoke(channels.setChromeOverlayOpen, open) as Promise<void>,
   setSidebarAttached: (attached) =>

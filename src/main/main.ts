@@ -104,6 +104,9 @@ import { AiToolsController } from "./ai/controller";
 import { GeminiCredentialStore } from "./ai/gemini-credential-store";
 import { OllamaClient } from "./ai/ollama-client";
 import { OrganiseTabsTool } from "./ai/organise-tabs-tool";
+import { AppMetricsCollector } from "./app-metrics-collector";
+import { PerformanceCentreController } from "./performance-centre-controller";
+import { isPerformanceAction } from "../shared/performance-centre";
 import {
   canonicalWebOrigin,
   isSecureDnsMode,
@@ -206,6 +209,8 @@ let smartDownloadsTray: Tray | null = null;
 let quittingCompletely = false;
 let deleteAllGalleryItemsInFlight = false;
 let youtubeIndicatorHideTimer: NodeJS.Timeout | null = null;
+let appMetricsCollector: AppMetricsCollector | null = null;
+let performanceCentreController: PerformanceCentreController | null = null;
 
 async function promptForWebsitePermission(
   request: WebsitePermissionPrompt,
@@ -367,6 +372,20 @@ function requireManager(event: IpcMainInvokeEvent): TabManager {
     throw new Error("Rejected IPC call from an untrusted renderer.");
   }
   return tabManager;
+}
+
+function requirePerformanceCentre(
+  event: Pick<IpcMainInvokeEvent, "sender">,
+): PerformanceCentreController {
+  if (
+    !performanceCentreController ||
+    !performanceCentreController.isTrustedSender(event.sender)
+  ) {
+    throw new Error(
+      "Rejected Performance Centre IPC from an untrusted renderer.",
+    );
+  }
+  return performanceCentreController;
 }
 
 function requireSearchSuggestions(
@@ -1159,6 +1178,31 @@ function registerIpc(): void {
     channels.getSnapshot,
     (event) => requireManager(event).snapshot,
   );
+  ipcMain.handle(channels.openPerformanceCentre, async (event) => {
+    requireTrusted(event);
+    await performanceCentreController?.openOrFocus();
+  });
+  ipcMain.handle(channels.getPerformanceCentre, (event) =>
+    requirePerformanceCentre(event).snapshot(),
+  );
+  ipcMain.handle(
+    channels.setPerformanceCentreRefreshInterval,
+    (event, interval: unknown) => {
+      requirePerformanceCentre(event).setRefreshInterval(interval);
+    },
+  );
+  ipcMain.handle(
+    channels.runPerformanceCentreAction,
+    (event, action: unknown) => {
+      if (!isPerformanceAction(action)) {
+        throw new TypeError("Invalid Performance Centre action.");
+      }
+      return requirePerformanceCentre(event).performAction(action);
+    },
+  );
+  ipcMain.handle(channels.closePerformanceCentre, (event) => {
+    requirePerformanceCentre(event).close();
+  });
   ipcMain.handle(channels.getUpdates, (event) => {
     requireTrusted(event);
     return requireUpdateManager().snapshot;
@@ -2912,6 +2956,25 @@ async function createMainWindow(): Promise<void> {
   hyperdrive.setBrowserData(data.snapshot);
   hyperdriveController = hyperdrive;
 
+  const metrics = new AppMetricsCollector();
+  appMetricsCollector = metrics;
+  const performanceCentre = new PerformanceCentreController({
+    preloadPath: path.join(__dirname, "performance-centre-preload.cjs"),
+    stateFilePath: path.join(
+      app.getPath("userData"),
+      "performance-centre-window.json",
+    ),
+    developmentUrl: MAIN_WINDOW_VITE_DEV_SERVER_URL,
+    packagedHtmlPath: path.join(
+      __dirname,
+      `../renderer/${MAIN_WINDOW_VITE_NAME}/performance-centre.html`,
+    ),
+    metrics,
+    manager: () => tabManager,
+  });
+  performanceCentreController?.dispose();
+  performanceCentreController = performanceCentre;
+
   const manager = new TabManager(
     window,
     view,
@@ -2945,6 +3008,8 @@ async function createMainWindow(): Promise<void> {
         return true;
       }
     },
+    () => void performanceCentre.openOrFocus(),
+    () => metrics.memoryByProcessId(),
   );
   tabManager = manager;
   const organiseTabs = new OrganiseTabsTool(manager);
@@ -2996,6 +3061,7 @@ async function createMainWindow(): Promise<void> {
   let closingApproved = false;
   window.on("close", (event) => {
     if (closingApproved || updateRestartPrepared) {
+      performanceCentre.dispose();
       aiTools.dispose();
       suggestions.dispose();
       hyperdrive.dispose();
@@ -3038,6 +3104,10 @@ async function createMainWindow(): Promise<void> {
       mainWindow = null;
       shellView = null;
       tabManager = null;
+      if (performanceCentreController === performanceCentre) {
+        performanceCentreController = null;
+      }
+      if (appMetricsCollector === metrics) appMetricsCollector = null;
       extensionService = null;
       browserData = null;
       downloadManager = null;

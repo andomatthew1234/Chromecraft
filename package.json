@@ -25,6 +25,7 @@
     "test:full-settings": "node scripts/test-full-settings.mjs",
     "test:ai-assistant-ui": "node scripts/test-ai-assistant-ui.mjs",
     "test:scout-organiser-ui": "node scripts/test-scout-organiser-ui.mjs",
+    "test:performance-centre:win": "node scripts/test-performance-centre.mjs",
     "test:sidebar": "node scripts/test-sidebar.mjs",
     "test:gallery-ui:win": "node scripts/test-gallery-ui.mjs",
     "test:toolbar": "node scripts/test-toolbar.mjs",

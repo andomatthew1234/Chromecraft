@@ -2,7 +2,6 @@ import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 
 import {
-  app,
   BaseWindow,
   BrowserWindow,
   clipboard,
@@ -62,6 +61,7 @@ import { PreferencesStore } from "./preferences";
 import { UblockService } from "./ublock-service";
 import type { OfflinePageCaptureSource } from "./offline-page-store";
 import type { ActiveWebsitePermissionContext } from "./website-permission-controller";
+import type { PerformanceTabTask } from "../shared/performance-centre";
 
 export const SHELL_HEIGHT = 104;
 export const BOOKMARK_BAR_HEIGHT = 32;
@@ -393,8 +393,6 @@ export class TabManager {
   private aiTabOrganizationMutationInProgress = false;
   private tabTopologyMutationOperations = 0;
   private selectionAnchorId: TabId | null = null;
-  private rendererMemoryCache = new Map<number, number>();
-  private rendererMemoryCacheAt = 0;
   private readonly extensionTabs = new ExtensionTabLifecycle();
   private activeTabId = "";
   private disposed = false;
@@ -438,6 +436,11 @@ export class TabManager {
       occurredAt: number;
     }) => void,
     private readonly shouldAllowWebsitePopup?: (openerUrl: string) => boolean,
+    private readonly onOpenPerformanceCentre?: () => void,
+    private readonly getRendererMemoryByProcessId: () => ReadonlyMap<
+      number,
+      number
+    > = () => new Map(),
   ) {
     this.extensionPopup = extensions
       ? new ExtensionPopupController(window, browserSession, extensions, {
@@ -567,6 +570,55 @@ export class TabManager {
       (tab) => tab.view && !tab.view.webContents.isDestroyed(),
     ).length;
   }
+  get performanceTabTasks(): PerformanceTabTask[] {
+    return this.order.flatMap((tabId) => {
+      const tab = this.tabs.get(tabId);
+      const contents = tab?.view?.webContents;
+      if (!tab || !contents || contents.isDestroyed()) return [];
+      let processId: number;
+      try {
+        processId = contents.getOSProcessId();
+      } catch {
+        return [];
+      }
+      if (!Number.isSafeInteger(processId) || processId < 1) return [];
+      return [
+        {
+          id: tab.id,
+          title: tab.title || "Untitled tab",
+          hostname: hostFromUrl(tab.url),
+          faviconDataUrl: tab.faviconDataUrl,
+          processId,
+          active: tab.id === this.activeTabId,
+          crashed: tab.crashed,
+        },
+      ];
+    });
+  }
+
+  focusTabFromPerformanceCentre(tabId: TabId): void {
+    this.activateTab(tabId);
+    if (!this.window.isVisible()) this.window.show();
+    this.window.focus();
+  }
+
+  terminateRendererProcess(processId: number): number {
+    if (!Number.isSafeInteger(processId) || processId < 1) return 0;
+    const matches = [...this.tabs.values()].filter((tab) => {
+      const contents = tab.view?.webContents;
+      if (!contents || contents.isDestroyed()) return false;
+      try {
+        return contents.getOSProcessId() === processId;
+      } catch {
+        return false;
+      }
+    });
+    const target = matches[0]?.view?.webContents;
+    if (!target || target.isDestroyed()) return 0;
+    target.forcefullyCrashRenderer();
+    return matches.length;
+  }
+
 
   get extensionPopupId(): string | null {
     return this.extensionPopup?.openExtensionId ?? null;
@@ -3080,7 +3132,10 @@ export class TabManager {
       const key = input.key.toLowerCase();
       const command = input.control || input.meta;
       const active = this.tabs.get(this.activeTabId);
-      if (command && input.shift && key === "t") {
+      if (!command && !input.alt && input.shift && key === "escape") {
+        event.preventDefault();
+        this.onOpenPerformanceCentre?.();
+      } else if (command && input.shift && key === "t") {
         event.preventDefault();
         this.runNativeTabTopologyPromise(this.reopenClosedTab());
       } else if (command && input.shift && key === "p") {
@@ -3434,29 +3489,8 @@ export class TabManager {
     }
   }
 
-  private rendererMemoryByProcessId(): Map<number, number> {
-    const now = Date.now();
-    if (now - this.rendererMemoryCacheAt < 1_000)
-      return this.rendererMemoryCache;
-    try {
-      this.rendererMemoryCache = new Map(
-        app
-          .getAppMetrics()
-          .filter((metric) => metric.type === "Tab")
-          .map((metric) => [
-            metric.pid,
-            Math.max(
-              0,
-              (metric.memory.privateBytes ?? metric.memory.workingSetSize) *
-                1_024,
-            ),
-          ]),
-      );
-      this.rendererMemoryCacheAt = now;
-      return this.rendererMemoryCache;
-    } catch {
-      return this.rendererMemoryCache;
-    }
+  private rendererMemoryByProcessId(): ReadonlyMap<number, number> {
+    return this.getRendererMemoryByProcessId();
   }
 
   private tabMemoryBytes(

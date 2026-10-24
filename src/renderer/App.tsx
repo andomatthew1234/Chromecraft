@@ -263,6 +263,7 @@ type IconName =
   | "search"
   | "settings"
   | "shield"
+  | "speed"
   | "stop"
   | "tabSearch"
   | "tune"
@@ -307,6 +308,7 @@ const iconSymbols: Record<IconName, string> = {
   search: "search",
   settings: "settings",
   shield: "shield",
+  speed: "speed",
   stop: "stop",
   tabSearch: "tab_search",
   tune: "tune",
@@ -1771,6 +1773,7 @@ export function TabStrip({
   onToggleBrandMenu,
   onSetSidebarAttached,
   onOpenUpdates,
+  onOpenPerformanceCentre,
   onOpenToolbarManager,
   aiTools,
   onOpenOrganiseTabs,
@@ -1784,6 +1787,7 @@ export function TabStrip({
   onToggleBrandMenu: () => void;
   onSetSidebarAttached: (attached: boolean) => void;
   onOpenUpdates: () => void;
+  onOpenPerformanceCentre?: () => void;
   onOpenToolbarManager: () => void;
   aiTools: AiToolsSnapshot;
   onOpenOrganiseTabs: () => void;
@@ -2297,6 +2301,22 @@ export function TabStrip({
                 <small>Re-add icons you have unpinned</small>
               </span>
               <Icon name="chevronRight" />
+            </button>
+            <div className="brand-menu-section-label">System tools</div>
+            <button
+              type="button"
+              className="brand-menu-item"
+              role="menuitem"
+              onClick={() => onOpenPerformanceCentre?.()}
+            >
+              <span className="brand-menu-item-icon" aria-hidden="true">
+                <Icon name="speed" />
+              </span>
+              <span className="brand-menu-item-copy">
+                <strong>Performance Centre</strong>
+                <small>See CPU, memory, and browser processes</small>
+              </span>
+              <kbd className="brand-menu-shortcut">Shift + Esc</kbd>
             </button>
             <div className="brand-menu-section-label">AI tools</div>
             <button
@@ -8100,6 +8120,10 @@ export function App() {
           onOpenToolbarManager={() => {
             setBrandMenuOpen(false);
             setToolbarManagerOpen(true);
+          }}
+          onOpenPerformanceCentre={() => {
+            setBrandMenuOpen(false);
+            void window.chromecraft.openPerformanceCentre();
           }}
           onOpenOrganiseTabs={openOrganiseTabs}
           onMenu={(event, tab) => {

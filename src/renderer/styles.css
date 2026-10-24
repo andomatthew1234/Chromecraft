@@ -632,7 +632,7 @@ input::placeholder {
   width: 100%;
   min-height: 72px;
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr) 18px;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-2) var(--space-3);
@@ -680,6 +680,17 @@ input::placeholder {
 
 .brand-menu-item-copy strong {
   font: var(--type-label-large);
+}
+
+.brand-menu-shortcut {
+  justify-self: end;
+  padding: 3px 6px;
+  border: 1px solid color-mix(in srgb, var(--md-outline) 28%, transparent);
+  border-radius: 7px;
+  color: var(--md-on-surface-variant);
+  background: var(--md-surface-container);
+  font: var(--type-label-small);
+  white-space: nowrap;
 }
 
 .brand-menu-state {
