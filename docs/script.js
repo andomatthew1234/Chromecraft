@@ -833,6 +833,8 @@ const agenticArrows = [
   ...document.querySelectorAll("[data-agentic-direction]"),
 ];
 const agenticStatus = document.querySelector(".agentic-status");
+const tabsComparison = document.querySelector(".tabs-comparison");
+const tabsComparisonRange = document.querySelector(".tabs-comparison-range");
 let activeAgenticSlide = 0;
 
 function showAgenticSlide(index, { focus = false, announce = false } = {}) {
@@ -899,6 +901,17 @@ if (agenticShowcase && agenticPanels.length && agenticTabs.length) {
     });
   });
   showAgenticSlide(0);
+}
+
+if (tabsComparison && tabsComparisonRange) {
+  const updateTabsComparison = () => {
+    tabsComparison.style.setProperty(
+      "--tabs-compare",
+      `${tabsComparisonRange.value}%`,
+    );
+  };
+  tabsComparisonRange.addEventListener("input", updateTabsComparison);
+  updateTabsComparison();
 }
 
 function updateScoutPauseState() {

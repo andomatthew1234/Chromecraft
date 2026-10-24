@@ -655,7 +655,9 @@
             >
               <div class="agentic-copy agentic-scout-copy">
                 <p class="section-kicker">04 / Meet Scout</p>
-                <h2><span>Scout.</span> Your ready-on personal agent.</h2>
+                <h2>
+                  <span>Scout</span> in the sidebar helps you get work done.
+                </h2>
                 <p>
                   Scout stays beside every tab, ready to understand this page,
                   focus on what matters, and turn your intent into action.
@@ -690,6 +692,79 @@
                 />
               </figure>
             </article>
+
+            <article
+              class="agentic-panel agentic-organise-panel"
+              id="agentic-panel-organise"
+              role="tabpanel"
+              aria-labelledby="agentic-tab-organise"
+              data-agentic-panel="2"
+              aria-hidden="true"
+            >
+              <div class="agentic-copy agentic-organise-copy">
+                <p class="section-kicker">04 / Organise tabs</p>
+                <h2>Your tabs. <span>Now organised.</span></h2>
+                <p>
+                  Turn a crowded tab strip into clear, named groups. Review the
+                  plan first, then apply it when everything looks right.
+                </p>
+              </div>
+
+              <div class="agentic-organise-visual">
+                <figure class="tabs-comparison">
+                  <img
+                    src="./assets/agentic/tabs-before.png"
+                    width="1280"
+                    height="820"
+                    loading="lazy"
+                    decoding="async"
+                    alt="Seven unorganised Chromecraft tabs before using Organise tabs."
+                  />
+                  <img
+                    class="tabs-comparison-after"
+                    src="./assets/agentic/tabs-after.png"
+                    width="1280"
+                    height="820"
+                    loading="lazy"
+                    decoding="async"
+                    alt="The same Chromecraft tabs organised into Dinosaurs and Computers groups."
+                  />
+                  <span
+                    class="tabs-comparison-label tabs-comparison-label--before"
+                    >Before</span
+                  >
+                  <span
+                    class="tabs-comparison-label tabs-comparison-label--after"
+                    >Organised</span
+                  >
+                  <span class="tabs-comparison-divider" aria-hidden="true"
+                    ><i class="material-symbols-rounded"
+                      >drag_indicator</i
+                    ></span
+                  >
+                  <input
+                    class="tabs-comparison-range"
+                    type="range"
+                    min="0"
+                    max="100"
+                    value="52"
+                    aria-label="Compare unorganised and organised tabs"
+                  />
+                </figure>
+
+                <figure class="tabs-plan-card">
+                  <img
+                    src="./assets/agentic/tabs-plan.png"
+                    width="1470"
+                    height="820"
+                    loading="lazy"
+                    decoding="async"
+                    alt="Scout's Organise tabs review showing two proposed tab groups before they are applied."
+                  />
+                  <figcaption>Review every group before applying</figcaption>
+                </figure>
+              </div>
+            </article>
           </div>
 
           <div class="agentic-picker">
@@ -713,7 +788,7 @@
                   >home</span
                 >
                 <span
-                  ><strong>Home</strong
+                  ><strong>Overview</strong
                   ><small>Built for Agentic AI</small></span
                 >
               </button>
@@ -732,7 +807,27 @@
                 ></span>
                 <span
                   ><strong>Scout</strong
-                  ><small>Your ready-on personal agent</small></span
+                  ><small>Scout in the sidebar</small></span
+                >
+              </button>
+              <button
+                class="agentic-tab"
+                id="agentic-tab-organise"
+                type="button"
+                role="tab"
+                aria-selected="false"
+                aria-controls="agentic-panel-organise"
+                data-agentic-slide="2"
+                tabindex="-1"
+              >
+                <span
+                  class="agentic-tab-icon material-symbols-rounded"
+                  aria-hidden="true"
+                  >tab_group</span
+                >
+                <span
+                  ><strong>Organise tabs</strong
+                  ><small>Your tabs. Now organised.</small></span
                 >
               </button>
             </div>
