@@ -701,19 +701,27 @@ input::placeholder {
   border-top: 1px solid color-mix(in srgb, var(--md-outline) 20%, transparent);
 }
 
-.tab-scroller {
+.tab-scroller-frame {
   min-width: 0;
   max-width: calc(100% - 82px);
   height: 38px;
   display: flex;
-  flex: 0 1 auto;
+  flex: 0 1 max-content;
+  align-items: end;
+}
+
+.tab-scroller {
+  min-width: 0;
+  height: 38px;
+  display: flex;
+  flex: 1 1 auto;
   align-items: end;
   gap: 2px;
   /* Keep the first/last selected shoulder inside the scroll clip. */
   padding-inline: 8px;
   overflow-x: auto;
   overscroll-behavior-x: contain;
-  scroll-behavior: smooth;
+  scroll-behavior: auto;
   scroll-padding-inline: var(--space-2);
   scrollbar-width: none;
 }
@@ -724,7 +732,7 @@ input::placeholder {
 
 .tab {
   position: relative;
-  min-width: 120px;
+  min-width: 84px;
   max-width: 240px;
   height: 32px;
   width: 240px;
@@ -941,6 +949,43 @@ input::placeholder {
   font-size: 24px;
   font-weight: 300;
   align-self: center;
+}
+
+.tab-scroll-control {
+  width: 28px;
+  height: 32px;
+  display: grid;
+  flex: 0 0 28px;
+  align-self: center;
+  padding: 0;
+  place-items: center;
+  border-radius: var(--shape-full);
+  color: var(--md-on-surface-variant);
+  background: var(--md-surface-container-high);
+  transition:
+    color var(--motion-standard),
+    background-color var(--motion-standard),
+    opacity var(--motion-standard);
+}
+
+.tab-scroll-control:hover:not(:disabled) {
+  color: var(--md-on-surface);
+  background: var(--md-hover);
+}
+
+.tab-scroll-control:active:not(:disabled) {
+  background: var(--md-pressed);
+}
+
+.tab-scroll-control:disabled {
+  opacity: 0.38;
+}
+
+.tab-scroll-control .material-icon {
+  width: 18px;
+  height: 18px;
+  font-size: 18px;
+  line-height: 18px;
 }
 
 .tab-hover-card {
@@ -1193,7 +1238,7 @@ input::placeholder {
   min-width: 0;
   height: 38px;
   display: flex;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   align-items: end;
   gap: 2px;
   padding: 0;
@@ -1226,7 +1271,7 @@ input::placeholder {
 }
 
 .tab-group .tab {
-  min-width: 120px;
+  min-width: 84px;
   width: 220px;
   flex-basis: 220px;
 }
@@ -6939,7 +6984,7 @@ select:focus-visible,
 
 @media (max-width: 1000px) {
   .tab {
-    min-width: 112px;
+    min-width: 80px;
   }
 
   .tab-selection-bar button span {
@@ -6947,7 +6992,7 @@ select:focus-visible,
   }
 
   .tab-group .tab {
-    min-width: 104px;
+    min-width: 80px;
     width: 168px;
     flex-basis: 168px;
   }
@@ -6967,7 +7012,7 @@ select:focus-visible,
 
 @media (max-width: 820px) {
   .tab {
-    min-width: 104px;
+    min-width: 80px;
   }
 
   .tab-group-pill {
@@ -7010,11 +7055,11 @@ select:focus-visible,
   }
 
   .tab {
-    min-width: 96px;
+    min-width: 76px;
   }
 
   .tab-group .tab {
-    min-width: 96px;
+    min-width: 76px;
     width: 142px;
     flex-basis: 142px;
   }

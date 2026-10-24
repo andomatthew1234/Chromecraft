@@ -230,7 +230,8 @@ try {
     const toolbarStyle = toolbar ? getComputedStyle(toolbar) : null;
     return {
       adjacent: plus.left - tab.right >= 0 && plus.left - tab.right <= 12,
-      plusInsideScroller: document.querySelector('.new-tab-button').parentElement.classList.contains('tab-scroller'),
+      plusInsideFrame: document.querySelector('.new-tab-button').parentElement.classList.contains('tab-scroller-frame') && !document.querySelector('.new-tab-button').parentElement.classList.contains('tab-scroller'),
+      fittingStripHasNoScrollControls: document.querySelectorAll('.tab-scroll-control').length === 0,
       selectedTabMerged: Boolean(
         activeTab && toolbar && activeTab.getBoundingClientRect().bottom === toolbar.getBoundingClientRect().top &&
         activeTabStyle?.borderBottomLeftRadius === '0px' &&
@@ -243,7 +244,8 @@ try {
   })()`);
   if (
     !layout.adjacent ||
-    !layout.plusInsideScroller ||
+    !layout.plusInsideFrame ||
+    !layout.fittingStripHasNoScrollControls ||
     !layout.selectedTabMerged ||
     !layout.searchByWindowControls
   ) {
@@ -798,6 +800,77 @@ try {
       );
   }
 
+  const overflowTabIds = await cdp.evaluate(`(async () => {
+    const ids = [];
+    for (let index = 0; index < 14; index += 1) {
+      ids.push(await window.chromecraft.createTab());
+    }
+    await window.chromecraft.activateTab(ids[0]);
+    return ids;
+  })()`);
+  const tabOverflow = await poll(
+    () =>
+      cdp.evaluate(`(() => {
+        const scroller = document.querySelector('.tab-scroller');
+        const controls = [...document.querySelectorAll('.tab-scroll-control')];
+        const tabs = [...document.querySelectorAll('.tab:not(.concealed)')];
+        const plus = document.querySelector('.new-tab-button');
+        const plusRect = plus?.getBoundingClientRect();
+        return {
+          overflows: scroller.scrollWidth > scroller.clientWidth + 1,
+          controlCount: controls.length,
+          leftDisabled: controls[0]?.disabled,
+          rightDisabled: controls[1]?.disabled,
+          minTabWidth: Math.min(...tabs.map((tab) => tab.getBoundingClientRect().width)),
+          maxTabWidth: Math.max(...tabs.map((tab) => tab.getBoundingClientRect().width)),
+          faviconsPreserved: tabs.every((tab) => tab.querySelector('.tab-favicon')),
+          closeButtonsPreserved: tabs.every((tab) => tab.querySelector('.tab-close')),
+          newTabVisible: Boolean(plusRect && plusRect.left >= 0 && plusRect.right <= innerWidth),
+          groupLabels: [...document.querySelectorAll('.tab-group-pill')].map((pill) => {
+            const rect = pill.getBoundingClientRect();
+            return { text: pill.textContent, width: rect.width, left: rect.left, right: rect.right };
+          }),
+        };
+      })()`),
+    (value) =>
+      value?.overflows &&
+      value.controlCount === 2 &&
+      (!value.leftDisabled || !value.rightDisabled) &&
+      value.minTabWidth <= 84 &&
+      value.faviconsPreserved &&
+      value.closeButtonsPreserved &&
+      value.newTabVisible &&
+      value.groupLabels.every((label) => label.width >= 48),
+    "tabs to shrink before exposing two usable overflow controls",
+  );
+  await capture("07-many-tabs-overflow-controls", true);
+  await cdp.evaluate(
+    "document.querySelector('.tab-scroll-control.next')?.click()",
+  );
+  const tabOverflowAfterScroll = await poll(
+    () =>
+      cdp.evaluate(`(() => {
+        const scroller = document.querySelector('.tab-scroller');
+        const previous = document.querySelector('.tab-scroll-control.previous');
+        return { scrollLeft: scroller.scrollLeft, previousDisabled: previous?.disabled };
+      })()`),
+    (value) => value?.scrollLeft > 20 && value.previousDisabled === false,
+    "the right tab-scroll control to reveal later tabs",
+  );
+  await cdp.evaluate(
+    `window.chromecraft.activateTab(${JSON.stringify(overflowTabIds.at(-1))})`,
+  );
+  const activeOverflowTabVisible = await poll(
+    () =>
+      cdp.evaluate(`(() => {
+        const active = document.querySelector('.tab.active').getBoundingClientRect();
+        const scroller = document.querySelector('.tab-scroller').getBoundingClientRect();
+        return active.left >= scroller.left - 1 && active.right <= scroller.right + 1;
+      })()`),
+    Boolean,
+    "an activated overflow tab to scroll into view",
+  );
+
   console.log(
     JSON.stringify(
       {
@@ -815,6 +888,9 @@ try {
         pointerFocus,
         multiSelection,
         groupDrag,
+        tabOverflow,
+        tabOverflowAfterScroll,
+        activeOverflowTabVisible,
         visualMatrix,
         nativeResizeUnavailable,
         sourceStyleOverride: process.argv.includes("--source-styles"),

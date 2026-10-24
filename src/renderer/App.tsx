@@ -9,6 +9,7 @@ import {
   useEffect,
   useId,
   useLayoutEffect,
+  useCallback,
   useMemo,
   useRef,
   useState,
@@ -1811,7 +1812,73 @@ export function TabStrip({
     side: TabDropSide;
   } | null>(null);
   const [dropAtStripEnd, setDropAtStripEnd] = useState(false);
+  const tabScrollerRef = useRef<HTMLDivElement | null>(null);
+  const [tabScrollState, setTabScrollState] = useState({
+    overflow: false,
+    atStart: true,
+    atEnd: true,
+  });
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tabLayoutSignature = `${snapshot.tabs
+    .map(
+      (tab) => `${tab.id}:${(tab as OrganisedTabSnapshot).groupId ?? "loose"}`,
+    )
+    .join("|")}/${groups
+    .map((group) => `${group.id}:${group.collapsed ? "closed" : "open"}`)
+    .join("|")}`;
+  const updateTabScrollState = useCallback(() => {
+    const scroller = tabScrollerRef.current;
+    if (!scroller) return;
+    setTabScrollState((previous) => {
+      const widthWithoutControls =
+        scroller.clientWidth + (previous.overflow ? 56 : 0);
+      const overflow = scroller.scrollWidth > widthWithoutControls + 1;
+      const next = {
+        overflow,
+        atStart: !overflow || scroller.scrollLeft <= 1,
+        atEnd:
+          !overflow ||
+          scroller.scrollLeft + scroller.clientWidth >=
+            scroller.scrollWidth - 1,
+      };
+      return previous.overflow === next.overflow &&
+        previous.atStart === next.atStart &&
+        previous.atEnd === next.atEnd
+        ? previous
+        : next;
+    });
+  }, []);
+  useLayoutEffect(() => {
+    const scroller = tabScrollerRef.current;
+    if (!scroller) return;
+    const observer = new ResizeObserver(updateTabScrollState);
+    observer.observe(scroller);
+    scroller.addEventListener("scroll", updateTabScrollState, {
+      passive: true,
+    });
+    updateTabScrollState();
+    const frame = requestAnimationFrame(updateTabScrollState);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+      scroller.removeEventListener("scroll", updateTabScrollState);
+    };
+  }, [tabLayoutSignature, updateTabScrollState]);
+  useLayoutEffect(() => {
+    const scroller = tabScrollerRef.current;
+    const active = scroller?.querySelector<HTMLElement>(".tab.active");
+    active?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    updateTabScrollState();
+    const frame = requestAnimationFrame(updateTabScrollState);
+    return () => cancelAnimationFrame(frame);
+  }, [snapshot.activeTabId, tabLayoutSignature, updateTabScrollState]);
+  const scrollTabs = (direction: -1 | 1) => {
+    const scroller = tabScrollerRef.current;
+    if (!scroller) return;
+    scroller.scrollLeft +=
+      direction * Math.max(160, scroller.clientWidth * 0.7);
+    updateTabScrollState();
+  };
   const updateHoverPreview = (
     tab: BrowserTabSnapshot | null,
     anchor?: DOMRect,
@@ -2144,6 +2211,7 @@ export function TabStrip({
                   tabs.length) %
                 tabs.length;
         tabs[next]?.focus();
+        tabs[next]?.scrollIntoView({ block: "nearest", inline: "nearest" });
       }}
     >
       <div className="brand-menu-anchor">
@@ -2259,44 +2327,83 @@ export function TabStrip({
         )}
       </div>
       <div
-        className={`tab-scroller ${dropAtStripEnd ? "drop-at-end" : ""} ${draggedTabIds.length > 0 ? "drag-active" : ""}`}
-        role="tablist"
-        aria-label="Open tabs"
-        onDragOverCapture={(event) => {
-          if (draggedTabIdsRef.current.length === 0) return;
-          const bounds = event.currentTarget.getBoundingClientRect();
-          if (event.clientX < bounds.left + 44)
-            event.currentTarget.scrollLeft -= 18;
-          else if (event.clientX > bounds.right - 44)
-            event.currentTarget.scrollLeft += 18;
-        }}
-        onDragOver={(event) => {
-          if (
-            draggedTabIdsRef.current.length === 0 ||
-            event.target !== event.currentTarget
-          )
-            return;
-          event.preventDefault();
-          event.dataTransfer.dropEffect = "move";
-          setTabDropTarget(null);
-          setDragOverGroupId(null);
-          setDropAtStripEnd(true);
-        }}
-        onDrop={(event) => {
-          if (event.target !== event.currentTarget) return;
-          event.preventDefault();
-          const ids = draggedTabIdsRef.current;
-          if (ids.length > 0) {
-            void tabOrganizationApi().moveTabs?.(
-              ids,
-              snapshot.tabs.length - ids.length,
-              draggedWholeGroupIdRef.current ? undefined : null,
-            );
-          }
-          finishTabDrag();
-        }}
+        className={`tab-scroller-frame ${tabScrollState.overflow ? "overflowing" : ""}`}
       >
-        {tabNodes}
+        {tabScrollState.overflow && (
+          <button
+            type="button"
+            className="tab-scroll-control previous"
+            aria-label="Scroll tabs left"
+            title="Scroll tabs left"
+            disabled={tabScrollState.atStart}
+            onClick={() => scrollTabs(-1)}
+            onDragOver={(event) => {
+              if (draggedTabIdsRef.current.length === 0) return;
+              event.preventDefault();
+              scrollTabs(-1);
+            }}
+          >
+            <Icon name="chevronLeft" />
+          </button>
+        )}
+        <div
+          ref={tabScrollerRef}
+          className={`tab-scroller ${dropAtStripEnd ? "drop-at-end" : ""} ${draggedTabIds.length > 0 ? "drag-active" : ""}`}
+          role="tablist"
+          aria-label="Open tabs"
+          onDragOverCapture={(event) => {
+            if (draggedTabIdsRef.current.length === 0) return;
+            const bounds = event.currentTarget.getBoundingClientRect();
+            if (event.clientX < bounds.left + 44)
+              event.currentTarget.scrollLeft -= 18;
+            else if (event.clientX > bounds.right - 44)
+              event.currentTarget.scrollLeft += 18;
+          }}
+          onDragOver={(event) => {
+            if (
+              draggedTabIdsRef.current.length === 0 ||
+              event.target !== event.currentTarget
+            )
+              return;
+            event.preventDefault();
+            event.dataTransfer.dropEffect = "move";
+            setTabDropTarget(null);
+            setDragOverGroupId(null);
+            setDropAtStripEnd(true);
+          }}
+          onDrop={(event) => {
+            if (event.target !== event.currentTarget) return;
+            event.preventDefault();
+            const ids = draggedTabIdsRef.current;
+            if (ids.length > 0) {
+              void tabOrganizationApi().moveTabs?.(
+                ids,
+                snapshot.tabs.length - ids.length,
+                draggedWholeGroupIdRef.current ? undefined : null,
+              );
+            }
+            finishTabDrag();
+          }}
+        >
+          {tabNodes}
+        </div>
+        {tabScrollState.overflow && (
+          <button
+            type="button"
+            className="tab-scroll-control next"
+            aria-label="Scroll tabs right"
+            title="Scroll tabs right"
+            disabled={tabScrollState.atEnd}
+            onClick={() => scrollTabs(1)}
+            onDragOver={(event) => {
+              if (draggedTabIdsRef.current.length === 0) return;
+              event.preventDefault();
+              scrollTabs(1);
+            }}
+          >
+            <Icon name="chevronRight" />
+          </button>
+        )}
         <button
           type="button"
           className="new-tab-button"
