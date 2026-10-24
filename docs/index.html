@@ -1168,6 +1168,106 @@
           </div>
         </div>
       </section>
+
+      <section
+        class="browser-comparison"
+        id="compare"
+        aria-labelledby="browser-comparison-title"
+      >
+        <div class="browser-comparison-inner">
+          <header class="browser-comparison-heading">
+            <p class="section-kicker">07 / Browser comparison</p>
+            <h2 id="browser-comparison-title">
+              Compare with your favourite browsers
+            </h2>
+            <p>How do we stack up with the competition?</p>
+          </header>
+
+          <p class="comparison-scroll-hint" aria-hidden="true">
+            <span class="material-symbols-rounded">swipe</span>
+            Swipe to compare every browser
+          </p>
+
+          <div
+            class="comparison-table-scroll"
+            tabindex="0"
+            role="region"
+            aria-label="Browser feature comparison. Scroll horizontally to see every browser."
+          >
+            <table class="comparison-table">
+              <caption class="sr-only">
+                Feature comparison between Chromecraft, Google Chrome, Microsoft
+                Edge, and Mozilla Firefox
+              </caption>
+              <colgroup>
+                <col class="comparison-feature-column" />
+                <col class="comparison-browser-column" />
+                <col class="comparison-browser-column" />
+                <col class="comparison-browser-column" />
+                <col class="comparison-browser-column" />
+              </colgroup>
+              <thead>
+                <tr>
+                  <th scope="col" class="comparison-feature-heading">
+                    Feature
+                  </th>
+                  <th
+                    scope="col"
+                    class="comparison-browser-heading is-chromecraft"
+                  >
+                    <span
+                      class="comparison-browser-logo comparison-browser-logo--chromecraft"
+                    >
+                      <img
+                        src="./assets/comparison/chromecraft.svg"
+                        width="64"
+                        height="64"
+                        alt="Chromecraft logo"
+                      />
+                    </span>
+                    <span>Chromecraft</span>
+                    <small>THIS BROWSER</small>
+                  </th>
+                  <th scope="col" class="comparison-browser-heading">
+                    <span class="comparison-browser-logo">
+                      <img
+                        src="./assets/comparison/chrome.svg"
+                        width="64"
+                        height="64"
+                        alt="Google Chrome logo"
+                      />
+                    </span>
+                    <span>Google Chrome</span>
+                  </th>
+                  <th scope="col" class="comparison-browser-heading">
+                    <span class="comparison-browser-logo">
+                      <img
+                        src="./assets/comparison/edge.svg"
+                        width="64"
+                        height="64"
+                        alt="Microsoft Edge logo"
+                      />
+                    </span>
+                    <span>Microsoft Edge</span>
+                  </th>
+                  <th scope="col" class="comparison-browser-heading">
+                    <span class="comparison-browser-logo">
+                      <img
+                        src="./assets/comparison/firefox.svg"
+                        width="64"
+                        height="64"
+                        alt="Mozilla Firefox logo"
+                      />
+                    </span>
+                    <span>Mozilla Firefox</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody id="browser-comparison-rows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
     </main>
 
     <script src="./script.js"></script>

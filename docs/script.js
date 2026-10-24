@@ -1680,6 +1680,162 @@ if (canvas && context) {
   }
 }
 
+const browserComparisonRows = [
+  {
+    feature: "Browse the internet",
+    values: ["included", "included", "included", "included"],
+  },
+  {
+    feature: "Uses Google's Chromium engine",
+    values: ["included", "included", "included", "missing"],
+  },
+  {
+    feature: "uBlock Origin built in",
+    values: ["included", "missing", "missing", "missing"],
+  },
+  {
+    feature: "Fast loading times",
+    values: [
+      { status: "included", label: "Hyperdrive" },
+      { status: "text", label: "Chromium only" },
+      { status: "text", label: "Chromium only" },
+      { status: "text", label: "Mozilla Gecko engine only" },
+    ],
+  },
+  {
+    feature: "Sidebar",
+    values: [
+      "included",
+      "missing",
+      { status: "missing", label: "Deprecated" },
+      { status: "limited", label: "Limited" },
+    ],
+  },
+  {
+    feature: "Local AI agent",
+    values: [
+      "included",
+      { status: "missing", label: "Gemini only" },
+      { status: "missing", label: "Standard Copilot only" },
+      { status: "missing", label: "No integrated AI" },
+    ],
+  },
+  {
+    feature: "Local AI model support",
+    values: ["included", "missing", "missing", "missing"],
+  },
+  {
+    feature: "Organise your tabs with AI",
+    values: ["included", "missing", "missing", "included"],
+  },
+  {
+    feature:
+      "Download your YouTube videos in one click + Smart Downloads + Video Gallery",
+    values: ["included", "missing", "missing", "missing"],
+  },
+  {
+    feature: "Download entire websites to save for offline access",
+    values: ["included", "missing", "missing", "missing"],
+  },
+  {
+    feature: "Backed by a brand you can trust",
+    values: ["included", "missing", "missing", "included"],
+  },
+  {
+    feature: "No ads anywhere in the browser",
+    values: ["included", "missing", "missing", "missing"],
+  },
+  {
+    feature: "Built-in VPN",
+    values: [
+      "missing",
+      "missing",
+      { status: "missing", label: "Limited" },
+      "included",
+    ],
+  },
+];
+
+const browserComparisonBody = document.querySelector(
+  "#browser-comparison-rows",
+);
+const browserComparison = document.querySelector(".browser-comparison");
+
+function comparisonValue(value) {
+  const entry = typeof value === "string" ? { status: value } : value;
+  const wrapper = document.createElement("span");
+  wrapper.className = `comparison-value comparison-value--${entry.status}`;
+
+  if (entry.status !== "text") {
+    const icon = document.createElement("span");
+    icon.className = "material-symbols-rounded";
+    icon.setAttribute("aria-hidden", "true");
+    icon.textContent =
+      entry.status === "included"
+        ? "check_circle"
+        : entry.status === "limited"
+          ? "pending"
+          : "cancel";
+    wrapper.append(icon);
+
+    const accessible = document.createElement("span");
+    accessible.className = "sr-only";
+    accessible.textContent =
+      entry.status === "included"
+        ? "Included"
+        : entry.status === "limited"
+          ? "Limited support"
+          : "Not included";
+    wrapper.append(accessible);
+  }
+
+  if (entry.label) {
+    const label = document.createElement("span");
+    label.className = "comparison-value-label";
+    label.textContent = entry.label;
+    wrapper.append(label);
+  }
+
+  return wrapper;
+}
+
+if (browserComparisonBody) {
+  browserComparisonRows.forEach((row, rowIndex) => {
+    const tableRow = document.createElement("tr");
+    tableRow.style.setProperty(
+      "--comparison-row-delay",
+      `${Math.min(rowIndex * 35, 280)}ms`,
+    );
+    const heading = document.createElement("th");
+    heading.scope = "row";
+    heading.textContent = row.feature;
+    tableRow.append(heading);
+
+    row.values.forEach((value) => {
+      const cell = document.createElement("td");
+      cell.append(comparisonValue(value));
+      tableRow.append(cell);
+    });
+    browserComparisonBody.append(tableRow);
+  });
+}
+
+if (browserComparison) {
+  if (reduceMotion) {
+    browserComparison.classList.add("is-visible");
+  } else {
+    const comparisonObserver = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry.isIntersecting) return;
+        browserComparison.classList.add("is-visible");
+        comparisonObserver.disconnect();
+      },
+      { rootMargin: "80px", threshold: 0.12 },
+    );
+    comparisonObserver.observe(browserComparison);
+  }
+}
+
 window.addEventListener("beforeunload", () => {
   window.cancelAnimationFrame(animationFrame);
   window.cancelAnimationFrame(hyperdriveFrame);
