@@ -238,7 +238,88 @@ const aiTools: AiToolsSnapshot = {
   },
 };
 
+function renderTabStrip(current: BrowserSnapshot): string {
+  return renderToStaticMarkup(
+    <TabStrip
+      snapshot={current}
+      data={data}
+      settingsTabId={null}
+      onMenu={vi.fn()}
+      brandMenuOpen={false}
+      onToggleBrandMenu={vi.fn()}
+      onSetSidebarAttached={vi.fn()}
+      onOpenUpdates={vi.fn()}
+      onOpenToolbarManager={vi.fn()}
+      aiTools={aiTools}
+      onOpenOrganiseTabs={vi.fn()}
+      onHoverCardOpenChange={vi.fn()}
+    />,
+  );
+}
+
 describe("tab organisation renderer", () => {
+  it.each(["docs", "repo", "loose"])(
+    "renders only %s as active while several group members are selected for actions",
+    (activeTabId) => {
+      const current = snapshot();
+      current.tabs.push(tab("loose", "Loose tab", "https://example.com/"));
+      current.activeTabId = activeTabId;
+
+      const markup = renderTabStrip(current);
+      const tabRoots = [
+        ...markup.matchAll(/<div class="([^"]*)" data-tab-id="([^"]*)"[^>]*>/g),
+      ];
+      const activeRoots = tabRoots.filter((match) =>
+        match[1].split(/\s+/).includes("active"),
+      );
+      const selectedRoots = tabRoots.filter((match) =>
+        match[1].split(/\s+/).includes("selected"),
+      );
+
+      expect(tabRoots).toHaveLength(3);
+      expect(activeRoots.map((match) => match[2])).toEqual([activeTabId]);
+      expect(selectedRoots.map((match) => match[2])).toEqual(["docs", "repo"]);
+      expect(markup.match(/role="tab" aria-selected="true"/g)).toHaveLength(1);
+      expect(markup.match(/role="tab" aria-selected="false"/g)).toHaveLength(2);
+      for (const root of selectedRoots.filter(
+        (match) => match[2] !== activeTabId,
+      )) {
+        expect(root[1].split(/\s+/)).not.toContain("active");
+      }
+    },
+  );
+
+  it("keeps collapsed group members inert without concealing the active ungrouped tab", () => {
+    const current = snapshot();
+    current.tabs.push(tab("loose", "Loose tab", "https://example.com/"));
+    current.activeTabId = "loose";
+    current.tabGroups[0].collapsed = true;
+
+    const markup = renderTabStrip(current);
+    const renderedTabs = [
+      ...markup.matchAll(
+        /<div class="([^"]*)" data-tab-id="([^"]*)"([^>]*)>([\s\S]*?)<\/div>/g,
+      ),
+    ];
+
+    expect(renderedTabs).toHaveLength(3);
+    for (const rendered of renderedTabs) {
+      const concealed = rendered[2] !== "loose";
+      expect(rendered[1].split(/\s+/).includes("concealed")).toBe(concealed);
+      if (concealed) {
+        expect(rendered[3]).toContain('draggable="false"');
+        expect(rendered[3]).toContain('aria-hidden="true"');
+        expect(rendered[3]).toContain('inert=""');
+        expect(rendered[4].match(/tabindex="-1"/g)).toHaveLength(2);
+        expect(rendered[4]).toContain('aria-selected="false"');
+      } else {
+        expect(rendered[1].split(/\s+/)).toContain("active");
+        expect(rendered[3]).not.toContain("inert=");
+        expect(rendered[4]).toContain('aria-selected="true"');
+      }
+    }
+  });
+
   it("calculates stable exact insertion slots while moving tabs", () => {
     const tabs = [
       tab("a", "A", "https://a.example/"),

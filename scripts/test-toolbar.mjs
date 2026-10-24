@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
+import { createServer } from "node:http";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
@@ -98,7 +99,9 @@ async function poll(operation, predicate, description, timeoutMs = 10_000) {
     }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  throw new Error(`Timed out waiting for ${description}: ${String(last)}`);
+  throw new Error(
+    `Timed out waiting for ${description}: ${JSON.stringify(last)}`,
+  );
 }
 
 async function stop(child) {
@@ -125,6 +128,7 @@ const child = spawn(
 );
 
 let cdp;
+let zoomServer;
 try {
   const isShellTarget = (entry) =>
     entry.type === "page" &&
@@ -155,6 +159,64 @@ try {
     "the initial browser chrome",
   );
 
+  if (process.argv.includes("--source-styles")) {
+    const sourceStyles = await fs.readFile(
+      path.join(root, "src/renderer/styles.css"),
+      "utf8",
+    );
+    await cdp.evaluate(`(() => {
+      for (const sheet of document.styleSheets) {
+        if ([...sheet.cssRules].some((rule) => rule.selectorText === '.tab.active')) sheet.disabled = true;
+      }
+      const style = document.createElement('style');
+      style.textContent = ${JSON.stringify(sourceStyles)};
+      document.head.append(style);
+    })()`);
+  }
+
+  const screenshots = [];
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 240));
+  const capture = async (name, stripOnly = false) => {
+    await settle();
+    const screenshot = await cdp.send("Page.captureScreenshot", {
+      format: "png",
+      captureBeyondViewport: false,
+      ...(stripOnly
+        ? {
+            clip: {
+              x: 0,
+              y: 0,
+              width: await cdp.evaluate("innerWidth"),
+              height: 110,
+              scale: 1,
+            },
+          }
+        : {}),
+    });
+    const screenshotPath = path.join(profile, `${name}.png`);
+    await fs.writeFile(screenshotPath, Buffer.from(screenshot.data, "base64"));
+    screenshots.push(screenshotPath);
+  };
+  const dismiss = async () => {
+    await cdp.send("Input.dispatchKeyEvent", {
+      type: "keyDown",
+      key: "Escape",
+      code: "Escape",
+      windowsVirtualKeyCode: 27,
+    });
+    await cdp.send("Input.dispatchKeyEvent", {
+      type: "keyUp",
+      key: "Escape",
+      code: "Escape",
+      windowsVirtualKeyCode: 27,
+    });
+    await cdp.evaluate(
+      "document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))",
+    );
+  };
+  await cdp.evaluate("document.documentElement.dataset.theme = 'light'");
+  await settle();
+
   const layout = await cdp.evaluate(`(() => {
     const tab = [...document.querySelectorAll('.tab')].at(-1).getBoundingClientRect();
     const activeTab = document.querySelector('.tab.active');
@@ -173,7 +235,7 @@ try {
         activeTab && toolbar && activeTab.getBoundingClientRect().bottom === toolbar.getBoundingClientRect().top &&
         activeTabStyle?.borderBottomLeftRadius === '0px' &&
         activeTabStyle?.borderBottomRightRadius === '0px' &&
-        activeTabStyle.backgroundColor === toolbarStyle?.backgroundColor,
+        getComputedStyle(activeTab, '::before').backgroundColor === toolbarStyle?.backgroundColor,
       ),
       searchByWindowControls: tabSearch.right > innerWidth - 200,
       dots
@@ -197,6 +259,7 @@ try {
   ) {
     throw new Error(`Status-dot sizing regression: ${JSON.stringify(layout)}`);
   }
+  await capture("01-ungrouped-active-light");
 
   const sidebarBefore = await cdp.evaluate(`(async () => {
     const { sidebarAttached, sidebarOpen } = (await window.chromecraft.getSnapshot()).preferences;
@@ -226,7 +289,7 @@ try {
     throw new Error("Opening the extensions menu changed sidebar state.");
   }
 
-  await cdp.evaluate(`document.body.click()`);
+  await dismiss();
   await cdp.evaluate(
     `document.querySelector('button[aria-label="Find in page"]')?.click()`,
   );
@@ -296,17 +359,28 @@ try {
     (value) => Boolean(value?.text) && value.nativeTitle === false,
     "the Material tab hover card",
   );
+  await cdp.evaluate(
+    "document.querySelector('button[aria-label=\"Close find\"]')?.click()",
+  );
+  await dismiss();
+  await cdp.send("Input.dispatchMouseEvent", {
+    type: "mouseMoved",
+    x: 500,
+    y: 500,
+  });
 
   const groupSetup = await cdp.evaluate(`(async () => {
+    const initialIds = (await window.chromecraft.getSnapshot()).tabs.map((tab) => tab.id);
     const ids = [];
-    for (let index = 0; index < 8; index += 1) ids.push(await window.chromecraft.createTab());
+    for (let index = 0; index < 3; index += 1) ids.push(await window.chromecraft.createTab());
+    await window.chromecraft.closeTabs(initialIds);
     const firstGroupId = await window.chromecraft.createTabGroup(
-      [ids[0], ids[2], ids[4], ids[6]],
-      "Long research group name",
+      [ids[0], ids[2]],
+      "Research",
       "blue",
     );
     const secondGroupId = await window.chromecraft.createTabGroup(
-      [ids[1], ids[3], ids[5]],
+      [ids[1]],
       "Planning",
       "pink",
     );
@@ -318,6 +392,25 @@ try {
     (count) => count === 2,
     "two rendered tab groups",
   );
+  await settle();
+  const geometryDefects = await cdp.evaluate(`(() => {
+    const active = document.querySelector('.tab.active');
+    return {
+      activeCount: document.querySelectorAll('.tab.active').length,
+      inactiveMemberShadows: [...document.querySelectorAll('.tab-group .tab:not(.active)')]
+        .map((tab) => getComputedStyle(tab).boxShadow),
+      partialContour: getComputedStyle(active.querySelector('.tab-target'), '::after').borderTopWidth,
+    };
+  })()`);
+  if (
+    geometryDefects.activeCount !== 1 ||
+    geometryDefects.inactiveMemberShadows.some((shadow) => shadow !== "none") ||
+    geometryDefects.partialContour !== "0px"
+  ) {
+    throw new Error(
+      `Tab strip geometry regression: ${JSON.stringify(geometryDefects)}`,
+    );
+  }
   const groupVisual = await cdp.evaluate(`(() => {
     const groups = [...document.querySelectorAll('.tab-group')];
     const pills = [...document.querySelectorAll('.tab-group-pill')];
@@ -325,7 +418,7 @@ try {
     const firstGroupStyle = getComputedStyle(groups[0]);
     const firstPillStyle = getComputedStyle(pills[0]);
     const activeTab = document.querySelector('.tab-group .tab.active');
-    activeTab?.scrollIntoView({ inline: 'center', block: 'nearest' });
+    activeTab?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
     const activeStyle = activeTab ? getComputedStyle(activeTab) : null;
     const activeShoulder = activeTab ? getComputedStyle(activeTab, '::before') : null;
     const activeContour = activeTab?.querySelector('.tab-target');
@@ -347,7 +440,7 @@ try {
   })()`);
   if (
     groupVisual.groupCount !== 2 ||
-    groupVisual.groupedTabCount !== 7 ||
+    groupVisual.groupedTabCount !== 3 ||
     groupVisual.groupBackground !== "rgba(0, 0, 0, 0)" ||
     groupVisual.pillHeight > 30 ||
     new Set(groupVisual.pillBackgrounds).size !== 2 ||
@@ -357,12 +450,13 @@ try {
     !groupVisual.normalTabShape ||
     groupVisual.activeRadius !== "12px" ||
     groupVisual.activeShoulder === "none" ||
-    groupVisual.activeContourWidth !== "2px"
+    groupVisual.activeContourWidth !== "0px"
   ) {
     throw new Error(
       `Tab-group visual regression: ${JSON.stringify(groupVisual)}`,
     );
   }
+  await capture("02-adjacent-groups-active-and-inactive");
 
   await cdp.evaluate(`(() => {
     const pill = document.querySelector('.tab-group-pill');
@@ -391,7 +485,7 @@ try {
       value.text.includes("Collapse group"),
     "the group context menu",
   );
-  await cdp.evaluate("document.body.click()");
+  await dismiss();
 
   const beforeCollapse = await cdp.evaluate("window.chromecraft.getSnapshot()");
   await cdp.evaluate(
@@ -408,26 +502,301 @@ try {
         visibleMembers: document.querySelectorAll('.tab-group.group-blue .tab:not(.concealed)').length,
         inertMembers: [...document.querySelectorAll('.tab-group.group-blue .tab.concealed')]
           .every((tab) => tab.inert && tab.getAttribute('aria-hidden') === 'true'),
+        memberWidths: [...document.querySelectorAll('.tab-group.group-blue .tab')].map((tab) => tab.getBoundingClientRect().width),
+        unusedWidth: document.querySelector('.tab-group.group-blue').getBoundingClientRect().width - document.querySelector('.tab-group.group-blue .tab-group-pill').getBoundingClientRect().width,
         activeTabId: snapshot.activeTabId,
       };
     })()`),
     (value) =>
-      value?.collapsed && value.visibleMembers === 0 && value.inertMembers,
+      value?.collapsed &&
+      value.visibleMembers === 0 &&
+      value.inertMembers &&
+      value.memberWidths.every((width) => width === 0) &&
+      value.unusedWidth <= 4,
     "the group to collapse without destroying tabs",
   );
   if (collapsed.tabCount !== beforeCollapse.tabs.length) {
     throw new Error("Collapsing a tab group destroyed one or more tabs.");
   }
 
-  const screenshot = await cdp.send("Page.captureScreenshot", {
-    format: "png",
-    captureBeyondViewport: false,
-  });
-  const groupScreenshotPath = path.join(profile, "tab-groups-toolbar.png");
-  await fs.writeFile(
-    groupScreenshotPath,
-    Buffer.from(screenshot.data, "base64"),
+  await capture("03-collapsed-group");
+  await cdp.evaluate(
+    `window.chromecraft.updateTabGroup(${JSON.stringify(groupSetup.firstGroupId)}, { collapsed: false })`,
   );
+  await poll(
+    () =>
+      cdp.evaluate(
+        "[...document.querySelectorAll('.tab-group.group-blue .tab')].every((tab) => !tab.inert && tab.getBoundingClientRect().width >= 100)",
+      ),
+    Boolean,
+    "expanded group member widths",
+  );
+
+  const geometry = () =>
+    cdp.evaluate(`(() => {
+    const tabs = [...document.querySelectorAll('.tab:not(.concealed)')];
+    const active = tabs.find((tab) => tab.classList.contains('active'));
+    const surface = getComputedStyle(active, '::before');
+    const toolbar = document.querySelector('.toolbar');
+    const inactive = tabs.filter((tab) => tab !== active);
+    return {
+      activeCount: document.querySelectorAll('.tab.active').length,
+      ariaSelectedCount: document.querySelectorAll('.tab-target[aria-selected="true"]').length,
+      merged: Math.abs(active.getBoundingClientRect().bottom - toolbar.getBoundingClientRect().top) < 0.1 && surface.backgroundColor === getComputedStyle(toolbar).backgroundColor,
+      maskedSurface: surface.maskImage !== 'none' && surface.left === '-8px' && surface.right === '-8px' && surface.pointerEvents === 'none',
+      noOtherContours: tabs.every((tab) => getComputedStyle(tab, '::after').content === 'none' && getComputedStyle(tab.querySelector('.tab-target'), '::after').content === 'none'),
+      noTabBorders: tabs.every((tab) => {
+        const style = getComputedStyle(tab);
+        return style.boxShadow === 'none' && style.outlineStyle === 'none' && ['borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth'].every((side) => style[side] === '0px');
+      }),
+      inactiveFloating: inactive.every((tab) => tab.getBoundingClientRect().height === 32 && toolbar.getBoundingClientRect().top - tab.getBoundingClientRect().bottom >= 2.9 && getComputedStyle(tab, '::before').content === 'none'),
+      activeAboveAdjacent: inactive.every((tab) => Number(getComputedStyle(active).zIndex) > (Number(getComputedStyle(tab).zIndex) || 0)),
+      dragRegions: getComputedStyle(document.querySelector('.tab-strip')).getPropertyValue('-webkit-app-region') === 'drag' && [...document.querySelectorAll('.tab-strip button, .tab-strip .tab')].every((element) => getComputedStyle(element).getPropertyValue('-webkit-app-region') === 'no-drag'),
+    };
+  })()`);
+  const assertGeometry = async (scenario) => {
+    await settle();
+    const result = await geometry();
+    if (
+      result.activeCount !== 1 ||
+      result.ariaSelectedCount !== 1 ||
+      Object.entries(result).some(
+        ([key, value]) => !key.endsWith("Count") && value !== true,
+      )
+    ) {
+      throw new Error(
+        `${scenario} geometry regression: ${JSON.stringify(result)}`,
+      );
+    }
+    return result;
+  };
+  await assertGeometry("Expanded adjacent groups");
+
+  const pointFor = async (selector) => {
+    await cdp.evaluate(
+      `document.querySelector(${JSON.stringify(selector)}).scrollIntoView({ inline: 'nearest', block: 'nearest', behavior: 'instant' })`,
+    );
+    await settle();
+    return cdp.evaluate(`(() => {
+      const rect = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();
+      return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+    })()`);
+  };
+  const hoveredPoint = await pointFor(
+    ".tab-group .tab:not(.active) .tab-target",
+  );
+  await cdp.send("Input.dispatchMouseEvent", {
+    type: "mouseMoved",
+    ...hoveredPoint,
+  });
+  await assertGeometry("Hovered inactive group member");
+  await capture("04-hovered-inactive-tab");
+  await cdp.send("Input.dispatchMouseEvent", {
+    type: "mousePressed",
+    ...hoveredPoint,
+    button: "left",
+    buttons: 1,
+    clickCount: 1,
+  });
+  await cdp.send("Input.dispatchMouseEvent", {
+    type: "mouseReleased",
+    ...hoveredPoint,
+    button: "left",
+    buttons: 0,
+    clickCount: 1,
+  });
+  await settle();
+  const pointerFocus = await cdp.evaluate(
+    "document.querySelectorAll('.tab-target:focus-visible, .tab-close:focus-visible').length",
+  );
+  if (pointerFocus !== 0)
+    throw new Error(
+      `Pointer selection unexpectedly produced ${pointerFocus} keyboard focus rings.`,
+    );
+  await cdp.send("Input.dispatchMouseEvent", {
+    type: "mouseMoved",
+    x: 500,
+    y: 500,
+  });
+  await cdp.send("Input.dispatchKeyEvent", {
+    type: "keyDown",
+    key: "ArrowRight",
+    code: "ArrowRight",
+    windowsVirtualKeyCode: 39,
+  });
+  await cdp.send("Input.dispatchKeyEvent", {
+    type: "keyUp",
+    key: "ArrowRight",
+    code: "ArrowRight",
+    windowsVirtualKeyCode: 39,
+  });
+  const keyboardFocus = await poll(
+    () =>
+      cdp.evaluate(`(() => {
+    const targets = [...document.querySelectorAll('.tab-target:focus-visible')];
+    return { count: targets.length, inset: targets.length === 1 && getComputedStyle(targets[0]).outlineOffset === '-4px', visible: targets.length === 1 && getComputedStyle(targets[0]).outlineStyle !== 'none' };
+  })()`),
+    (value) => value.count === 1 && value.inset && value.visible,
+    "a single inset keyboard-only focus ring",
+  );
+  await assertGeometry("Keyboard focused tab");
+  await capture("05-keyboard-focused-tab");
+  await cdp.evaluate(
+    `window.chromecraft.selectTabs(${JSON.stringify([groupSetup.ids[0], groupSetup.ids[2]])}, 'replace')`,
+  );
+  await assertGeometry("Multiple selected group members");
+  const multiSelection = await cdp.evaluate(
+    "document.querySelectorAll('.tab.selected').length",
+  );
+  if (multiSelection !== 2)
+    throw new Error(`Expected two selected tabs, found ${multiSelection}.`);
+  await capture("06-multi-selection-single-active");
+  await cdp.evaluate("document.activeElement?.blur()");
+  await cdp.send("Input.dispatchMouseEvent", {
+    type: "mouseMoved",
+    x: 500,
+    y: 500,
+  });
+  await cdp.evaluate(
+    `window.chromecraft.activateTab(${JSON.stringify(groupSetup.ids[1])})`,
+  );
+
+  const visualMatrix = [];
+  let nativeWindow;
+  let nativeResizeUnavailable;
+  try {
+    nativeWindow = await cdp.send("Browser.getWindowForTarget", {
+      targetId: target.id,
+    });
+  } catch (error) {
+    nativeResizeUnavailable = error.message;
+  }
+  // Device scale emulation exercises fractional rasterisation without changing
+  // the user's real Windows display configuration. Explicit theme selectors
+  // exercise both existing CSS palettes; there is no dark-mode preference API.
+  for (const theme of ["light", "dark"]) {
+    await cdp.evaluate(
+      `document.documentElement.dataset.theme = ${JSON.stringify(theme)}`,
+    );
+    for (const deviceScaleFactor of [1, 1.25, 1.5]) {
+      for (const width of [1280, 800, 760]) {
+        if (nativeWindow) {
+          await cdp.send("Browser.setWindowBounds", {
+            windowId: nativeWindow.windowId,
+            bounds: { width, height: 820, windowState: "normal" },
+          });
+          await settle();
+        }
+        await cdp.send("Emulation.setDeviceMetricsOverride", {
+          width,
+          height: 820,
+          deviceScaleFactor,
+          mobile: false,
+        });
+        await pointFor(".tab.active .tab-target");
+        if (width === 1280)
+          await cdp.evaluate(
+            "document.querySelector('.tab-scroller').scrollLeft = 0",
+          );
+        const result = await assertGeometry(
+          `${theme}, ${width}px, ${deviceScaleFactor} scale`,
+        );
+        visualMatrix.push({
+          theme,
+          width,
+          simulatedDeviceScaleFactor: deviceScaleFactor,
+          nativeWindowResized: Boolean(nativeWindow),
+          ...result,
+        });
+        if (nativeWindow) {
+          const searchInside = await cdp.evaluate(
+            "document.querySelector('.tab-search-button').getBoundingClientRect().right <= innerWidth",
+          );
+          if (!searchInside)
+            throw new Error(
+              `Search Tabs escaped the ${width}px resized viewport.`,
+            );
+        }
+        await capture(`matrix-${theme}-${width}-${deviceScaleFactor}`);
+        if (width === 1280 && deviceScaleFactor === 1)
+          await capture(`tab-strip-${theme}-1280`, true);
+      }
+    }
+  }
+  await cdp.send("Emulation.clearDeviceMetricsOverride");
+  if (nativeWindow)
+    await cdp.send("Browser.setWindowBounds", {
+      windowId: nativeWindow.windowId,
+      bounds: { width: 1280, height: 820, windowState: "normal" },
+    });
+  await cdp.evaluate("document.documentElement.dataset.theme = 'light'");
+  await settle();
+  await cdp.evaluate(`(() => {
+    const source = document.querySelector('.tab-group.group-blue .tab-group-pill');
+    const destination = document.querySelector('.tab-group.group-pink');
+    const dataTransfer = new DataTransfer();
+    const bounds = destination.getBoundingClientRect();
+    const eventOptions = { bubbles: true, cancelable: true, dataTransfer, clientX: bounds.right - 2, clientY: bounds.top + bounds.height / 2 };
+    source.dispatchEvent(new DragEvent('dragstart', eventOptions));
+    destination.dispatchEvent(new DragEvent('dragenter', eventOptions));
+    destination.dispatchEvent(new DragEvent('dragover', eventOptions));
+    destination.dispatchEvent(new DragEvent('drop', eventOptions));
+    source.dispatchEvent(new DragEvent('dragend', eventOptions));
+  })()`);
+  const groupDrag = await poll(
+    () =>
+      cdp.evaluate(`(async () => {
+    const snapshot = await window.chromecraft.getSnapshot();
+    return snapshot.tabs.map((tab) => ({ id: tab.id, groupId: tab.groupId }));
+  })()`),
+    (tabs) =>
+      tabs.length === 3 &&
+      tabs[0].groupId === groupSetup.secondGroupId &&
+      tabs[1].id === groupSetup.ids[0] &&
+      tabs[2].id === groupSetup.ids[2] &&
+      tabs.slice(1).every((tab) => tab.groupId === groupSetup.firstGroupId),
+    "HTML group drag to reorder the intact group",
+  );
+  await assertGeometry("After group drag");
+  const zoomTab = await cdp.evaluate(
+    "(async () => (await window.chromecraft.getSnapshot()).activeTabId)()",
+  );
+  zoomServer = createServer((_request, response) => {
+    response.writeHead(200, { "Content-Type": "text/html" });
+    response.end(
+      "<!doctype html><title>Local zoom fixture</title><p>Tab geometry zoom fixture</p>",
+    );
+  });
+  await new Promise((resolve) => zoomServer.listen(0, "127.0.0.1", resolve));
+  const zoomUrl = `http://127.0.0.1:${zoomServer.address().port}/zoom`;
+  await cdp.evaluate(
+    `window.chromecraft.navigate(${JSON.stringify(zoomTab)}, ${JSON.stringify(zoomUrl)})`,
+  );
+  await poll(
+    () =>
+      cdp.evaluate(
+        `(async () => (await window.chromecraft.getSnapshot()).tabs.find((tab) => tab.id === ${JSON.stringify(zoomTab)})?.title)()`,
+      ),
+    (title) => title === "Local zoom fixture",
+    "the local web-page zoom fixture",
+  );
+  await settle();
+  const beforeZoom = await cdp.evaluate(
+    "JSON.stringify([...document.querySelectorAll('.tab')].map((tab) => { const r = tab.getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; }))",
+  );
+  for (const factor of [1.25, 1.5, 1]) {
+    await cdp.evaluate(
+      `window.chromecraft.setZoom(${JSON.stringify(zoomTab)}, ${factor})`,
+    );
+    await assertGeometry(`Web page zoom ${factor}`);
+    const afterZoom = await cdp.evaluate(
+      "JSON.stringify([...document.querySelectorAll('.tab')].map((tab) => { const r = tab.getBoundingClientRect(); return [r.x, r.y, r.width, r.height]; }))",
+    );
+    if (beforeZoom !== afterZoom)
+      throw new Error(
+        `Page zoom ${factor} changed browser tab-strip geometry.`,
+      );
+  }
 
   console.log(
     JSON.stringify(
@@ -441,7 +810,15 @@ try {
         groupVisual,
         groupMenu,
         collapsed,
-        groupScreenshotPath,
+        geometryDefects,
+        keyboardFocus,
+        pointerFocus,
+        multiSelection,
+        groupDrag,
+        visualMatrix,
+        nativeResizeUnavailable,
+        sourceStyleOverride: process.argv.includes("--source-styles"),
+        screenshots,
       },
       null,
       2,
@@ -450,4 +827,8 @@ try {
 } finally {
   cdp?.close();
   await stop(child);
+  zoomServer?.closeAllConnections();
+  await new Promise((resolve) =>
+    zoomServer ? zoomServer.close(resolve) : resolve(),
+  );
 }
