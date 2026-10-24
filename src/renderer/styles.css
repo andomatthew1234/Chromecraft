@@ -505,6 +505,9 @@ input::placeholder {
 }
 
 .brand {
+  /* Sit just above the toolbar seam rather than visually dropping into it. */
+  position: relative;
+  top: -2px;
   width: 34px;
   height: 34px;
   flex: 0 0 34px;

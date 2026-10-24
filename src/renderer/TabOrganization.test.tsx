@@ -325,6 +325,9 @@ describe("tab organisation renderer", () => {
     expect(stylesheet).toMatch(
       /\.brand\.menu-open\s*\{[\s\S]*?border-radius:\s*var\(--shape-md\);[\s\S]*?box-shadow:\s*inset/,
     );
+    expect(stylesheet).toMatch(
+      /\.brand\s*\{[\s\S]*?position:\s*relative;[\s\S]*?top:\s*-2px;/,
+    );
   });
 
   it("shows open tabs, saved groups, recently closed tabs and closed windows", () => {
