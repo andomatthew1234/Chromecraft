@@ -2696,11 +2696,12 @@ function Toolbar({
                       </button>
                       <button
                         type="button"
-                        className="extensions-menu-pin"
+                        className={`extensions-menu-pin ${extension.toolbarPinned ? "pinned" : ""}`}
+                        aria-pressed={extension.toolbarPinned}
                         aria-label={`${extension.toolbarPinned ? "Unpin" : "Pin"} ${extension.name} ${extension.toolbarPinned ? "from" : "to"} toolbar`}
                         title={
                           extension.toolbarPinned
-                            ? "Unpin from toolbar"
+                            ? "Pinned to toolbar — click to unpin"
                             : "Pin to toolbar"
                         }
                         onClick={(event) => {

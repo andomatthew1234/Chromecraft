@@ -2100,7 +2100,7 @@ input::placeholder {
   width: 100%;
   min-height: 58px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 38px;
+  grid-template-columns: minmax(0, 1fr) 48px;
   align-items: center;
   border-radius: 16px;
   color: var(--md-on-surface);
@@ -2136,20 +2136,65 @@ input::placeholder {
 }
 
 .extensions-menu-pin {
-  width: 32px;
-  height: 32px;
+  width: 40px;
+  height: 40px;
   display: grid;
   margin-right: var(--space-1);
   padding: 0;
   place-items: center;
-  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--md-outline) 28%, transparent);
+  border-radius: 12px;
   color: var(--md-on-surface-variant);
-  background: transparent;
+  background: var(--md-surface-container-highest);
+  transition:
+    background-color var(--motion-standard),
+    border-color var(--motion-standard),
+    box-shadow var(--motion-standard),
+    color var(--motion-standard),
+    transform var(--motion-standard);
 }
 
-.extensions-menu-pin:hover {
+.extensions-menu-pin .material-icon {
+  width: 24px;
+  height: 24px;
+  flex-basis: 24px;
+  font-size: 24px;
+  font-variation-settings:
+    "FILL" 0,
+    "wght" 550,
+    "GRAD" 0,
+    "opsz" 24;
+}
+
+.extensions-menu-pin.pinned {
+  border-color: transparent;
+  color: var(--md-on-primary-container);
+  background: var(--md-primary-container);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--md-primary) 16%, transparent),
+    0 5px 12px color-mix(in srgb, var(--md-primary) 24%, transparent);
+}
+
+.extensions-menu-pin.pinned .material-icon {
+  font-variation-settings:
+    "FILL" 1,
+    "wght" 650,
+    "GRAD" 0,
+    "opsz" 24;
+}
+
+.extensions-menu-pin:not(.pinned):hover {
   color: var(--md-on-surface);
   background: var(--md-focus);
+}
+
+.extensions-menu-pin.pinned:hover {
+  color: var(--md-on-primary-container);
+  background: color-mix(
+    in srgb,
+    var(--md-primary-container),
+    var(--md-primary) 10%
+  );
 }
 
 .extensions-menu-pin:active {
