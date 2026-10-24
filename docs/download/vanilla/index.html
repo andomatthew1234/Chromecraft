@@ -14,9 +14,20 @@
       href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="../download.css" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0..1,0"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="../download.css?v=20261024-vanilla-studio" />
   </head>
-  <body class="platform-page vanilla" data-edition="Chromecraft Vanilla">
+  <body
+    class="platform-page vanilla"
+    data-edition="Chromecraft Vanilla"
+    data-vanilla-theme="coral"
+  >
+    <div class="vanilla-atmosphere" aria-hidden="true">
+      <span></span><span></span><span></span>
+    </div>
     <header class="download-header">
       <a class="download-wordmark" href="../../index.html"
         >Chromecraft <span>Vanilla</span></a
@@ -24,23 +35,88 @@
       <a class="back-link" href="../index.html">All editions</a>
     </header>
 
-    <main class="platform-main">
-      <div class="platform-intro">
-        <p class="download-kicker">Soft, expressive, familiar</p>
-        <h1>Chromecraft Vanilla</h1>
-        <p>
-          The best Chromecraft experience for all. Choose your platform to see
-          availability.
-        </p>
+    <main class="platform-main vanilla-main">
+      <section class="vanilla-hero" aria-labelledby="vanilla-title">
+        <div class="platform-intro vanilla-intro">
+          <p class="download-kicker">Soft, expressive, familiar</p>
+          <h1 id="vanilla-title">Chromecraft <span>Vanilla</span></h1>
+          <p>
+            The best Chromecraft experience for all. Choose your platform to see
+            availability.
+          </p>
+        </div>
+
+        <div
+          class="vanilla-theme-studio"
+          aria-label="Interactive Material theme preview"
+        >
+          <div class="vanilla-studio-toolbar" aria-hidden="true">
+            <span>C</span><i></i><b>tune</b>
+          </div>
+          <div class="vanilla-studio-content">
+            <p>YOUR BROWSER, YOUR COLOURS</p>
+            <strong>Make it feel like yours.</strong>
+            <div
+              class="vanilla-palette"
+              role="group"
+              aria-label="Preview a colour theme"
+            >
+              <button
+                class="is-selected"
+                type="button"
+                data-vanilla-theme="coral"
+                aria-label="Coral theme"
+                aria-pressed="true"
+              ></button>
+              <button
+                type="button"
+                data-vanilla-theme="violet"
+                aria-label="Violet theme"
+                aria-pressed="false"
+              ></button>
+              <button
+                type="button"
+                data-vanilla-theme="teal"
+                aria-label="Teal theme"
+                aria-pressed="false"
+              ></button>
+              <button
+                type="button"
+                data-vanilla-theme="sunny"
+                aria-label="Sunny theme"
+                aria-pressed="false"
+              ></button>
+            </div>
+            <div class="vanilla-studio-slider" aria-hidden="true">
+              <span>Colour intensity</span><b>68%</b><i></i>
+            </div>
+            <div class="vanilla-studio-setting" aria-hidden="true">
+              <span
+                ><b>Dynamic colour</b><small>Adapt every surface</small></span
+              >
+              <i></i>
+            </div>
+          </div>
+          <span class="vanilla-studio-fab" aria-hidden="true">edit</span>
+        </div>
+      </section>
+
+      <div class="vanilla-feature-strip" aria-label="Vanilla highlights">
+        <span><i>palette</i>Dynamic colour</span>
+        <span><i>gesture</i>Expressive motion</span>
+        <span><i>tune</i>Endless tweaks</span>
+        <span><i>speed</i>Optimised for everyone</span>
       </div>
 
-      <div class="platform-grid">
+      <div class="platform-grid vanilla-platform-grid">
         <button
           class="platform-option"
           type="button"
           data-platform="macOS"
           aria-pressed="false"
         >
+          <span class="vanilla-card-trace" aria-hidden="true"></span>
+          <span class="vanilla-card-number" aria-hidden="true">01</span>
           <span class="platform-logo"
             ><img src="https://cdn.simpleicons.org/apple/000000" alt="Apple"
           /></span>
@@ -54,6 +130,8 @@
           data-platform="Windows"
           aria-pressed="false"
         >
+          <span class="vanilla-card-trace" aria-hidden="true"></span>
+          <span class="vanilla-card-number" aria-hidden="true">02</span>
           <span class="platform-logo" aria-hidden="true">
             <span class="windows-mark">
               <span></span><span></span><span></span><span></span>
@@ -69,6 +147,8 @@
           data-platform="Linux"
           aria-pressed="false"
         >
+          <span class="vanilla-card-trace" aria-hidden="true"></span>
+          <span class="vanilla-card-number" aria-hidden="true">03</span>
           <span class="platform-logo"
             ><img src="https://cdn.simpleicons.org/linux/000000" alt="Linux"
           /></span>
@@ -78,11 +158,23 @@
         </button>
       </div>
 
+      <div class="vanilla-selection-panel" aria-live="polite">
+        <span class="vanilla-selection-icon" aria-hidden="true">devices</span>
+        <span>
+          <small>YOUR VANILLA BUILD</small>
+          <strong data-vanilla-selection>Choose a platform</strong>
+          <p data-vanilla-selection-copy>
+            Pick the device that feels like home.
+          </p>
+        </span>
+        <b data-vanilla-selection-status>Ready when you are</b>
+      </div>
+
       <p class="coming-notice">
         All versions for every operating system are coming soon.
       </p>
       <p class="download-status" role="status" aria-live="polite"></p>
     </main>
-    <script src="../download.js"></script>
+    <script src="../download.js?v=20261024-vanilla-studio"></script>
   </body>
 </html>
