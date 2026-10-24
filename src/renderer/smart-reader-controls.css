@@ -1,39 +1,15 @@
 .reader-toolbar-cluster {
-  display: flex;
+  display: inline-flex;
   flex: 0 0 auto;
+  min-width: 0;
+  min-height: 0;
   align-items: center;
   gap: 4px;
-}
-
-.reader-button {
-  width: auto;
-  min-width: 40px;
-  padding: 0 13px;
-  gap: 7px;
-  border-radius: var(--shape-full);
-  color: var(--md-on-surface-variant);
-  transition:
-    color var(--motion-standard),
-    background-color var(--motion-standard),
-    transform var(--motion-standard);
-}
-
-.reader-button:hover {
-  color: var(--md-on-surface);
-  background: var(--md-hover);
-}
-
-.reader-button:active {
-  transform: scale(0.96);
 }
 
 .reader-button[data-active="true"] {
   color: var(--md-on-primary-container);
   background: var(--md-primary-container);
-}
-
-.reader-button-label {
-  font: var(--type-label-large);
 }
 
 .reader-appearance-button[aria-expanded="true"] {
@@ -194,18 +170,7 @@
   }
 }
 
-@media (max-width: 1100px) {
-  .reader-button-label {
-    display: none;
-  }
-  .reader-button {
-    width: 40px;
-    padding: 0;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .reader-button,
   .reader-appearance-popover {
     animation: none;
     transition: none;

@@ -242,11 +242,10 @@ export function SmartReaderControls({
           tab.reader.active ? "Exit Smart Reader" : "Open Smart Reader"
         }
         aria-pressed={tab.reader.active}
-        title={tab.reader.active ? "Exit Smart Reader" : "Open Smart Reader"}
+        title="Smart Reader"
         onClick={toggle}
       >
         <MaterialIcon name="chrome_reader_mode" />
-        <span className="reader-button-label">Reader</span>
       </button>
       {tab.reader.active && (
         <button

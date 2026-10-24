@@ -232,6 +232,37 @@ try {
       `Reader button placement regression: ${JSON.stringify(placement)}`,
     );
   }
+  const toolbarLayouts = [];
+  for (const { width, height, deviceScaleFactor, buttonWidth } of [
+    { width: 1366, height: 900, deviceScaleFactor: 1, buttonWidth: 40 },
+    { width: 640, height: 700, deviceScaleFactor: 1.5, buttonWidth: 38 },
+  ]) {
+    await shell.send("Emulation.setDeviceMetricsOverride", {
+      width,
+      height,
+      deviceScaleFactor,
+      mobile: false,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const layout = await shell.evaluate(
+      `(()=>{const toolbar=document.querySelector('.toolbar');const omnibox=document.querySelector('.omnibox-form');const button=document.querySelector('[data-smart-reader-button]');const cluster=document.querySelector('.reader-toolbar-cluster');if(!toolbar||!omnibox||!button||!cluster)return null;const t=toolbar.getBoundingClientRect(),o=omnibox.getBoundingClientRect(),b=button.getBoundingClientRect(),c=cluster.getBoundingClientRect();return {width:innerWidth,toolbarHeight:t.height,toolbarScrollHeight:toolbar.scrollHeight,buttonWidth:b.width,buttonHeight:b.height,buttonInside:b.top>=t.top&&b.bottom<=t.bottom,centerAligned:Math.abs((b.top+b.height/2)-(o.top+o.height/2))<1,afterOmnibox:b.left>=o.right&&b.left-o.right<=16,clusterHeight:c.height,hasLabel:Boolean(document.querySelector('.reader-button-label'))}})()`,
+    );
+    if (
+      !layout ||
+      !layout.buttonInside ||
+      !layout.centerAligned ||
+      !layout.afterOmnibox ||
+      layout.toolbarScrollHeight > Math.ceil(layout.toolbarHeight) ||
+      Math.abs(layout.buttonWidth - buttonWidth) > 0.1 ||
+      layout.hasLabel
+    ) {
+      throw new Error(
+        `Reader toolbar layout regression: ${JSON.stringify(layout)}`,
+      );
+    }
+    toolbarLayouts.push(layout);
+  }
+  await shell.send("Emulation.clearDeviceMetricsOverride");
   await shell.evaluate(
     "document.querySelector('[data-smart-reader-button]').click()",
   );

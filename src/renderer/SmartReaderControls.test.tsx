@@ -52,6 +52,7 @@ describe("SmartReaderControls", () => {
     );
     expect(markup).toContain("Open Smart Reader");
     expect(markup).toContain("data-smart-reader-button");
+    expect(markup).not.toContain("reader-button-label");
     expect(markup).not.toContain("Reading appearance");
   });
 
