@@ -326,7 +326,7 @@ describe("tab organisation renderer", () => {
       /\.brand\.menu-open\s*\{[\s\S]*?border-radius:\s*var\(--shape-md\);[\s\S]*?box-shadow:\s*inset/,
     );
     expect(stylesheet).toMatch(
-      /\.brand\s*\{[\s\S]*?position:\s*relative;[\s\S]*?top:\s*-2px;/,
+      /\.brand\s*\{[\s\S]*?position:\s*relative;[\s\S]*?top:\s*-6px;[\s\S]*?width:\s*32px;[\s\S]*?height:\s*32px;/,
     );
     expect(stylesheet).toMatch(
       /\.extensions-menu-pin\s*\{[\s\S]*?width:\s*32px;[\s\S]*?height:\s*32px;[\s\S]*?justify-self:\s*end;/,

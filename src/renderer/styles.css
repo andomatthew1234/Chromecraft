@@ -507,10 +507,10 @@ input::placeholder {
 .brand {
   /* Sit just above the toolbar seam rather than visually dropping into it. */
   position: relative;
-  top: -2px;
-  width: 34px;
-  height: 34px;
-  flex: 0 0 34px;
+  top: -6px;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
   border-radius: var(--shape-md);
   transition:
     border-radius var(--motion-standard),
@@ -538,12 +538,12 @@ input::placeholder {
 .brand-menu-anchor {
   position: relative;
   z-index: 20;
-  flex: 0 0 34px;
+  flex: 0 0 32px;
 }
 
 .brand-menu {
   position: absolute;
-  top: 42px;
+  top: 40px;
   left: 0;
   width: min(360px, calc(100vw - 16px));
   max-height: calc(100vh - 52px);
