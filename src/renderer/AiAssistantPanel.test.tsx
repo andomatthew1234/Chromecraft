@@ -103,8 +103,44 @@ describe("AiAssistantPanel", () => {
     expect(markup).toContain("Organise my tabs");
     expect(markup).toContain('id="sidebar-panel-title"');
     expect(markup).toContain('class="ai-composer-toolbar"');
+    expect(markup).not.toContain("Allow this message");
     expect(markup.match(/class="ai-character /g)).toHaveLength(1);
     expect(markup.match(/class="ai-static-avatar/g)).toHaveLength(1);
     expect(markup).not.toContain("Ready for tab tools");
+  });
+
+  it("discloses Gemini data sharing without a per-message consent checkbox", () => {
+    const markup = renderToStaticMarkup(
+      <AiAssistantPanel
+        activeTab={activeTab}
+        aiTools={{
+          ...aiTools,
+          provider: "gemini",
+          gemini: {
+            ...aiTools.gemini,
+            connection: "connected",
+            apiKeyConfigured: true,
+            models: [
+              {
+                name: "gemini-2.5-flash-lite",
+                displayName: "Gemini 2.5 Flash Lite",
+                size: null,
+                modifiedAt: null,
+                family: "gemini",
+                parameterSize: null,
+              },
+            ],
+            selectedModel: "gemini-2.5-flash-lite",
+          },
+        }}
+        close={vi.fn()}
+        onOrganiseTabs={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    );
+
+    expect(markup).toContain("Ready · Gemini");
+    expect(markup).not.toContain('type="checkbox"');
+    expect(markup).not.toContain("Allow this message");
   });
 });

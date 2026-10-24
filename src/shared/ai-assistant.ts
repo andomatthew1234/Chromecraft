@@ -96,7 +96,6 @@ export interface AssistantMessageRequest {
   model: string;
   context: AssistantAttachment[];
   history: AssistantConversationTurn[];
-  cloudContextConsent: boolean;
 }
 import type { AiProviderId } from "./ai-tools";
 

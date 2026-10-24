@@ -1009,10 +1009,6 @@ function requireAssistantMessageRequest(
     model: requireString(request.model, "model", 256),
     context,
     history,
-    cloudContextConsent: requireBoolean(
-      request.cloudContextConsent,
-      "cloudContextConsent",
-    ),
   };
 }
 

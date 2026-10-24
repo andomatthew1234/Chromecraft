@@ -216,9 +216,6 @@ function pageContextError(error: unknown): string {
 
 function responseError(error: unknown, provider: AiProviderId): string {
   const detail = error instanceof Error ? error.message.toLowerCase() : "";
-  if (/confirm.*(?:context|history)|remove them/u.test(detail)) {
-    return "Confirm Gemini sharing for this message in Scout Power, or start a new conversation without page context.";
-  }
   if (/quota|usage|rate/u.test(detail)) {
     return "Gemini usage is temporarily limited. Check quota or try again later.";
   }
@@ -267,7 +264,6 @@ export function AiAssistantPanel({
   const [pendingModel, setPendingModel] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
-  const [geminiContextConsent, setGeminiContextConsent] = useState(false);
 
   const panelRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -280,6 +276,7 @@ export function AiAssistantPanel({
   const attachmentAnchorRef = useRef<HTMLElement>(null);
   const powerButtonRef = useRef<HTMLButtonElement>(null);
   const powerChangeRef = useRef(0);
+  const automaticallyRefreshedProviderRef = useRef<AiProviderId | null>(null);
 
   const [providerStatusLabel, providerStatusKind] = statusFor(aiTools);
   const statusLabel = sending ? "Thinking" : providerStatusLabel;
@@ -332,10 +329,6 @@ export function AiAssistantPanel({
   useEffect(() => {
     void refreshPage();
   }, [refreshPage, activeTab.url]);
-
-  useEffect(() => {
-    setGeminiContextConsent(false);
-  }, [activeTab.id]);
 
   useEffect(() => {
     document.documentElement.dataset.scoutReducedMotion =
@@ -452,6 +445,51 @@ export function AiAssistantPanel({
     setOpenPopover((current) => (current === popover ? null : popover));
   };
 
+  const refreshPowerModels = async (provider: AiProviderId) => {
+    if (
+      powerBusy ||
+      sending ||
+      (provider === "gemini" && !aiTools.gemini.apiKeyConfigured)
+    ) {
+      return;
+    }
+    setPowerBusy(true);
+    setPowerError(null);
+    try {
+      const next = await window.chromecraft.refreshAiModels(provider);
+      const updated = activeProviderSnapshot(next, provider);
+      if (updated.error) setPowerError(updated.error);
+    } catch {
+      setPowerError(
+        provider === "ollama"
+          ? "Scout could not reach Ollama. Start Ollama and try again."
+          : "Scout could not connect to Gemini. Check the API key in Settings.",
+      );
+    } finally {
+      setPowerBusy(false);
+    }
+  };
+
+  const togglePowerPopover = () => {
+    const opening = openPopover !== "power";
+    setOnlyPopover("power");
+    if (opening) void refreshPowerModels(aiTools.provider);
+  };
+
+  useEffect(() => {
+    const provider = aiTools.provider;
+    if (
+      automaticallyRefreshedProviderRef.current === provider ||
+      powerBusy ||
+      sending ||
+      (provider === "gemini" && !aiTools.gemini.apiKeyConfigured)
+    ) {
+      return;
+    }
+    automaticallyRefreshedProviderRef.current = provider;
+    void refreshPowerModels(provider);
+  }, [aiTools.gemini.apiKeyConfigured, aiTools.provider]);
+
   const startCapture = async (kind: "screenshot" | "element") => {
     setOpenPopover(null);
     setStatusNote(null);
@@ -474,12 +512,8 @@ export function AiAssistantPanel({
     setPendingModel(null);
     try {
       let next = await window.chromecraft.setAiProvider(provider);
-      const state = activeProviderSnapshot(next, provider);
       const canRefresh = provider === "ollama" || next.gemini.apiKeyConfigured;
-      if (
-        canRefresh &&
-        (state.connection === "unknown" || state.models.length === 0)
-      ) {
+      if (canRefresh) {
         next = await window.chromecraft.refreshAiModels(provider);
       }
       const updated = activeProviderSnapshot(next, provider);
@@ -526,7 +560,6 @@ export function AiAssistantPanel({
     setAttachments([]);
     setChoices(readDefaults());
     setStatusNote(null);
-    setGeminiContextConsent(false);
     setOpenPopover(null);
     nearBottomRef.current = true;
     requestAnimationFrame(() => textareaRef.current?.focus());
@@ -540,6 +573,7 @@ export function AiAssistantPanel({
     if (!model) {
       setStatusNote("Choose an available model in Scout Power first.");
       setOpenPopover("power");
+      void refreshPowerModels(aiTools.provider);
       return;
     }
     const request: AssistantMessageRequest = {
@@ -554,7 +588,6 @@ export function AiAssistantPanel({
         .filter((message) => message.status === "complete")
         .map((message) => ({ role: message.role, text: message.text }))
         .slice(-12),
-      cloudContextConsent: geminiContextConsent,
     };
     const message: ConversationMessage = {
       id: request.messageId,
@@ -599,7 +632,6 @@ export function AiAssistantPanel({
     setStatusNote(null);
     setSending(true);
     setActiveMessageId(request.messageId);
-    setGeminiContextConsent(false);
     void window.chromecraft
       .sendAssistantMessage(request)
       .then((response) => {
@@ -1065,7 +1097,7 @@ export function AiAssistantPanel({
               ref={powerButtonRef}
               type="button"
               className="ai-power-button"
-              onClick={() => setOnlyPopover("power")}
+              onClick={togglePowerPopover}
               aria-label="Scout Power"
               title="Scout Power"
               aria-haspopup="dialog"
@@ -1291,8 +1323,8 @@ export function AiAssistantPanel({
                   </strong>
                   <p>
                     {aiTools.provider === "ollama"
-                      ? "Start Ollama and install a text model, then refresh."
-                      : "Add a Gemini API key in Scout settings, then refresh."}
+                      ? "Start Ollama and install a text model. Scout checks automatically."
+                      : "Add a Gemini API key in Scout settings. Scout checks automatically."}
                   </p>
                 </div>
               )}
@@ -1300,22 +1332,9 @@ export function AiAssistantPanel({
                 <div className="ai-power-cloud-note">
                   <p>
                     {icon("cloud")}
-                    Gemini sends prompts to Google and may use paid quota.
+                    Gemini sends prompts, conversation history, and selected
+                    page context to Google and may use paid quota.
                   </p>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={geminiContextConsent}
-                      onChange={(event) => {
-                        const enabled = event.target.checked;
-                        setGeminiContextConsent(enabled);
-                      }}
-                    />
-                    <span>
-                      Allow this message's conversation history and selected
-                      page context to be sent to Gemini
-                    </span>
-                  </label>
                 </div>
               )}
               {powerError && (
@@ -1332,13 +1351,7 @@ export function AiAssistantPanel({
                   (aiTools.provider === "gemini" &&
                     !aiTools.gemini.apiKeyConfigured)
                 }
-                onClick={() =>
-                  void window.chromecraft
-                    .refreshAiModels(aiTools.provider)
-                    .catch(() =>
-                      setPowerError("Scout could not refresh this model list."),
-                    )
-                }
+                onClick={() => void refreshPowerModels(aiTools.provider)}
               >
                 {icon("refresh")} Refresh models
               </button>

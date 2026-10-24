@@ -143,7 +143,6 @@ function assistantRequest(
       },
     ],
     history: [{ role: "user", text: "Earlier question" }],
-    cloudContextConsent: false,
     ...overrides,
   };
 }
@@ -407,34 +406,6 @@ describe("AiToolsController", () => {
       "Earlier question",
     );
     expect(controller.snapshot.run.stage).toBe("idle");
-  });
-
-  it("requires explicit page-context consent for Gemini", async () => {
-    const controller = new AiToolsController({
-      stateFilePath: await statePath(),
-      ollama: { listModels: vi.fn() } as unknown as OllamaClient,
-      credentials: credentials("secret-key"),
-      organiseTabs: organiser(),
-    });
-
-    await expect(
-      controller.sendAssistantMessage(
-        assistantRequest({
-          provider: "gemini",
-          model: "gemini-2.5-flash-lite",
-        }),
-      ),
-    ).rejects.toThrow(/Confirm that .*conversation history/u);
-
-    await expect(
-      controller.sendAssistantMessage(
-        assistantRequest({
-          provider: "gemini",
-          model: "gemini-2.5-flash-lite",
-          context: [],
-        }),
-      ),
-    ).rejects.toThrow(/Confirm that .*conversation history/u);
   });
 
   it("cancels only the matching Scout message", async () => {

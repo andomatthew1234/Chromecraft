@@ -532,16 +532,6 @@ export class AiToolsController {
   ): Promise<AssistantMessageResponse> {
     this.assertAvailable();
     this.assertNotBusy();
-    if (
-      request.provider === "gemini" &&
-      (request.context.length > 0 || request.history.length > 0)
-    ) {
-      if (!request.cloudContextConsent) {
-        throw new Error(
-          "Confirm that selected page context and conversation history may be sent to Gemini, or remove them.",
-        );
-      }
-    }
     const state =
       request.provider === "ollama" ? this.ollamaState : this.geminiState;
     if (
