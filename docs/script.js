@@ -703,6 +703,168 @@ if (sidebarShowcase) {
   }
 }
 
+const scoutShowcase = document.querySelector(".scout-showcase");
+const scoutGallery = document.querySelector(".scout-gallery");
+const scoutMainShot = document.querySelector(".scout-shot-main");
+const scoutFinePointer = window.matchMedia(
+  "(hover: hover) and (pointer: fine)",
+);
+let scoutObserver;
+let scoutVisible = false;
+let scoutScrollFrame;
+let scoutTiltFrame;
+let scoutPointerX = 0.5;
+let scoutPointerY = 0.5;
+
+function updateScoutScroll() {
+  scoutScrollFrame = undefined;
+  if (!scoutShowcase || reduceMotion) return;
+
+  const bounds = scoutShowcase.getBoundingClientRect();
+  const viewportHeight = window.innerHeight;
+  const scrollDistance = Math.max(
+    scoutShowcase.offsetHeight - viewportHeight,
+    1,
+  );
+  const progress = clamp(-bounds.top / scrollDistance);
+  const entry = clamp(
+    (viewportHeight * 0.92 - bounds.top) / (viewportHeight * 0.72),
+  );
+  const assembled = easeOutCubic(clamp(entry * 0.46 + progress * 1.2));
+  const opacity = clamp(entry * 1.3);
+
+  scoutShowcase.style.setProperty("--scout-progress", progress.toFixed(4));
+  scoutShowcase.style.setProperty("--scout-main-opacity", opacity.toFixed(3));
+  scoutShowcase.style.setProperty(
+    "--scout-main-scale",
+    (0.92 + assembled * 0.08).toFixed(4),
+  );
+  scoutShowcase.style.setProperty(
+    "--scout-main-y",
+    `${((1 - assembled) * 64 - progress * 8).toFixed(2)}px`,
+  );
+  scoutShowcase.style.setProperty(
+    "--scout-context-x",
+    `${((1 - assembled) * 74).toFixed(2)}px`,
+  );
+  scoutShowcase.style.setProperty(
+    "--scout-context-y",
+    `${((1 - assembled) * 52 - progress * 8).toFixed(2)}px`,
+  );
+  scoutShowcase.style.setProperty(
+    "--scout-context-rotate",
+    `${((1 - assembled) * 8 + progress * 0.8).toFixed(2)}deg`,
+  );
+  scoutShowcase.style.setProperty(
+    "--scout-organiser-x",
+    `${((1 - assembled) * -70).toFixed(2)}px`,
+  );
+  scoutShowcase.style.setProperty(
+    "--scout-organiser-y",
+    `${((1 - assembled) * 68 + progress * 5).toFixed(2)}px`,
+  );
+  scoutShowcase.style.setProperty(
+    "--scout-organiser-rotate",
+    `${((1 - assembled) * -7 - progress * 0.8).toFixed(2)}deg`,
+  );
+}
+
+function requestScoutScroll() {
+  if (!scoutScrollFrame && scoutVisible && !reduceMotion) {
+    scoutScrollFrame = window.requestAnimationFrame(updateScoutScroll);
+  }
+}
+
+function renderScoutTilt() {
+  scoutTiltFrame = undefined;
+  if (!scoutMainShot) return;
+  scoutMainShot.style.setProperty(
+    "--scout-tilt-x",
+    `${((0.5 - scoutPointerY) * 4).toFixed(2)}deg`,
+  );
+  scoutMainShot.style.setProperty(
+    "--scout-tilt-y",
+    `${((scoutPointerX - 0.5) * 5).toFixed(2)}deg`,
+  );
+  scoutMainShot.style.setProperty(
+    "--scout-light-x",
+    `${(scoutPointerX * 100).toFixed(1)}%`,
+  );
+  scoutMainShot.style.setProperty(
+    "--scout-light-y",
+    `${(scoutPointerY * 100).toFixed(1)}%`,
+  );
+}
+
+function handleScoutPointerMove(event) {
+  if (!scoutMainShot) return;
+  const bounds = scoutMainShot.getBoundingClientRect();
+  scoutPointerX = clamp((event.clientX - bounds.left) / bounds.width);
+  scoutPointerY = clamp((event.clientY - bounds.top) / bounds.height);
+  if (!scoutTiltFrame) {
+    scoutTiltFrame = window.requestAnimationFrame(renderScoutTilt);
+  }
+}
+
+function handleScoutPointerEnter() {
+  scoutMainShot?.classList.add("is-hovered");
+}
+
+function handleScoutPointerLeave() {
+  scoutPointerX = 0.5;
+  scoutPointerY = 0.5;
+  scoutMainShot?.classList.remove("is-hovered");
+  if (!scoutTiltFrame) {
+    scoutTiltFrame = window.requestAnimationFrame(renderScoutTilt);
+  }
+}
+
+function cleanupScoutShowcase() {
+  scoutObserver?.disconnect();
+  window.cancelAnimationFrame(scoutScrollFrame);
+  window.cancelAnimationFrame(scoutTiltFrame);
+  window.removeEventListener("scroll", requestScoutScroll);
+  window.removeEventListener("resize", requestScoutScroll);
+  scoutMainShot?.removeEventListener("pointerenter", handleScoutPointerEnter);
+  scoutMainShot?.removeEventListener("pointermove", handleScoutPointerMove);
+  scoutMainShot?.removeEventListener("pointerleave", handleScoutPointerLeave);
+}
+
+if (scoutShowcase && scoutGallery) {
+  if (reduceMotion) {
+    scoutShowcase.classList.add("is-visible");
+    scoutShowcase.style.setProperty("--scout-main-opacity", "1");
+    scoutShowcase.style.setProperty("--scout-main-scale", "1");
+    scoutShowcase.style.setProperty("--scout-main-y", "0px");
+    scoutShowcase.style.setProperty("--scout-context-x", "0px");
+    scoutShowcase.style.setProperty("--scout-context-y", "0px");
+    scoutShowcase.style.setProperty("--scout-context-rotate", "0deg");
+    scoutShowcase.style.setProperty("--scout-organiser-x", "0px");
+    scoutShowcase.style.setProperty("--scout-organiser-y", "0px");
+    scoutShowcase.style.setProperty("--scout-organiser-rotate", "0deg");
+  } else {
+    scoutObserver = new IntersectionObserver(
+      ([entry]) => {
+        scoutVisible = entry.isIntersecting;
+        if (scoutVisible) {
+          scoutShowcase.classList.add("is-visible");
+          requestScoutScroll();
+        }
+      },
+      { rootMargin: "100px", threshold: 0.08 },
+    );
+    scoutObserver.observe(scoutShowcase);
+    window.addEventListener("scroll", requestScoutScroll, { passive: true });
+    window.addEventListener("resize", requestScoutScroll);
+  }
+
+  if (!reduceMotion && scoutFinePointer.matches && scoutMainShot) {
+    scoutMainShot.addEventListener("pointerenter", handleScoutPointerEnter);
+    scoutMainShot.addEventListener("pointermove", handleScoutPointerMove);
+    scoutMainShot.addEventListener("pointerleave", handleScoutPointerLeave);
+  }
+}
+
 const hyperdriveSection = document.querySelector(".hyperdrive-feature");
 const hyperdriveStage = document.querySelector(".hyperdrive-stage");
 const hyperdriveCanvas = document.querySelector(".hyperdrive-field");
@@ -1282,5 +1444,6 @@ window.addEventListener("beforeunload", () => {
   window.cancelAnimationFrame(hyperdriveScrollFrame);
   cleanupExtensionsShowcase();
   cleanupSidebarShowcase();
+  cleanupScoutShowcase();
   clearSilenceTimers();
 });
