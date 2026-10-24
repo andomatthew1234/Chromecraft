@@ -587,8 +587,11 @@ const api: ChromecraftApi = {
       channels.sendAssistantMessage,
       request as AssistantMessageRequest,
     ) as Promise<AssistantMessageResponse>,
-  cancelAssistantMessage: () =>
-    ipcRenderer.invoke(channels.cancelAssistantMessage) as Promise<void>,
+  cancelAssistantMessage: (messageId) =>
+    ipcRenderer.invoke(
+      channels.cancelAssistantMessage,
+      messageId,
+    ) as Promise<void>,
   onSnapshot: (listener) => {
     const handler = (
       _event: Electron.IpcRendererEvent,

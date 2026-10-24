@@ -424,7 +424,93 @@ describe("AiToolsController", () => {
           model: "gemini-2.5-flash-lite",
         }),
       ),
-    ).rejects.toThrow("Confirm that selected page context");
+    ).rejects.toThrow(/Confirm that .*conversation history/u);
+
+    await expect(
+      controller.sendAssistantMessage(
+        assistantRequest({
+          provider: "gemini",
+          model: "gemini-2.5-flash-lite",
+          context: [],
+        }),
+      ),
+    ).rejects.toThrow(/Confirm that .*conversation history/u);
+  });
+
+  it("cancels only the matching Scout message", async () => {
+    const chatStructured = vi.fn(
+      ({ signal }: { signal: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          signal.addEventListener(
+            "abort",
+            () => reject(new DOMException("Cancelled", "AbortError")),
+            { once: true },
+          );
+        }),
+    );
+    const controller = new AiToolsController({
+      stateFilePath: await statePath(),
+      ollama: {
+        listModels: vi.fn().mockResolvedValue([
+          {
+            name: "qwen3:1.7b",
+            size: 1_000,
+            modifiedAt: null,
+            family: "qwen3",
+            parameterSize: "1.7B",
+          },
+        ]),
+        chatStructured,
+      } as unknown as OllamaClient,
+      credentials: credentials(),
+      organiseTabs: organiser(),
+    });
+    await controller.refreshModels("ollama");
+
+    const response = controller.sendAssistantMessage(assistantRequest());
+    await vi.waitFor(() => expect(chatStructured).toHaveBeenCalledOnce());
+    controller.cancelAssistantMessage("another-message");
+    expect(chatStructured.mock.calls[0]?.[0].signal.aborted).toBe(false);
+    controller.cancelAssistantMessage("message-1");
+
+    await expect(response).rejects.toThrow("stopped this response");
+  });
+
+  it("preserves an organiser undo across Scout model changes and chat", async () => {
+    const tabs = organiser();
+    const controller = new AiToolsController({
+      stateFilePath: await statePath(),
+      ollama: {
+        listModels: vi.fn().mockResolvedValue([
+          {
+            name: "qwen3:1.7b",
+            size: 1_000,
+            modifiedAt: null,
+            family: "qwen3",
+            parameterSize: "1.7B",
+          },
+        ]),
+        chatStructured: vi.fn().mockResolvedValue({ reply: "Done." }),
+      } as unknown as OllamaClient,
+      credentials: credentials(),
+      organiseTabs: tabs,
+    });
+    await controller.refreshModels("ollama");
+    const prepared = await controller.preview(request());
+    await controller.apply(prepared);
+
+    await controller.setProvider("ollama");
+    await controller.setModel("ollama", "qwen3:1.7b");
+    await controller.refreshModels("ollama");
+    await controller.sendAssistantMessage(assistantRequest());
+
+    expect(controller.snapshot.run).toMatchObject({
+      stage: "complete",
+      undoAvailable: true,
+    });
+    await expect(controller.undo()).resolves.toMatchObject({
+      undoAvailable: false,
+    });
   });
 
   it("does not leak raw provider failures through Scout errors", async () => {

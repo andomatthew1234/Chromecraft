@@ -200,6 +200,8 @@ export class AiToolsController {
   private geminiState: GeminiProviderSnapshot;
   private run = idleRun();
   private abortController: AbortController | null = null;
+  private assistantAbortController: AbortController | null = null;
+  private assistantMessageId: string | null = null;
   private prepared: InternalOrganiseTabsProposal | null = null;
   private disposed = false;
   private writeCounter = 0;
@@ -276,8 +278,6 @@ export class AiToolsController {
   async setProvider(provider: AiProviderId): Promise<AiToolsSnapshot> {
     this.assertNotBusy();
     this.provider = provider;
-    this.prepared = null;
-    this.run = idleRun();
     await this.persist();
     this.emit();
     return this.snapshot;
@@ -308,14 +308,21 @@ export class AiToolsController {
     this.assertNotBusy();
     const operationId = randomUUID();
     const controller = new AbortController();
+    const preservedRun =
+      this.run.toolId === "organise-tabs" &&
+      (this.run.proposalId !== null || this.run.undoAvailable)
+        ? structuredClone(this.run)
+        : null;
     this.abortController = controller;
-    this.run = {
-      ...idleRun(),
-      operationId,
-      stage: "checking",
-      label: provider === "ollama" ? "Checking Ollama" : "Checking Gemini",
-    };
-    this.emit();
+    if (!preservedRun) {
+      this.run = {
+        ...idleRun(),
+        operationId,
+        stage: "checking",
+        label: provider === "ollama" ? "Checking Ollama" : "Checking Gemini",
+      };
+      this.emit();
+    }
     try {
       if (provider === "ollama") {
         const models = await this.ollama.listModels(controller.signal);
@@ -373,11 +380,13 @@ export class AiToolsController {
               models[0]?.name ??
               null);
       }
-      this.run = idleRun();
+      if (!preservedRun) this.run = idleRun();
       await this.persist();
     } catch (error) {
       if (isAbort(error)) {
-        this.run = { ...idleRun(), stage: "cancelled", label: "Cancelled" };
+        if (!preservedRun) {
+          this.run = { ...idleRun(), stage: "cancelled", label: "Cancelled" };
+        }
       } else {
         const safeDetail =
           provider === "ollama"
@@ -399,15 +408,18 @@ export class AiToolsController {
             error: safeDetail,
           };
         }
-        this.run = {
-          ...idleRun(),
-          stage: "failed",
-          label: `${provider === "ollama" ? "Ollama" : "Gemini"} unavailable`,
-          error: safeDetail,
-        };
+        if (!preservedRun) {
+          this.run = {
+            ...idleRun(),
+            stage: "failed",
+            label: `${provider === "ollama" ? "Ollama" : "Gemini"} unavailable`,
+            error: safeDetail,
+          };
+        }
       }
     } finally {
       if (this.abortController === controller) this.abortController = null;
+      if (preservedRun) this.run = preservedRun;
       this.emit();
     }
     return this.snapshot;
@@ -463,8 +475,6 @@ export class AiToolsController {
     }
     state.selectedModel = model;
     state.error = null;
-    this.prepared = null;
-    this.run = idleRun();
     await this.persist();
     this.emit();
     return this.snapshot;
@@ -522,23 +532,18 @@ export class AiToolsController {
   ): Promise<AssistantMessageResponse> {
     this.assertAvailable();
     this.assertNotBusy();
-    if (request.provider === "gemini" && request.context.length) {
+    if (
+      request.provider === "gemini" &&
+      (request.context.length > 0 || request.history.length > 0)
+    ) {
       if (!request.cloudContextConsent) {
         throw new Error(
-          "Confirm that selected page context may be sent to Gemini, or remove it.",
+          "Confirm that selected page context and conversation history may be sent to Gemini, or remove them.",
         );
       }
     }
-    let state =
+    const state =
       request.provider === "ollama" ? this.ollamaState : this.geminiState;
-    if (
-      state.connection !== "connected" ||
-      !state.models.some((model) => model.name === request.model)
-    ) {
-      const refreshed = await this.refreshModels(request.provider);
-      state =
-        request.provider === "ollama" ? refreshed.ollama : refreshed.gemini;
-    }
     if (
       state.connection !== "connected" ||
       !state.models.some((model) => model.name === request.model)
@@ -548,14 +553,8 @@ export class AiToolsController {
       );
     }
     const controller = new AbortController();
-    this.abortController = controller;
-    this.run = {
-      ...idleRun(),
-      operationId: randomUUID(),
-      stage: "thinking",
-      label: "Scout is thinking",
-    };
-    this.emit();
+    this.assistantAbortController = controller;
+    this.assistantMessageId = request.messageId;
     try {
       const apiKey =
         request.provider === "gemini" ? await this.credentials.get() : null;
@@ -588,8 +587,6 @@ export class AiToolsController {
       if (typeof reply !== "string" || !reply.trim() || reply.length > 64_000) {
         throw new Error("Scout returned an invalid response.");
       }
-      this.run = idleRun();
-      this.emit();
       return {
         messageId: request.messageId,
         provider: request.provider,
@@ -599,18 +596,12 @@ export class AiToolsController {
       };
     } catch (error) {
       const friendly = assistantError(error, request.provider);
-      this.run = {
-        ...idleRun(),
-        stage: controller.signal.aborted ? "cancelled" : "failed",
-        label: controller.signal.aborted
-          ? "Response stopped"
-          : "Scout needs attention",
-        error: friendly,
-      };
-      this.emit();
       throw new Error(friendly);
     } finally {
-      if (this.abortController === controller) this.abortController = null;
+      if (this.assistantAbortController === controller) {
+        this.assistantAbortController = null;
+        this.assistantMessageId = null;
+      }
     }
   }
 
@@ -619,8 +610,6 @@ export class AiToolsController {
     await this.credentials.remove();
     this.geminiState = emptyGemini(this.credentials.secureStorageAvailable);
     this.organiserModels.gemini = null;
-    this.prepared = null;
-    this.run = idleRun();
     await this.persist();
     this.emit();
     return this.snapshot;
@@ -775,7 +764,11 @@ export class AiToolsController {
 
   cancel(): void {
     this.abortController?.abort();
-    this.abortController = null;
+  }
+
+  cancelAssistantMessage(messageId: string): void {
+    if (messageId !== this.assistantMessageId) return;
+    this.assistantAbortController?.abort();
   }
 
   async undo(): Promise<AiToolApplyResult> {
@@ -818,6 +811,9 @@ export class AiToolsController {
     this.disposed = true;
     this.abortController?.abort();
     this.abortController = null;
+    this.assistantAbortController?.abort();
+    this.assistantAbortController = null;
+    this.assistantMessageId = null;
     this.prepared = null;
   }
 
@@ -851,6 +847,9 @@ export class AiToolsController {
   }
 
   private assertNotBusy(): void {
+    if (this.abortController || this.assistantAbortController) {
+      throw new Error("Another AI operation is already running.");
+    }
     if (
       [
         "checking",

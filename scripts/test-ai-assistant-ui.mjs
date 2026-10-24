@@ -377,6 +377,13 @@ try {
       sidebar.style.bottom = '300px';
     }
   })()`);
+  await cdp.send("Emulation.setEmulatedMedia", {
+    features: [
+      { name: "prefers-reduced-motion", value: "no-preference" },
+      { name: "prefers-color-scheme", value: "light" },
+    ],
+  });
+  await cdp.evaluate("document.documentElement.dataset.theme = 'light'");
   await new Promise((resolve) => setTimeout(resolve, 360));
   const shortWindowContainment = await cdp.evaluate(`(() => {
     const panel = document.querySelector('.ai-assistant-panel').getBoundingClientRect();
@@ -579,8 +586,8 @@ try {
   });
   await fs.writeFile(screenshotPath, Buffer.from(screenshot.data, "base64"));
 
-  const lightSurface = await cdp.evaluate(
-    "getComputedStyle(document.querySelector('.ai-assistant-panel')).backgroundColor",
+  const lightSurfaceToken = await cdp.evaluate(
+    "getComputedStyle(document.documentElement).getPropertyValue('--md-surface-container-low').trim()",
   );
   await cdp.send("Emulation.setEmulatedMedia", {
     features: [
@@ -591,15 +598,16 @@ try {
   await cdp.evaluate("document.documentElement.dataset.theme = 'dark'");
   await new Promise((resolve) => setTimeout(resolve, 100));
   const themeAndMotion = await cdp.evaluate(`(() => ({
-    lightSurface: ${JSON.stringify(lightSurface)},
-    darkSurface: getComputedStyle(document.querySelector('.ai-assistant-panel')).backgroundColor,
+    lightSurfaceToken: ${JSON.stringify(lightSurfaceToken)},
+    darkSurfaceToken: getComputedStyle(document.documentElement).getPropertyValue('--md-surface-container-low').trim(),
     panelAnimation: getComputedStyle(document.querySelector('.ai-assistant-panel')).animationName,
     avatarAnimation: getComputedStyle(document.querySelector('.ai-character')).animationName,
     scrollBehavior: getComputedStyle(document.querySelector('.ai-assistant-scroll')).scrollBehavior,
   }))()`);
+  console.log("Theme and motion:", themeAndMotion);
   assert(
-    themeAndMotion.darkSurface !== themeAndMotion.lightSurface,
-    "Dark theme did not change the assistant surface",
+    themeAndMotion.darkSurfaceToken !== themeAndMotion.lightSurfaceToken,
+    "Dark theme did not change the assistant surface token",
   );
   assert(
     themeAndMotion.panelAnimation === "none" &&

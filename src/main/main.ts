@@ -967,6 +967,31 @@ function requireAssistantMessageRequest(
   if (!Array.isArray(request.history) || request.history.length > 24) {
     throw new TypeError("Scout conversation history is too large.");
   }
+  const prompt = requireString(request.prompt, "prompt", 16_000);
+  const context = request.context.map(requireAssistantAttachment);
+  const history: AssistantMessageRequest["history"] = request.history.map(
+    (entry) => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+        throw new TypeError("Scout conversation history is invalid.");
+      }
+      const turn = entry as Record<string, unknown>;
+      const role = turn.role;
+      if (role !== "user" && role !== "assistant") {
+        throw new TypeError("Scout conversation history has an invalid role.");
+      }
+      return {
+        role,
+        text: requireString(turn.text, "conversation turn", 16_000),
+      };
+    },
+  );
+  const payloadSize =
+    prompt.length +
+    JSON.stringify(context).length +
+    JSON.stringify(history).length;
+  if (payloadSize > 4 * 1024 * 1024) {
+    throw new TypeError("Scout context is too large to send safely.");
+  }
   return {
     conversationId: requireString(
       request.conversationId,
@@ -974,7 +999,7 @@ function requireAssistantMessageRequest(
       128,
     ),
     messageId: requireString(request.messageId, "message id", 128),
-    prompt: requireString(request.prompt, "prompt", 16_000),
+    prompt,
     createdAt:
       typeof request.createdAt === "number" &&
       Number.isFinite(request.createdAt)
@@ -982,20 +1007,8 @@ function requireAssistantMessageRequest(
         : Date.now(),
     provider: requireAiProvider(request.provider),
     model: requireString(request.model, "model", 256),
-    context: request.context.map(requireAssistantAttachment),
-    history: request.history.map((entry) => {
-      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
-        throw new TypeError("Scout conversation history is invalid.");
-      }
-      const turn = entry as Record<string, unknown>;
-      if (turn.role !== "user" && turn.role !== "assistant") {
-        throw new TypeError("Scout conversation history has an invalid role.");
-      }
-      return {
-        role: turn.role,
-        text: requireString(turn.text, "conversation turn", 16_000),
-      };
-    }),
+    context,
+    history,
     cloudContextConsent: requireBoolean(
       request.cloudContextConsent,
       "cloudContextConsent",
@@ -1240,9 +1253,14 @@ function registerIpc(): void {
       requireAssistantMessageRequest(request),
     ),
   );
-  ipcMain.handle(channels.cancelAssistantMessage, (event) => {
-    requireAiTools(event).cancel();
-  });
+  ipcMain.handle(
+    channels.cancelAssistantMessage,
+    (event, messageId: unknown) => {
+      requireAiTools(event).cancelAssistantMessage(
+        requireString(messageId, "message id", 128),
+      );
+    },
+  );
   ipcMain.handle(channels.createTab, (event, input?: unknown) =>
     requireManager(event).createTab(
       typeof input === "string" ? input : undefined,

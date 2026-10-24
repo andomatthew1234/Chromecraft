@@ -185,9 +185,6 @@ function attachmentIcon(kind: AssistantAttachmentKind) {
 }
 
 function statusFor(snapshot: AiToolsSnapshot) {
-  if (["checking", "thinking", "applying"].includes(snapshot.run.stage)) {
-    return ["Thinking", "thinking"] as const;
-  }
   const provider = activeProviderSnapshot(snapshot);
   if (provider.connection === "connected" && provider.selectedModel) {
     return [
@@ -219,8 +216,8 @@ function pageContextError(error: unknown): string {
 
 function responseError(error: unknown, provider: AiProviderId): string {
   const detail = error instanceof Error ? error.message.toLowerCase() : "";
-  if (/confirm.*context|remove it/u.test(detail)) {
-    return "Confirm Gemini page-context sharing in Scout Power, or remove the page context.";
+  if (/confirm.*(?:context|history)|remove them/u.test(detail)) {
+    return "Confirm Gemini sharing for this message in Scout Power, or start a new conversation without page context.";
   }
   if (/quota|usage|rate/u.test(detail)) {
     return "Gemini usage is temporarily limited. Check quota or try again later.";
@@ -269,12 +266,8 @@ export function AiAssistantPanel({
   const [powerError, setPowerError] = useState<string | null>(null);
   const [pendingModel, setPendingModel] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
-  const [geminiContextConsent, setGeminiContextConsent] = useState(
-    () =>
-      typeof localStorage !== "undefined" &&
-      localStorage.getItem("chromecraft-scout-gemini-context-consent-v1") ===
-        "true",
-  );
+  const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
+  const [geminiContextConsent, setGeminiContextConsent] = useState(false);
 
   const panelRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -288,7 +281,9 @@ export function AiAssistantPanel({
   const powerButtonRef = useRef<HTMLButtonElement>(null);
   const powerChangeRef = useRef(0);
 
-  const [statusLabel, statusKind] = statusFor(aiTools);
+  const [providerStatusLabel, providerStatusKind] = statusFor(aiTools);
+  const statusLabel = sending ? "Thinking" : providerStatusLabel;
+  const statusKind = sending ? "thinking" : providerStatusKind;
   const currentConversation =
     conversations.find((item) => item.id === conversationId) ?? null;
   const included = useMemo(
@@ -337,6 +332,10 @@ export function AiAssistantPanel({
   useEffect(() => {
     void refreshPage();
   }, [refreshPage, activeTab.url]);
+
+  useEffect(() => {
+    setGeminiContextConsent(false);
+  }, [activeTab.id]);
 
   useEffect(() => {
     document.documentElement.dataset.scoutReducedMotion =
@@ -519,12 +518,15 @@ export function AiAssistantPanel({
   };
 
   const newConversation = () => {
-    if (sending) void window.chromecraft.cancelAssistantMessage();
+    if (activeMessageId) {
+      void window.chromecraft.cancelAssistantMessage(activeMessageId);
+    }
     setConversationId(identifier("chat"));
     setDraft("");
     setAttachments([]);
     setChoices(readDefaults());
     setStatusNote(null);
+    setGeminiContextConsent(false);
     setOpenPopover(null);
     nearBottomRef.current = true;
     requestAnimationFrame(() => textareaRef.current?.focus());
@@ -596,6 +598,8 @@ export function AiAssistantPanel({
     setChoices(readDefaults());
     setStatusNote(null);
     setSending(true);
+    setActiveMessageId(request.messageId);
+    setGeminiContextConsent(false);
     void window.chromecraft
       .sendAssistantMessage(request)
       .then((response) => {
@@ -644,6 +648,9 @@ export function AiAssistantPanel({
       })
       .finally(() => {
         setSending(false);
+        setActiveMessageId((current) =>
+          current === request.messageId ? null : current,
+        );
         requestAnimationFrame(() => textareaRef.current?.focus());
       });
     requestAnimationFrame(() => textareaRef.current?.focus());
@@ -675,11 +682,7 @@ export function AiAssistantPanel({
   };
 
   const characterState =
-    capturing || sending || aiTools.run.stage === "thinking"
-      ? "thinking"
-      : draft
-        ? "typing"
-        : "idle";
+    capturing || sending ? "thinking" : draft ? "typing" : "idle";
 
   return (
     <div className="ai-assistant-panel" ref={panelRef}>
@@ -1079,7 +1082,13 @@ export function AiAssistantPanel({
               title={sending ? "Stop response" : "Send message"}
               onClick={
                 sending
-                  ? () => void window.chromecraft.cancelAssistantMessage()
+                  ? () => {
+                      if (activeMessageId) {
+                        void window.chromecraft.cancelAssistantMessage(
+                          activeMessageId,
+                        );
+                      }
+                    }
                   : undefined
               }
             >
@@ -1300,14 +1309,11 @@ export function AiAssistantPanel({
                       onChange={(event) => {
                         const enabled = event.target.checked;
                         setGeminiContextConsent(enabled);
-                        localStorage.setItem(
-                          "chromecraft-scout-gemini-context-consent-v1",
-                          String(enabled),
-                        );
                       }}
                     />
                     <span>
-                      Allow selected page context to be sent to Gemini
+                      Allow this message's conversation history and selected
+                      page context to be sent to Gemini
                     </span>
                   </label>
                 </div>

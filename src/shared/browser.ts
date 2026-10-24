@@ -904,7 +904,7 @@ export interface ChromecraftApi {
   sendAssistantMessage(
     request: AssistantMessageRequest,
   ): Promise<AssistantMessageResponse>;
-  cancelAssistantMessage(): Promise<void>;
+  cancelAssistantMessage(messageId: string): Promise<void>;
   onSnapshot(listener: (snapshot: BrowserSnapshot) => void): () => void;
   onBrowserData(listener: (snapshot: BrowserDataSnapshot) => void): () => void;
   onDownloads(listener: (snapshot: DownloadSnapshot) => void): () => void;
