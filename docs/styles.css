@@ -4015,7 +4015,7 @@ h1 {
 }
 
 .youtube-utilities-visuals {
-  aspect-ratio: 1.27;
+  aspect-ratio: 1.36;
   min-width: 0;
   perspective: 1400px;
   position: relative;
@@ -4036,6 +4036,10 @@ h1 {
 }
 
 .youtube-utilities-visual {
+  align-items: stretch;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
   inset: 0;
   margin: 0;
   opacity: 0;
@@ -4055,16 +4059,18 @@ h1 {
 }
 
 .youtube-utilities-frame {
-  background: #121419;
-  border: 1px solid rgba(20, 22, 27, 0.15);
-  box-shadow: 0 34px 80px rgba(30, 34, 45, 0.2);
-  height: calc(100% - 54px);
+  background: #ffffff;
+  border: 1px solid rgba(20, 22, 27, 0.1);
+  border-radius: 18px;
+  box-shadow: 0 28px 72px rgba(30, 34, 45, 0.16);
   overflow: hidden;
   position: relative;
+  width: 100%;
 }
 
 .youtube-utilities-frame::after {
   border: 1px solid rgba(255, 255, 255, 0.32);
+  border-radius: inherit;
   content: "";
   inset: 0;
   pointer-events: none;
@@ -4074,33 +4080,26 @@ h1 {
 .youtube-utilities-visual img {
   display: block;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
   width: 100%;
 }
 
 .youtube-utilities-visual--download .youtube-utilities-frame {
-  align-items: center;
-  background: #111318;
-  display: flex;
-  height: calc(100% - 54px);
-  padding: clamp(22px, 4vw, 62px);
+  aspect-ratio: 1280 / 154;
+  background: #f7f8fc;
 }
 
 .youtube-utilities-visual--download img {
-  box-shadow: 0 24px 52px rgba(0, 0, 0, 0.34);
-  height: auto;
+  object-fit: contain;
 }
 
-.youtube-utilities-visual--gallery img {
-  object-position: center top;
+.youtube-utilities-visual--gallery .youtube-utilities-frame {
+  aspect-ratio: 1360 / 780;
 }
 
 .youtube-utilities-visual--smart .youtube-utilities-frame {
+  aspect-ratio: 2260 / 1350;
   background: #dbe5ff;
-}
-
-.youtube-utilities-visual--smart img {
-  object-position: center top;
 }
 
 .youtube-utilities-visual figcaption {
@@ -4213,7 +4212,7 @@ h1 {
   }
 
   .youtube-utilities-visual--download .youtube-utilities-frame {
-    padding: 12px;
+    aspect-ratio: 1280 / 154;
   }
 }
 
