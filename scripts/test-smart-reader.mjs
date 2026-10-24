@@ -297,6 +297,60 @@ try {
       `Reader content regression: ${JSON.stringify(articleState)}`,
     );
   }
+  const providerTrigger = await reader.evaluate(
+    `(()=>{const trigger=document.querySelector('.scout-control.provider');return {compact:trigger?.classList.contains('icon-only'),text:trigger?.textContent?.trim(),label:trigger?.getAttribute('aria-label'),provider:trigger?.getAttribute('data-active-provider'),icon:Boolean(trigger?.querySelector('svg'))}})()`,
+  );
+  if (
+    !providerTrigger.compact ||
+    providerTrigger.text ||
+    providerTrigger.label !== "Summary provider: Local AI" ||
+    providerTrigger.provider !== "ollama" ||
+    !providerTrigger.icon
+  ) {
+    throw new Error(
+      `Reader compact provider trigger regression: ${JSON.stringify(providerTrigger)}`,
+    );
+  }
+  await reader.evaluate(
+    "document.querySelector('.scout-control.provider')?.click()",
+  );
+  const providerMenu = await reader.evaluate(
+    `(()=>{const trigger=document.querySelector('.scout-control.provider');const menu=document.querySelector('.scout-menu[role="menu"]');if(!trigger||!menu)return null;const triggerBounds=trigger.getBoundingClientRect();const menuBounds=menu.getBoundingClientRect();return {opensDown:menuBounds.top>=triggerBounds.bottom-14,animation:getComputedStyle(menu).animationName,ollama:Boolean(menu.querySelector('[data-provider="ollama"]')),gemini:Boolean(menu.querySelector('[data-provider="gemini"]'))}})()`,
+  );
+  if (
+    !providerMenu?.opensDown ||
+    !providerMenu.animation.includes("scout-menu-descend") ||
+    !providerMenu.ollama ||
+    !providerMenu.gemini
+  ) {
+    throw new Error(
+      `Reader provider menu animation regression: ${JSON.stringify(providerMenu)}`,
+    );
+  }
+  await reader.evaluate(
+    "document.querySelector('[data-provider=\"gemini\"]')?.click()",
+  );
+  await poll(
+    () =>
+      reader.evaluate(
+        `(()=>{const trigger=document.querySelector('.scout-control.provider');return {label:trigger?.getAttribute('aria-label'),provider:trigger?.getAttribute('data-active-provider')}})()`,
+      ),
+    (state) =>
+      state.label === "Summary provider: Google Gemini" &&
+      state.provider === "gemini",
+    "Gemini provider icon",
+  );
+  await reader.evaluate(
+    "document.querySelector('.scout-control.provider')?.click();document.querySelector('[data-provider=\"ollama\"]')?.click()",
+  );
+  await poll(
+    () =>
+      reader.evaluate(
+        "document.querySelector('.scout-control.provider')?.getAttribute('data-active-provider')",
+      ),
+    (provider) => provider === "ollama",
+    "Ollama provider icon",
+  );
   const summarySettings = await reader.evaluate(
     `(()=>{document.querySelector('[data-action="settings"]')?.click();return {actionCount:document.querySelectorAll('.scout-actions > button').length,automatic:[...document.querySelectorAll('[data-model]')].some(button=>button.textContent.includes('Automatic (recommended)')),ollama:[...document.querySelectorAll('[data-provider]')].some(button=>button.textContent.trim()==='Local AI'),gemini:[...document.querySelectorAll('[data-provider]')].some(button=>button.textContent.trim()==='Google Gemini')}})()`,
   );
