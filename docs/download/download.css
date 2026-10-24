@@ -1606,14 +1606,356 @@ button {
   --page-surface: #f9fffb;
   --page-border: #a8d1bc;
   --page-radius: 8px;
+  overflow-x: clip;
+  position: relative;
 }
 
 .platform-page.mint .platform-logo {
   background: #d3f0e1;
   border-radius: 50%;
+  transition: transform 220ms ease;
+}
+
+.platform-page.mint .download-header,
+.platform-page.mint .platform-main {
+  position: relative;
+  z-index: 2;
+}
+
+.mint-atmosphere {
+  --mint-pointer-x: 74%;
+  --mint-pointer-y: 30%;
+  background:
+    radial-gradient(
+      circle 330px at var(--mint-pointer-x) var(--mint-pointer-y),
+      rgba(70, 176, 128, 0.16),
+      transparent 75%
+    ),
+    radial-gradient(
+      circle 420px at -8% 92%,
+      rgba(100, 194, 150, 0.13),
+      transparent 72%
+    );
+  inset: 0;
+  pointer-events: none;
+  position: fixed;
+  z-index: 1;
+}
+
+.mint-main {
+  margin: 0 auto;
+  max-width: 1420px;
+}
+
+.mint-hero {
+  align-items: center;
+  display: grid;
+  gap: clamp(54px, 9vw, 140px);
+  grid-template-columns: minmax(330px, 0.9fr) minmax(420px, 1.1fr);
+  margin-bottom: 48px;
+}
+
+.mint-intro {
+  animation: mint-enter 620ms 80ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  margin: 0;
+}
+
+.mint-intro h1 {
+  font-size: clamp(48px, 5.4vw, 76px);
+  letter-spacing: -0.05em;
+  line-height: 0.98;
+}
+
+.mint-intro h1 span {
+  color: #197355;
+  display: block;
+}
+
+.mint-health {
+  animation: mint-enter 660ms 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  background: #f9fffb;
+  border: 1px solid #a8d1bc;
+  border-radius: 18px;
+  box-shadow: 0 24px 54px rgba(30, 103, 73, 0.11);
+  padding: 28px;
+}
+
+.mint-health-heading {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+  margin-bottom: 25px;
+}
+
+.mint-health-heading > span:first-child {
+  align-items: center;
+  background: #197355;
+  border-radius: 50%;
+  color: #ffffff;
+  display: flex;
+  font-size: 20px;
+  height: 48px;
+  justify-content: center;
+  width: 48px;
+}
+
+.mint-health-heading > span:last-child {
+  display: grid;
+  gap: 3px;
+}
+
+.mint-health-heading strong {
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.mint-health-heading small {
+  color: #547263;
+  font-size: 11px;
+}
+
+.mint-health-list {
+  display: grid;
+  gap: 8px;
+}
+
+.mint-health-list > span {
+  align-items: center;
+  background: #e9f8f1;
+  border-left: 3px solid #35a778;
+  display: grid;
+  font-family: "DM Mono", monospace;
+  font-size: 9px;
+  gap: 14px;
+  grid-template-columns: 68px 1fr auto;
+  min-height: 42px;
+  padding: 0 14px;
+}
+
+.mint-health-list i {
+  background: #cae7d9;
+  height: 4px;
+  overflow: hidden;
+  position: relative;
+}
+
+.mint-health-list i::after {
+  background: #269c70;
+  content: "";
+  inset: 0 auto 0 0;
+  position: absolute;
+  transform: scaleX(0);
+  transform-origin: left;
+  width: var(--mint-meter);
+  animation: mint-meter-in 700ms 520ms ease forwards;
+}
+
+.mint-health-list em {
+  color: #197355;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.mint-health > p {
+  color: #537467;
+  font-family: "DM Mono", monospace;
+  font-size: 9px;
+  line-height: 1.6;
+  margin: 23px 0 0;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.mint-feature-strip {
+  animation: mint-enter 600ms 500ms ease both;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, 1fr);
+  margin-bottom: 24px;
+}
+
+.mint-feature-strip span {
+  align-items: center;
+  background: rgba(249, 255, 251, 0.78);
+  border: 1px solid #c2dfd0;
+  border-radius: 8px;
+  display: flex;
+  justify-content: space-between;
+  min-height: 46px;
+  padding: 0 15px;
+}
+
+.mint-feature-strip b {
+  font-size: 10px;
+  font-weight: 550;
+}
+
+.mint-feature-strip strong {
+  color: #197355;
+  font-family: "DM Mono", monospace;
+  font-size: 9px;
+  text-transform: uppercase;
+}
+
+.mint-platform-grid {
+  animation: mint-enter 660ms 660ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.platform-page.mint .platform-option {
+  background: rgba(249, 255, 251, 0.88);
+  isolation: isolate;
+  overflow: hidden;
+  position: relative;
+  transition:
+    transform 220ms ease,
+    border-color 220ms ease,
+    box-shadow 220ms ease;
+}
+
+.platform-page.mint .platform-option:hover {
+  border-color: #197355;
+  box-shadow: 0 16px 34px rgba(28, 100, 71, 0.1);
+  transform: translateY(-4px);
+}
+
+.platform-page.mint .platform-option.selected {
+  background: #f5fdf8;
+  border-color: #197355;
+  box-shadow: 0 15px 34px rgba(28, 100, 71, 0.12);
+}
+
+.platform-page.mint .platform-option:hover .platform-logo,
+.platform-page.mint .platform-option.selected .platform-logo {
+  transform: scale(1.05);
+}
+
+.mint-card-line {
+  background: #25986e;
+  bottom: 0;
+  left: 0;
+  position: absolute;
+  top: 0;
+  transform: scaleY(0);
+  transform-origin: top;
+  transition: transform 360ms ease;
+  width: 3px;
+}
+
+.platform-page.mint .platform-option:hover .mint-card-line,
+.platform-page.mint .platform-option.selected .mint-card-line {
+  transform: scaleY(1);
+}
+
+.mint-card-number {
+  color: #197355;
+  font-family: "DM Mono", monospace;
+  font-size: 9px;
+  position: absolute;
+  right: 20px;
+  top: 18px;
+}
+
+.platform-page.mint .coming-badge {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.platform-page.mint .coming-badge::before {
+  background: #27996f;
+  border-radius: 50%;
+  content: "";
+  height: 7px;
+  width: 7px;
+}
+
+.mint-selection-panel {
+  align-items: center;
+  animation: mint-enter 600ms 820ms ease both;
+  background: rgba(249, 255, 251, 0.88);
+  border: 1px solid #bedccb;
+  border-radius: 12px;
+  display: grid;
+  gap: 15px;
+  grid-template-columns: 50px 1fr auto;
+  margin-top: 24px;
+  padding: 16px;
+  transition:
+    border-color 220ms ease,
+    box-shadow 220ms ease;
+}
+
+.mint-selection-panel.has-selection {
+  border-color: #197355;
+  box-shadow: 0 14px 32px rgba(28, 100, 71, 0.09);
+}
+
+.mint-selection-icon {
+  align-items: center;
+  background: #d3f0e1;
+  border-radius: 9px;
+  color: #197355;
+  display: flex;
+  font-family: "Material Symbols Rounded";
+  font-size: 24px;
+  height: 50px;
+  justify-content: center;
+  width: 50px;
+}
+
+.mint-selection-panel > span:nth-child(2) {
+  display: grid;
+  gap: 4px;
+}
+
+.mint-selection-panel small {
+  color: #197355;
+  font-family: "DM Mono", monospace;
+  font-size: 8px;
+}
+
+.mint-selection-panel strong {
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.mint-selection-panel > b {
+  background: #d3f0e1;
+  border-radius: 999px;
+  color: #174f3a;
+  font-size: 10px;
+  font-weight: 650;
+  padding: 9px 13px;
+}
+
+@keyframes mint-enter {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes mint-meter-in {
+  to {
+    transform: scaleX(1);
+  }
 }
 
 @media (max-width: 1080px) {
+  .mint-hero {
+    gap: 40px;
+    grid-template-columns: minmax(290px, 0.85fr) minmax(390px, 1.15fr);
+  }
+
+  .mint-intro h1 {
+    font-size: clamp(44px, 6vw, 62px);
+  }
+
   .vanilla-hero {
     gap: 40px;
     grid-template-columns: minmax(300px, 0.85fr) minmax(400px, 1.15fr);
@@ -1657,6 +1999,14 @@ button {
   }
 
   .vanilla-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .mint-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .mint-feature-strip {
     grid-template-columns: 1fr;
   }
 
@@ -1715,6 +2065,24 @@ button {
 
   .vanilla-intro h1 {
     font-size: 46px;
+  }
+
+  .mint-intro h1 {
+    font-size: 46px;
+  }
+
+  .mint-health {
+    padding: 22px;
+  }
+
+  .mint-selection-panel {
+    align-items: start;
+    grid-template-columns: 50px 1fr;
+  }
+
+  .mint-selection-panel > b {
+    grid-column: 1 / -1;
+    justify-self: start;
   }
 
   .vanilla-studio-content {
@@ -1794,5 +2162,18 @@ button {
   .vanilla-platform-grid,
   .vanilla-selection-panel {
     animation: none;
+  }
+
+  .mint-intro,
+  .mint-health,
+  .mint-feature-strip,
+  .mint-platform-grid,
+  .mint-selection-panel,
+  .mint-health-list i::after {
+    animation: none;
+  }
+
+  .mint-health-list i::after {
+    transform: scaleX(1);
   }
 }

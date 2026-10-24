@@ -3,6 +3,7 @@ const statusRegion = document.querySelector(".download-status");
 const editionName = document.body.dataset.edition || "Chromecraft";
 const isNitroPage = document.body.classList.contains("nitro");
 const isVanillaPage = document.body.classList.contains("vanilla");
+const isMintPage = document.body.classList.contains("mint");
 const terminalPlatform = document.querySelector("[data-terminal-platform]");
 const terminalBuild = document.querySelector("[data-terminal-build]");
 const terminalStatus = document.querySelector("[data-terminal-status]");
@@ -23,6 +24,13 @@ platformButtons.forEach((button) => {
       }
 
       if (isVanillaPage) {
+        const badge = candidate.querySelector(".coming-badge");
+        if (badge) {
+          badge.textContent = isSelected ? "Platform selected" : "Coming soon";
+        }
+      }
+
+      if (isMintPage) {
         const badge = candidate.querySelector(".coming-badge");
         if (badge) {
           badge.textContent = isSelected ? "Platform selected" : "Coming soon";
@@ -59,12 +67,60 @@ platformButtons.forEach((button) => {
       if (selectionStatus) selectionStatus.textContent = "Coming soon";
     }
 
+    if (isMintPage) {
+      const selectionPanel = document.querySelector(".mint-selection-panel");
+      const selectionName = document.querySelector("[data-mint-selection]");
+      const selectionStatus = document.querySelector(
+        "[data-mint-selection-status]",
+      );
+
+      selectionPanel?.classList.add("has-selection");
+      if (selectionName) {
+        selectionName.textContent = `Mint for ${button.dataset.platform}`;
+      }
+      if (selectionStatus) selectionStatus.textContent = "Coming soon";
+    }
+
     if (statusRegion) {
       statusRegion.textContent = `${editionName} for ${button.dataset.platform} is coming soon.`;
       statusRegion.classList.add("visible");
     }
   });
 });
+
+if (isMintPage) {
+  const atmosphere = document.querySelector(".mint-atmosphere");
+  const reduceMotion = window.matchMedia(
+    "(prefers-reduced-motion: reduce)",
+  ).matches;
+
+  if (atmosphere && !reduceMotion) {
+    let pointerFrame = 0;
+    let pointerX = window.innerWidth * 0.74;
+    let pointerY = window.innerHeight * 0.3;
+
+    window.addEventListener(
+      "pointermove",
+      (event) => {
+        pointerX = event.clientX;
+        pointerY = event.clientY;
+        if (pointerFrame) return;
+        pointerFrame = requestAnimationFrame(() => {
+          atmosphere.style.setProperty(
+            "--mint-pointer-x",
+            `${(pointerX / window.innerWidth) * 100}%`,
+          );
+          atmosphere.style.setProperty(
+            "--mint-pointer-y",
+            `${(pointerY / window.innerHeight) * 100}%`,
+          );
+          pointerFrame = 0;
+        });
+      },
+      { passive: true },
+    );
+  }
+}
 
 if (isVanillaPage) {
   const paletteButtons = [
