@@ -649,6 +649,14 @@ export interface SavedArticleEntry {
   faviconDataUrl: string | null;
   description: string | null;
   savedAt: number;
+  /** Existing records are migrated to unread when this field is absent. */
+  isRead: boolean;
+}
+
+export interface SavedArticleOpenResult {
+  tabId: TabId;
+  readerActive: boolean;
+  error: string | null;
 }
 
 export interface HistoryEntry {
@@ -785,6 +793,12 @@ export interface ChromecraftApi {
   ): Promise<SmartReaderViewSnapshot>;
   toggleSavedArticle(tabId: TabId): Promise<SmartReaderViewSnapshot>;
   removeSavedArticle(id: string): Promise<void>;
+  setSavedArticleRead(id: string, isRead: boolean): Promise<void>;
+  copySavedArticleLink(id: string): Promise<void>;
+  openSavedArticle(
+    id: string,
+    appearance: SmartReaderAppearance,
+  ): Promise<SavedArticleOpenResult>;
   setSmartReaderProgressVisible(
     tabId: TabId,
     visible: boolean,

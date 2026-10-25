@@ -14,6 +14,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 
 import type {
   BrowserDataSnapshot,
@@ -68,6 +69,11 @@ import { OfflinePagesPage } from "./OfflinePagesPage";
 import { PageActionsPanel } from "./PageActionsPanel";
 import { SmartReaderControls } from "./SmartReaderControls";
 import { readSmartReaderAppearance } from "./smart-reader-appearance";
+import {
+  filterAndSortSavedArticles,
+  savedArticleSortLabels,
+  type SavedArticleSort,
+} from "./saved-articles";
 import { AiAssistantPanel } from "./AiAssistantPanel";
 import { StaticAssistantAvatar } from "./AssistantAvatar";
 import { OrganiseTabsPanel } from "./OrganiseTabsPanel";
@@ -6267,7 +6273,16 @@ function Sidebar({
   const [bookmarkView, setBookmarkView] = useState<"bookmarks" | "saved">(
     "bookmarks",
   );
-  const [savedSort, setSavedSort] = useState<"recent" | "title">("recent");
+  const [savedSort, setSavedSort] = useState<SavedArticleSort>("recent");
+  const [savedSortOpen, setSavedSortOpen] = useState(false);
+  const [savedMenu, setSavedMenu] = useState<{
+    id: string;
+    top: number;
+    left: number;
+  } | null>(null);
+  const [savedOpeningId, setSavedOpeningId] = useState<string | null>(null);
+  const [savedFeedback, setSavedFeedback] = useState<string | null>(null);
+  const savedFeedbackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [downloadJustCompleted, setDownloadJustCompleted] = useState(false);
   const priorDownloadStates = useRef<Map<
     string,
@@ -6291,17 +6306,11 @@ function Sidebar({
   const bookmarks = data.bookmarks.filter((item) =>
     `${item.title} ${item.url} ${item.folder}`.toLowerCase().includes(needle),
   );
-  const savedArticles = (data.savedArticles ?? [])
-    .filter((item) =>
-      `${item.title} ${item.siteName} ${item.description ?? ""} ${item.originalUrl}`
-        .toLowerCase()
-        .includes(needle),
-    )
-    .sort((left, right) =>
-      savedSort === "title"
-        ? left.title.localeCompare(right.title)
-        : right.savedAt - left.savedAt,
-    );
+  const savedArticles = filterAndSortSavedArticles(
+    data.savedArticles ?? [],
+    query,
+    savedSort,
+  );
   const history = data.history.filter((item) =>
     `${item.title} ${item.url}`.toLowerCase().includes(needle),
   );
@@ -6358,6 +6367,85 @@ function Sidebar({
     },
     [],
   );
+  useEffect(
+    () => () => {
+      if (savedFeedbackTimer.current) {
+        clearTimeout(savedFeedbackTimer.current);
+      }
+    },
+    [],
+  );
+  useEffect(() => {
+    if (!savedMenu && !savedSortOpen) return;
+    const dismiss = (event: Event) => {
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest(
+          ".saved-article-menu, .saved-article-menu-button, .saved-sort-control",
+        )
+      ) {
+        return;
+      }
+      setSavedMenu(null);
+      setSavedSortOpen(false);
+    };
+    const dismissForViewportChange = () => setSavedMenu(null);
+    const dismissOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") dismiss(event);
+    };
+    document.addEventListener("pointerdown", dismiss);
+    document.addEventListener("keydown", dismissOnEscape);
+    document.addEventListener("scroll", dismissForViewportChange, true);
+    window.addEventListener("resize", dismissForViewportChange);
+    return () => {
+      document.removeEventListener("pointerdown", dismiss);
+      document.removeEventListener("keydown", dismissOnEscape);
+      document.removeEventListener("scroll", dismissForViewportChange, true);
+      window.removeEventListener("resize", dismissForViewportChange);
+    };
+  }, [savedMenu, savedSortOpen]);
+
+  const showSavedFeedback = useCallback((message: string) => {
+    setSavedFeedback(message);
+    if (savedFeedbackTimer.current) clearTimeout(savedFeedbackTimer.current);
+    savedFeedbackTimer.current = setTimeout(() => {
+      setSavedFeedback(null);
+      savedFeedbackTimer.current = null;
+    }, 4_200);
+  }, []);
+  const openSavedInReader = useCallback(
+    async (id: string) => {
+      if (savedOpeningId) return;
+      setSavedMenu(null);
+      setSavedOpeningId(id);
+      try {
+        const result = await window.chromecraft.openSavedArticle(
+          id,
+          readSmartReaderAppearance(),
+        );
+        if (!result.readerActive) {
+          showSavedFeedback(
+            result.error ??
+              "Smart Reader was unavailable. The original page is still open.",
+          );
+        }
+      } catch (error) {
+        showSavedFeedback(
+          error instanceof Error
+            ? error.message
+            : "Smart Reader could not open this saved article.",
+        );
+      } finally {
+        setSavedOpeningId(null);
+      }
+    },
+    [savedOpeningId, showSavedFeedback],
+  );
+  const savedMenuArticle = savedMenu
+    ? ((data.savedArticles ?? []).find((entry) => entry.id === savedMenu.id) ??
+      null)
+    : null;
   if (!snapshot.preferences.sidebarAttached) return null;
 
   return (
@@ -6490,7 +6578,8 @@ function Sidebar({
               onInitialAttachmentConsumed={onReaderAttachmentConsumed}
             />
           )}
-          {(tool === "bookmarks" || tool === "history") && (
+          {(tool === "history" ||
+            (tool === "bookmarks" && bookmarkView === "bookmarks")) && (
             <label className="panel-search-field">
               <Icon name="search" />
               <input
@@ -6498,8 +6587,8 @@ function Sidebar({
                 type="search"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder={`Search ${tool === "bookmarks" && bookmarkView === "saved" ? "saved articles" : tool}`}
-                aria-label={`Search ${tool === "bookmarks" && bookmarkView === "saved" ? "saved articles" : tool}`}
+                placeholder={`Search ${tool}`}
+                aria-label={`Search ${tool}`}
               />
             </label>
           )}
@@ -6579,31 +6668,70 @@ function Sidebar({
                 </>
               ) : (
                 <>
-                  <div className="saved-article-sort">
-                    <label>
-                      Sort
-                      <select
-                        value={savedSort}
-                        onChange={(event) =>
-                          setSavedSort(event.target.value as "recent" | "title")
-                        }
-                      >
-                        <option value="recent">Recently saved</option>
-                        <option value="title">Title</option>
-                      </select>
+                  <div className="saved-library-toolbar">
+                    <label className="panel-search-field saved-article-search">
+                      <Icon name="search" />
+                      <input
+                        className="panel-search"
+                        type="search"
+                        value={query}
+                        onChange={(event) => setQuery(event.target.value)}
+                        placeholder="Search saved articles"
+                        aria-label="Search saved articles"
+                      />
                     </label>
+                    <div className="saved-sort-control">
+                      <button
+                        type="button"
+                        className="saved-sort-button"
+                        aria-label={`Sort: ${savedArticleSortLabels[savedSort]}`}
+                        title={`Sort: ${savedArticleSortLabels[savedSort]}`}
+                        aria-haspopup="menu"
+                        aria-expanded={savedSortOpen}
+                        onClick={() => {
+                          setSavedMenu(null);
+                          setSavedSortOpen((open) => !open);
+                        }}
+                      >
+                        <Icon name="tune" />
+                      </button>
+                      {savedSortOpen && (
+                        <div className="saved-sort-menu" role="menu">
+                          {(
+                            Object.keys(
+                              savedArticleSortLabels,
+                            ) as SavedArticleSort[]
+                          ).map((sort) => (
+                            <button
+                              type="button"
+                              role="menuitemradio"
+                              aria-checked={savedSort === sort}
+                              key={sort}
+                              onClick={() => {
+                                setSavedSort(sort);
+                                setSavedSortOpen(false);
+                              }}
+                            >
+                              <span>{savedArticleSortLabels[sort]}</span>
+                              {savedSort === sort && <Icon name="check" />}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                   </div>
                   <div className="panel-list saved-article-list" role="list">
                     {savedArticles.map((item) => (
                       <article
-                        className="list-item saved-article-entry"
+                        className={`list-item saved-article-entry${item.isRead ? " is-read" : " is-unread"}`}
                         key={item.id}
                         role="listitem"
                       >
                         <button
                           className="entry-main"
-                          onClick={() => navigate(item.originalUrl)}
-                          title={item.originalUrl}
+                          onClick={() => void openSavedInReader(item.id)}
+                          title={`Open ${item.title} in Smart Reader`}
+                          disabled={savedOpeningId === item.id}
                         >
                           <span className="saved-article-heading">
                             {item.faviconDataUrl ? (
@@ -6615,7 +6743,16 @@ function Sidebar({
                             )}
                             <span>
                               <strong>{item.title}</strong>
-                              <small>{item.siteName}</small>
+                              <small>
+                                <span className="saved-article-site">
+                                  {item.siteName}
+                                </span>
+                                {!item.isRead && (
+                                  <span className="saved-article-unread">
+                                    Unread
+                                  </span>
+                                )}
+                              </small>
                             </span>
                           </span>
                           {item.description && (
@@ -6624,25 +6761,76 @@ function Sidebar({
                             </span>
                           )}
                           <small className="saved-article-date">
-                            Saved {new Date(item.savedAt).toLocaleDateString()}
+                            {savedOpeningId === item.id ? (
+                              <span className="saved-article-opening">
+                                <ExpressiveLoadingIndicator compact />
+                                Preparing Smart Reader…
+                              </span>
+                            ) : (
+                              `Saved ${new Date(
+                                item.savedAt,
+                              ).toLocaleDateString(undefined, {
+                                day: "numeric",
+                                month: "short",
+                                year:
+                                  new Date(item.savedAt).getFullYear() ===
+                                  new Date().getFullYear()
+                                    ? undefined
+                                    : "numeric",
+                              })}`
+                            )}
                           </small>
                         </button>
                         <button
-                          className="entry-remove"
-                          onClick={() =>
-                            void window.chromecraft.removeSavedArticle(item.id)
-                          }
-                          aria-label={`Remove ${item.title} from saved articles`}
+                          type="button"
+                          className="entry-remove saved-article-menu-button"
+                          onClick={(event) => {
+                            const rect =
+                              event.currentTarget.getBoundingClientRect();
+                            setSavedSortOpen(false);
+                            setSavedMenu((current) =>
+                              current?.id === item.id
+                                ? null
+                                : {
+                                    id: item.id,
+                                    top: Math.max(
+                                      8,
+                                      Math.min(
+                                        window.innerHeight - 256,
+                                        rect.bottom + 5,
+                                      ),
+                                    ),
+                                    left: Math.max(
+                                      8,
+                                      Math.min(
+                                        window.innerWidth - 236,
+                                        rect.right - 228,
+                                      ),
+                                    ),
+                                  },
+                            );
+                          }}
+                          aria-label={`More actions for ${item.title}`}
+                          aria-haspopup="menu"
+                          aria-expanded={savedMenu?.id === item.id}
                         >
-                          <Icon name="close" />
+                          <Icon name="more" />
                         </button>
                       </article>
                     ))}
                     {savedArticles.length === 0 && (
                       <EmptyState
                         icon="bookmark"
-                        title="No saved articles yet"
-                        description="Find something interesting? Save it here to read later."
+                        title={
+                          query
+                            ? "No matching articles"
+                            : "No saved articles yet"
+                        }
+                        description={
+                          query
+                            ? "Try a different title, website or keyword."
+                            : "Save an article from Smart Reader to build your reading list."
+                        }
                       />
                     )}
                   </div>
@@ -6955,6 +7143,111 @@ function Sidebar({
           )}
         </section>
       )}
+      {savedMenu &&
+        savedMenuArticle &&
+        createPortal(
+          <div
+            className="saved-article-menu"
+            role="menu"
+            aria-label={`Actions for ${savedMenuArticle.title}`}
+            style={{ top: savedMenu.top, left: savedMenu.left }}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => void openSavedInReader(savedMenuArticle.id)}
+            >
+              <Icon name="reader" />
+              Open in Smart Reader
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setSavedMenu(null);
+                void window.chromecraft
+                  .createTab(savedMenuArticle.originalUrl)
+                  .catch(() => showSavedFeedback("Could not open the website"));
+              }}
+            >
+              <Icon name="open" />
+              Open original website
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setSavedMenu(null);
+                void window.chromecraft
+                  .setSavedArticleRead(
+                    savedMenuArticle.id,
+                    !savedMenuArticle.isRead,
+                  )
+                  .then(() =>
+                    showSavedFeedback(
+                      savedMenuArticle.isRead ? "Marked unread" : "Marked read",
+                    ),
+                  )
+                  .catch(() =>
+                    showSavedFeedback("Could not update the reading status"),
+                  );
+              }}
+            >
+              <Icon
+                name={savedMenuArticle.isRead ? "visibilityOff" : "visibility"}
+              />
+              Mark as {savedMenuArticle.isRead ? "unread" : "read"}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setSavedMenu(null);
+                void window.chromecraft
+                  .copySavedArticleLink(savedMenuArticle.id)
+                  .then(() => showSavedFeedback("Link copied"))
+                  .catch(() => showSavedFeedback("Could not copy the link"));
+              }}
+            >
+              <Icon name="bookmark" />
+              Copy link
+            </button>
+            <div className="saved-article-menu-divider" />
+            <button
+              type="button"
+              role="menuitem"
+              className="danger"
+              onClick={() => {
+                setSavedMenu(null);
+                void window.chromecraft
+                  .removeSavedArticle(savedMenuArticle.id)
+                  .then(() => showSavedFeedback("Removed from Saved articles"))
+                  .catch(() =>
+                    showSavedFeedback("Could not remove the saved article"),
+                  );
+              }}
+            >
+              <Icon name="delete" />
+              Remove from Saved articles
+            </button>
+          </div>,
+          document.body,
+        )}
+      {savedFeedback &&
+        createPortal(
+          <div className="saved-article-toast" role="status" aria-live="polite">
+            <Icon name="reader" />
+            <span>{savedFeedback}</span>
+            <button
+              type="button"
+              onClick={() => setSavedFeedback(null)}
+              aria-label="Dismiss saved article message"
+            >
+              <Icon name="close" />
+            </button>
+          </div>,
+          document.body,
+        )}
     </aside>
   );
 }

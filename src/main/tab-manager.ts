@@ -23,6 +23,7 @@ import type {
   HyperdriveOmniboxSignal,
   HyperdriveSnapshot,
   NewTabTheme,
+  SavedArticleOpenResult,
   SplitViewCommand,
   TabGroupColor,
   TabGroupSnapshot,
@@ -96,6 +97,7 @@ const ASSISTANT_TEXT_LIMIT = 2_000;
 const ASSISTANT_DESCRIPTION_LIMIT = 600;
 const ASSISTANT_SCREENSHOT_LIMIT = 1_500_000;
 const SESSION_WRITE_DELAY_MS = 300;
+const SAVED_ARTICLE_READER_DEADLINE_MS = 20_000;
 const EXTENSION_WINDOW_NAME_PREFIX = "__chromecraft_extension_window_";
 const ZOOM_FACTORS = [
   0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4,
@@ -208,6 +210,16 @@ interface PendingReaderExtraction {
   revision: number;
   resolve: (snapshot: SmartReaderViewSnapshot) => void;
   timer: ReturnType<typeof setTimeout>;
+}
+
+interface PendingSavedArticleReader {
+  appearance: SmartReaderAppearance;
+  expectedRevision: number | null;
+  loadComplete: boolean;
+  extracting: boolean;
+  retryRequested: boolean;
+  timer: ReturnType<typeof setTimeout>;
+  resolve: (result: SavedArticleOpenResult) => void;
 }
 
 export interface SmartReaderSummaryBridge {
@@ -513,6 +525,10 @@ export class TabManager {
   private readonly pendingReaderExtractions = new Map<
     string,
     PendingReaderExtraction
+  >();
+  private readonly pendingSavedArticleReaders = new Map<
+    TabId,
+    PendingSavedArticleReader
   >();
   private readonly readerNarrationSessions = new Map<
     string,
@@ -1441,6 +1457,11 @@ export class TabManager {
   closeTab(tabId: TabId): void {
     this.assertTabTopologyMutable();
     const tab = this.requireTab(tabId);
+    this.finishSavedArticleReader(
+      tabId,
+      false,
+      "The article tab was closed before Smart Reader could open it.",
+    );
     const group = tab.groupId ? this.tabGroups.get(tab.groupId) : null;
     if (this.htmlFullscreenTabId === tab.id) this.exitWebsiteFullscreen(tab);
     if (this.pendingHtmlFullscreen?.tabId === tab.id)
@@ -2422,6 +2443,58 @@ export class TabManager {
     this.emitSnapshot();
   }
 
+  async setSavedArticleRead(id: string, isRead: boolean): Promise<void> {
+    await this.browserData.setSavedArticleRead(id, isRead);
+    this.onBrowserDataChanged();
+  }
+
+  async copySavedArticleLink(id: string): Promise<void> {
+    const article = this.browserData.findSavedArticleById(id);
+    if (!article) throw new Error("This saved article is no longer available.");
+    clipboard.writeText(article.originalUrl);
+  }
+
+  openSavedArticle(
+    id: string,
+    appearanceValue: unknown,
+  ): Promise<SavedArticleOpenResult> {
+    const article = this.browserData.findSavedArticleById(id);
+    if (!article) throw new Error("This saved article is no longer available.");
+    const appearance = normalizeSmartReaderAppearance(appearanceValue);
+    const tabId = this.createTab(undefined, false);
+    const tab = this.requireTab(tabId);
+
+    return new Promise<SavedArticleOpenResult>((resolve) => {
+      const timer = setTimeout(() => {
+        this.finishSavedArticleReader(
+          tabId,
+          false,
+          "Smart Reader was unavailable for this article. The original page is still open.",
+        );
+      }, SAVED_ARTICLE_READER_DEADLINE_MS);
+      this.pendingSavedArticleReaders.set(tabId, {
+        appearance,
+        expectedRevision: null,
+        loadComplete: false,
+        extracting: false,
+        retryRequested: false,
+        timer,
+        resolve,
+      });
+      void this.navigateToUrl(tab, article.originalUrl, false, true).catch(
+        (error: unknown) => {
+          this.finishSavedArticleReader(
+            tabId,
+            false,
+            error instanceof Error
+              ? error.message
+              : "The saved article could not be opened.",
+          );
+        },
+      );
+    });
+  }
+
   async setSmartReaderProgressVisible(
     tabId: TabId,
     visible: boolean,
@@ -2843,6 +2916,12 @@ export class TabManager {
     }
     this.finishReaderExtraction(result.requestId, tab);
     this.scheduleSnapshot();
+    if (
+      tab.reader.availability === "available" &&
+      this.pendingSavedArticleReaders.has(tab.id)
+    ) {
+      void this.attemptSavedArticleReader(tab);
+    }
   }
 
   toggleMute(tabId: TabId): void {
@@ -3209,6 +3288,13 @@ export class TabManager {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    for (const tabId of this.pendingSavedArticleReaders.keys()) {
+      this.finishSavedArticleReader(
+        tabId,
+        false,
+        "The browser closed before Smart Reader could open this article.",
+      );
+    }
     this.extensionPopup?.dispose();
     this.fullscreenHint.dispose();
     if (this.fullscreenRestoreTimer) clearTimeout(this.fullscreenRestoreTimer);
@@ -3596,7 +3682,18 @@ export class TabManager {
         ) {
           return;
         }
-        this.scheduleReaderMutationDetection(tab);
+        if (this.pendingSavedArticleReaders.has(tab.id)) {
+          const pendingSavedReader = this.pendingSavedArticleReaders.get(
+            tab.id,
+          );
+          if (pendingSavedReader?.extracting) {
+            pendingSavedReader.retryRequested = true;
+          } else {
+            void this.attemptSavedArticleReader(tab);
+          }
+        } else {
+          this.scheduleReaderMutationDetection(tab);
+        }
       },
     );
     contents.setZoomMode("isolated");
@@ -3633,6 +3730,18 @@ export class TabManager {
         if (details.url !== tab.url) tab.faviconDataUrl = null;
         tab.documentEpoch += 1;
         this.invalidateSmartReader(tab);
+        const pendingSavedReader = this.pendingSavedArticleReaders.get(tab.id);
+        if (pendingSavedReader) {
+          if (pendingSavedReader.expectedRevision === null) {
+            pendingSavedReader.expectedRevision = tab.reader.revision;
+          } else {
+            this.finishSavedArticleReader(
+              tab.id,
+              false,
+              "The page changed before Smart Reader could open it.",
+            );
+          }
+        }
         if (this.pendingHtmlFullscreen?.tabId === tab.id)
           this.pendingHtmlFullscreen = null;
         if (this.htmlFullscreenTabId === tab.id)
@@ -3652,6 +3761,11 @@ export class TabManager {
       const loadedUrl = contents.getURL();
       void this.refreshWebStoreListingMetadata(tab, contents);
       this.scheduleReaderDetection(tab);
+      const pendingSavedReader = this.pendingSavedArticleReaders.get(tab.id);
+      if (pendingSavedReader) {
+        pendingSavedReader.loadComplete = true;
+        void this.attemptSavedArticleReader(tab);
+      }
       void contents
         .executeJavaScript(
           "(() => { const entry = performance.getEntriesByType('navigation')[0]; return { transferSize: Number(entry?.transferSize ?? -1), activationStart: Number(entry?.activationStart ?? 0) }; })()",
@@ -3692,10 +3806,20 @@ export class TabManager {
           previous.search !== next.search
         ) {
           this.invalidateSmartReader(tab);
+          this.finishSavedArticleReader(
+            tab.id,
+            false,
+            "The page changed before Smart Reader could open it.",
+          );
           this.scheduleReaderDetection(tab);
         }
       } catch {
         this.invalidateSmartReader(tab);
+        this.finishSavedArticleReader(
+          tab.id,
+          false,
+          "The page changed before Smart Reader could open it.",
+        );
       }
       updateNavigationState();
       this.recordHistory(tab);
@@ -3760,6 +3884,11 @@ export class TabManager {
       "did-fail-load",
       (_event, errorCode, errorDescription, validatedUrl, isMainFrame) => {
         if (!isMainFrame || errorCode === -3 || !this.tabs.has(tab.id)) return;
+        this.finishSavedArticleReader(
+          tab.id,
+          false,
+          "Smart Reader could not open this article because the page failed to load.",
+        );
         this.hyperdrive.navigationFailed(
           tab.id,
           validatedUrl || tab.requestedUrl,
@@ -3786,6 +3915,11 @@ export class TabManager {
     );
     contents.on("render-process-gone", (_event, details) => {
       if (this.tabs.has(tab.id)) {
+        this.finishSavedArticleReader(
+          tab.id,
+          false,
+          "Smart Reader could not open this article because the page stopped responding.",
+        );
         if (this.pendingHtmlFullscreen?.tabId === tab.id)
           this.pendingHtmlFullscreen = null;
         if (this.htmlFullscreenTabId === tab.id)
@@ -4437,6 +4571,80 @@ export class TabManager {
             error: "The page changed before Smart Reader finished.",
           },
     );
+  }
+
+  private finishSavedArticleReader(
+    tabId: TabId,
+    readerActive: boolean,
+    error: string | null,
+  ): void {
+    const pending = this.pendingSavedArticleReaders.get(tabId);
+    if (!pending) return;
+    this.pendingSavedArticleReaders.delete(tabId);
+    clearTimeout(pending.timer);
+    pending.resolve({ tabId, readerActive, error });
+  }
+
+  private async attemptSavedArticleReader(tab: TabRecord): Promise<void> {
+    const pending = this.pendingSavedArticleReaders.get(tab.id);
+    if (
+      !pending ||
+      !pending.loadComplete ||
+      pending.extracting ||
+      !this.tabs.has(tab.id)
+    ) {
+      return;
+    }
+    if (
+      pending.expectedRevision !== null &&
+      pending.expectedRevision !== tab.reader.revision
+    ) {
+      this.finishSavedArticleReader(
+        tab.id,
+        false,
+        "The page changed before Smart Reader could open it.",
+      );
+      return;
+    }
+
+    pending.extracting = true;
+    pending.retryRequested = false;
+    try {
+      const detected = this.readerDocumentIsAvailable(tab)
+        ? this.smartReaderSnapshot(tab)
+        : await this.requestSmartReaderExtraction(tab, true);
+      if (this.pendingSavedArticleReaders.get(tab.id) !== pending) return;
+      if (
+        detected.availability !== "available" ||
+        !this.readerDocumentIsAvailable(tab)
+      ) {
+        // Dynamic article shells can become readable after their initial load.
+        // The page preload's MutationObserver will call us again when content
+        // actually changes; the deadline only prevents a permanently pending UI.
+        return;
+      }
+      await this.enterSmartReader(tab, pending.appearance);
+      if (this.pendingSavedArticleReaders.get(tab.id) !== pending) return;
+      if (tab.reader.active) {
+        this.finishSavedArticleReader(tab.id, true, null);
+      }
+    } catch (error) {
+      if (this.pendingSavedArticleReaders.get(tab.id) !== pending) return;
+      const message =
+        error instanceof Error
+          ? error.message
+          : "Smart Reader was unavailable for this article.";
+      if (!this.tabs.has(tab.id)) {
+        this.finishSavedArticleReader(tab.id, false, message);
+      }
+    } finally {
+      if (this.pendingSavedArticleReaders.get(tab.id) === pending) {
+        pending.extracting = false;
+        if (pending.retryRequested) {
+          queueMicrotask(() => void this.attemptSavedArticleReader(tab));
+        }
+      }
+    }
   }
 
   private cancelReaderExtraction(tab: TabRecord, message: string): void {

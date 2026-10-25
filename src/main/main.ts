@@ -1510,6 +1510,29 @@ function registerIpc(): void {
     requireManager(event).removeSavedArticle(requireString(id, "id", 128)),
   );
   ipcMain.handle(
+    channels.setSavedArticleRead,
+    (event, id: unknown, isRead: unknown) => {
+      if (typeof isRead !== "boolean") {
+        throw new TypeError("Saved article reading state must be a boolean.");
+      }
+      return requireManager(event).setSavedArticleRead(
+        requireString(id, "id", 128),
+        isRead,
+      );
+    },
+  );
+  ipcMain.handle(channels.copySavedArticleLink, (event, id: unknown) =>
+    requireManager(event).copySavedArticleLink(requireString(id, "id", 128)),
+  );
+  ipcMain.handle(
+    channels.openSavedArticle,
+    (event, id: unknown, appearance: unknown) =>
+      requireManager(event).openSavedArticle(
+        requireString(id, "id", 128),
+        appearance,
+      ),
+  );
+  ipcMain.handle(
     channels.setSmartReaderProgressVisible,
     (event, tabId: unknown, visible: unknown) =>
       requireManager(event).setSmartReaderProgressVisible(

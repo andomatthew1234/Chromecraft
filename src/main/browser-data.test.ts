@@ -94,14 +94,38 @@ describe("BrowserDataStore", () => {
 
     expect(updated.id).toBe(first.id);
     expect(store.listSavedArticles()).toHaveLength(1);
+    expect(updated.isRead).toBe(false);
+    await store.setSavedArticleRead(first.id, true);
+    expect(store.findSavedArticleById(first.id)?.isRead).toBe(true);
     expect(
       store.findSavedArticle("https://example.com/story#anything")?.title,
     ).toBe("A useful story, updated");
     const reloaded = createStore();
     await reloaded.load();
     expect(reloaded.snapshot.savedArticles).toHaveLength(1);
+    expect(reloaded.snapshot.savedArticles?.[0]?.isRead).toBe(true);
     await reloaded.removeSavedArticle(first.id);
     expect(reloaded.listSavedArticles()).toEqual([]);
+  });
+
+  it("migrates saved articles without reading state to unread", async () => {
+    const store = createStore();
+    await store.load();
+    await store.saveArticle({
+      canonicalUrl: "https://example.com/legacy",
+      originalUrl: "https://example.com/legacy",
+      title: "Legacy saved article",
+      siteName: "Example",
+    });
+    const persisted = JSON.parse(await fs.readFile(filePath, "utf8")) as {
+      savedArticles: Array<Record<string, unknown>>;
+    };
+    delete persisted.savedArticles[0]!.isRead;
+    await fs.writeFile(filePath, JSON.stringify(persisted), "utf8");
+
+    const reloaded = createStore();
+    await reloaded.load();
+    expect(reloaded.listSavedArticles()[0]?.isRead).toBe(false);
   });
 
   it("records bounded history and supports deletion and time-range clearing", async () => {

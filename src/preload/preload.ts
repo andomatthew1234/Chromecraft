@@ -75,6 +75,16 @@ const api: ChromecraftApi = {
     ipcRenderer.invoke(channels.toggleSavedArticle, tabId),
   removeSavedArticle: (id) =>
     ipcRenderer.invoke(channels.removeSavedArticle, id) as Promise<void>,
+  setSavedArticleRead: (id, isRead) =>
+    ipcRenderer.invoke(
+      channels.setSavedArticleRead,
+      id,
+      isRead,
+    ) as Promise<void>,
+  copySavedArticleLink: (id) =>
+    ipcRenderer.invoke(channels.copySavedArticleLink, id) as Promise<void>,
+  openSavedArticle: (id, appearance) =>
+    ipcRenderer.invoke(channels.openSavedArticle, id, appearance),
   setSmartReaderProgressVisible: (tabId, visible) =>
     ipcRenderer.invoke(channels.setSmartReaderProgressVisible, tabId, visible),
   runSmartReaderCommand: (tabId, command) =>

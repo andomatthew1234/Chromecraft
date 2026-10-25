@@ -321,6 +321,7 @@ function validateSavedArticle(value: unknown): SavedArticleEntry | null {
         faviconDataUrl,
         description: description || null,
         savedAt,
+        isRead: value.isRead === true,
       }
     : null;
 }
@@ -792,6 +793,15 @@ export class BrowserDataStore {
     return entry ? structuredClone(entry) : null;
   }
 
+  findSavedArticleById(id: string): SavedArticleEntry | null {
+    const clean = cleanId(id);
+    if (!clean) return null;
+    const entry = this.data.savedArticles.find(
+      (candidate) => candidate.id === clean,
+    );
+    return entry ? structuredClone(entry) : null;
+  }
+
   async saveArticle(input: SavedArticleInput): Promise<SavedArticleEntry> {
     const canonicalUrl = canonicalArticleUrl(input.canonicalUrl);
     if (!canonicalUrl) throw new TypeError("A valid article URL is required.");
@@ -837,6 +847,7 @@ export class BrowserDataStore {
         faviconDataUrl,
         description,
         savedAt: this.timestamp(),
+        isRead: false,
       };
       draft.savedArticles.unshift(entry);
       return { result: structuredClone(entry), changed: true };
@@ -845,6 +856,20 @@ export class BrowserDataStore {
 
   async removeSavedArticle(id: string): Promise<boolean> {
     return this.removeById("savedArticles", id);
+  }
+
+  async setSavedArticleRead(id: string, isRead: boolean): Promise<boolean> {
+    const clean = this.requireId(id);
+    return this.mutate((draft) => {
+      const entry = draft.savedArticles.find(
+        (candidate) => candidate.id === clean,
+      );
+      if (!entry || entry.isRead === isRead) {
+        return { result: Boolean(entry), changed: false };
+      }
+      entry.isRead = isRead;
+      return { result: true, changed: true };
+    });
   }
 
   listHistory(): HistoryEntry[] {
