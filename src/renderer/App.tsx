@@ -6316,7 +6316,8 @@ function Sidebar({
   const downloadCompletionTimer = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
-  const open = snapshot.preferences.sidebarOpen;
+  const commandOpening = tool === "assistant" && Boolean(commandLaunch);
+  const open = snapshot.preferences.sidebarOpen || commandOpening;
   const panelOpen = open && Boolean(tool);
   const navigate = (url: string) => void window.chromecraft.createTab(url);
   const openGalleryFromSidebar = async (entryId?: string) => {
@@ -6471,7 +6472,7 @@ function Sidebar({
     ? ((data.savedArticles ?? []).find((entry) => entry.id === savedMenu.id) ??
       null)
     : null;
-  if (!snapshot.preferences.sidebarAttached) return null;
+  if (!snapshot.preferences.sidebarAttached && !commandOpening) return null;
 
   return (
     <aside

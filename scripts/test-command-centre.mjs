@@ -439,7 +439,11 @@ async function openFromWebpage(page, shell) {
 async function inputState(shell) {
   return shell.evaluate(`(() => {
     const input = document.querySelector('input[aria-label="Command Centre input"]');
-    return input ? { value: input.value, placeholder: input.placeholder } : null;
+    return input ? {
+      value: input.value,
+      placeholder: input.placeholder,
+      focused: document.hasFocus() && document.activeElement === input,
+    } : null;
   })()`);
 }
 
@@ -616,6 +620,18 @@ try {
     "Command Centre did not open with Scout selected",
     initialInput,
   );
+  assert(
+    initialInput?.focused === true,
+    "Command Centre input was not keyboard-ready immediately after Ctrl+K",
+    initialInput,
+  );
+  await typeText(run.shell, "keyboard ready");
+  const immediatelyTyped = await inputState(run.shell);
+  assert(
+    immediatelyTyped?.value === "keyboard ready",
+    "Typing immediately after Ctrl+K did not reach the Command Centre input",
+    immediatelyTyped,
+  );
   const fixedRows = await run.shell.evaluate(`(() =>
     [...document.querySelectorAll(
       '[role="dialog"][aria-label="Command Centre"] [role="option"]'
@@ -642,8 +658,13 @@ try {
     code: "ArrowDown",
     windowsVirtualKeyCode: 40,
   });
-  await waitForPlaceholder(run.shell, "Filter open tabs...");
-  await replaceInput(run.shell, "Beta");
+  const tabInput = await waitForPlaceholder(run.shell, "Filter open tabs...");
+  assert(
+    tabInput.focused === true,
+    "Arrow navigation moved focus away from the Command Centre input",
+    tabInput,
+  );
+  await typeText(run.shell, "Beta");
   const filteredTabs = await poll(
     () =>
       run.shell.evaluate(`(() => [...document.querySelectorAll(
@@ -736,10 +757,21 @@ try {
     "Scout draft was lost after revisiting the web-search draft",
     retainedScout,
   );
+  const scoutHandoffStartedAt = Date.now();
   await pressKey(run.shell, "Enter", {
     code: "Enter",
     windowsVirtualKeyCode: 13,
   });
+  await poll(
+    () =>
+      run.shell.evaluate(
+        `document.querySelector('.sidebar-panel')?.textContent ?? ''`,
+      ),
+    (text) => text.includes("Explain the deterministic fixture"),
+    "the submitted Scout prompt to appear in the assistant panel",
+    1_000,
+  );
+  const scoutHandoffMs = Date.now() - scoutHandoffStartedAt;
   await poll(
     () =>
       run.shell.evaluate(
@@ -864,6 +896,7 @@ try {
         scoutRequests: ollamaRequests.filter(
           (request) => request.url === "/api/chat",
         ).length,
+        scoutHandoffMs,
         configuredSearchEngine: searchSnapshot.preferences.searchEngine,
         nativeWindowResized: Boolean(browserWindow),
         nativeResizeUnavailable,

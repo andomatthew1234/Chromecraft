@@ -174,7 +174,7 @@ export function CommandCentre({
 
   useEffect(() => {
     inputRef.current?.focus();
-  }, []);
+  }, [selection]);
 
   useEffect(() => {
     if (!tabMode) return;

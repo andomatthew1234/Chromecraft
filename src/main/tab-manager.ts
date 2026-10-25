@@ -4280,10 +4280,12 @@ export class TabManager {
         this.runNativeTabTopologyPromise(this.reopenClosedTab());
       } else if (command && input.shift && key === "p") {
         event.preventDefault();
+        this.shellView.webContents.focus();
         this.shellView.webContents.send(channels.openCommandPalette);
       } else if (command && !input.shift && !input.alt && key === "k") {
         event.preventDefault();
         if (!input.isAutoRepeat) {
+          this.shellView.webContents.focus();
           this.shellView.webContents.send(channels.openCommandPalette);
         }
       } else if (

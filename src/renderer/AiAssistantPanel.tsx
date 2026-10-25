@@ -56,6 +56,11 @@ type Conversation = {
   messages: ConversationMessage[];
   draft: string;
 };
+type PendingAssistantPrompt = {
+  request: AssistantMessageRequest;
+  assistantMessage: ConversationMessage;
+  targetConversationId: string;
+};
 type OpenPopover = "attachments" | "history" | "more" | "power" | null;
 
 function icon(name: string) {
@@ -619,23 +624,22 @@ export function AiAssistantPanel({
     requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
-  const sendPrompt = (
+  const beginPrompt = (
     promptValue: string,
     targetConversationId = conversationId,
     promptContext = included,
     historyMessages = currentConversation?.messages ?? [],
     allowWhileCancelling = false,
-  ) => {
+  ): PendingAssistantPrompt | null => {
     const prompt = promptValue.trim();
     const model = displayedModel;
-    if (!prompt || (sending && !allowWhileCancelling) || powerBusy)
-      return false;
+    if (!prompt || (sending && !allowWhileCancelling) || powerBusy) return null;
     if (!model) {
       setDraft(prompt);
       setStatusNote("Choose an available model in Scout Power first.");
       setOpenPopover("power");
       void refreshPowerModels(aiTools.provider);
-      return false;
+      return null;
     }
     const request: AssistantMessageRequest = {
       conversationId: targetConversationId,
@@ -693,6 +697,15 @@ export function AiAssistantPanel({
     setStatusNote(null);
     setSending(true);
     setActiveMessageId(request.messageId);
+    requestAnimationFrame(() => textareaRef.current?.focus());
+    return { request, assistantMessage, targetConversationId };
+  };
+
+  const dispatchPrompt = ({
+    request,
+    assistantMessage,
+    targetConversationId,
+  }: PendingAssistantPrompt) => {
     void window.chromecraft
       .sendAssistantMessage(request)
       .then((response) => {
@@ -746,7 +759,24 @@ export function AiAssistantPanel({
         );
         requestAnimationFrame(() => textareaRef.current?.focus());
       });
-    requestAnimationFrame(() => textareaRef.current?.focus());
+  };
+
+  const sendPrompt = (
+    promptValue: string,
+    targetConversationId = conversationId,
+    promptContext = included,
+    historyMessages = currentConversation?.messages ?? [],
+    allowWhileCancelling = false,
+  ) => {
+    const pending = beginPrompt(
+      promptValue,
+      targetConversationId,
+      promptContext,
+      historyMessages,
+      allowWhileCancelling,
+    );
+    if (!pending) return false;
+    dispatchPrompt(pending);
     return true;
   };
 
@@ -774,11 +804,23 @@ export function AiAssistantPanel({
     setSending(false);
     setActiveMessageId(null);
     nearBottomRef.current = true;
+    const previousMessageId = activeMessageId;
+    const pending = beginPrompt(
+      initialCommand.prompt,
+      nextConversationId,
+      [],
+      [],
+      true,
+    );
+    if (!pending) {
+      onInitialCommandConsumed?.();
+      return;
+    }
     let cancelled = false;
     void (async () => {
-      if (activeMessageId) {
+      if (previousMessageId) {
         await window.chromecraft
-          .cancelAssistantMessage(activeMessageId)
+          .cancelAssistantMessage(previousMessageId)
           .catch(() => undefined);
       }
       let commandPage = page;
@@ -788,13 +830,26 @@ export function AiAssistantPanel({
           .catch(() => null);
       }
       if (cancelled) return;
-      sendPrompt(
-        initialCommand.prompt,
-        nextConversationId,
-        contextAttachments(commandPage, defaults, []),
-        [],
-        true,
+      const commandContext = contextAttachments(commandPage, defaults, []);
+      const request = {
+        ...pending.request,
+        context: structuredClone(commandContext),
+      };
+      setConversations((current) =>
+        current.map((conversation) =>
+          conversation.id !== nextConversationId
+            ? conversation
+            : {
+                ...conversation,
+                messages: conversation.messages.map((message) =>
+                  message.id === request.messageId
+                    ? { ...message, attachments: request.context }
+                    : message,
+                ),
+              },
+        ),
       );
+      dispatchPrompt({ ...pending, request });
       onInitialCommandConsumed?.();
     })();
     return () => {
