@@ -443,7 +443,13 @@ async function inputState(shell) {
       value: input.value,
       placeholder: input.placeholder,
       focused: document.hasFocus() && document.activeElement === input,
-      surfaceId: input.closest('.command-centre-command')?.id ?? null,
+      surfaceId: input.closest(
+        '.command-centre-row, .command-centre-tab-filter-surface, .command-centre-empty'
+      )?.id ?? null,
+      ownerTabId: input.closest('.command-centre-tab-filter-surface')?.dataset.ownerTabId ?? null,
+      selectedTabId: document.querySelector(
+        '[data-command-centre-kind="tab"][data-selected="true"]'
+      )?.id?.replace('command-centre-tab-', '') ?? null,
       inputCount: document.querySelectorAll('[data-command-centre-active-input="true"]').length,
     } : null;
   })()`);
@@ -482,11 +488,29 @@ async function waitForPlaceholder(shell, placeholder) {
   );
 }
 
+async function waitForSettledInput(shell) {
+  return poll(
+    () =>
+      shell.evaluate(`(() => {
+        const input = document.querySelector('[data-command-centre-active-input="true"]');
+        if (!input) return null;
+        const rect = input.getBoundingClientRect();
+        const surface = input.closest('.command-centre-inline-input');
+        return {
+          height: rect.height,
+          opacity: surface ? Number.parseFloat(getComputedStyle(surface).opacity) : 0,
+        };
+      })()`),
+    (state) => state?.height >= 33 && state.opacity >= 0.99,
+    "the selected Command Centre input animation to settle",
+  );
+}
+
 async function selectFilteredTabWithKeyboard(shell, expectedTitle) {
   for (let attempt = 0; attempt < 8; attempt += 1) {
     const selected = await shell.evaluate(`(() => {
       const row = document.querySelector(
-        '[data-command-centre-kind="tab"][aria-selected="true"]'
+        '[data-command-centre-kind="tab"][data-selected="true"]'
       );
       return row?.textContent?.trim() ?? null;
     })()`);
@@ -515,7 +539,9 @@ async function commandCentreGeometry(shell) {
     if (!dialog) return null;
     const rect = dialog.getBoundingClientRect();
     const input = dialog.querySelector('[data-command-centre-active-input="true"]');
-    const selected = dialog.querySelector('[role="option"][aria-selected="true"]');
+    const selected = dialog.querySelector(
+      '[data-command-centre-kind="tab"][data-selected="true"]'
+    );
     return {
       viewport: { width: innerWidth, height: innerHeight },
       rect: { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height },
@@ -567,7 +593,13 @@ try {
     const alpha = await window.chromecraft.createTab(${JSON.stringify(fixtureUrls.alpha)});
     const beta = await window.chromecraft.createTab(${JSON.stringify(fixtureUrls.beta)});
     const gamma = await window.chromecraft.createTab(${JSON.stringify(fixtureUrls.gamma)});
-    return { alpha, beta, gamma };
+    const extras = [];
+    for (let index = 0; index < 17; index += 1) {
+      extras.push(await window.chromecraft.createTab(
+        ${JSON.stringify(`http://127.0.0.1:${fixturePort}/extra-`)} + index
+      ));
+    }
+    return { alpha, beta, gamma, extras };
   })()`);
   alphaPage = await connectFixturePage(run.debugPort, "/alpha");
   await poll(
@@ -651,6 +683,29 @@ try {
     "Command Centre fixed actions do not expose the expected accessible rows",
     fixedRows,
   );
+  const liveTabCount = await run.shell.evaluate(
+    `document.querySelectorAll('[data-command-centre-kind="tab"]').length`,
+  );
+  assert(
+    liveTabCount >= 20,
+    "Command Centre did not render its many-tab inventory",
+    liveTabCount,
+  );
+  const tabsHeading = await run.shell.evaluate(`(() => {
+    const heading = document.querySelector('.command-centre-section-heading');
+    return heading ? {
+      text: heading.textContent?.trim(),
+      role: heading.getAttribute('role'),
+      selected: heading.hasAttribute('data-selected'),
+    } : null;
+  })()`);
+  assert(
+    tabsHeading?.text?.includes("Open tabs") &&
+      tabsHeading.role === null &&
+      tabsHeading.selected === false,
+    "Open tabs was not rendered as a compact, non-selectable heading",
+    tabsHeading,
+  );
 
   // The tab filter is separate from Scout/web drafts and keyboard traversal
   // selects a filtered tab rather than silently executing another mode.
@@ -673,10 +728,19 @@ try {
   const tabInput = await waitForPlaceholder(run.shell, "Filter open tabs...");
   assert(
     tabInput.focused === true &&
-      tabInput.surfaceId === "command-centre-tabs" &&
+      tabInput.surfaceId === "command-centre-tab-filter" &&
+      Boolean(tabInput.ownerTabId) &&
+      tabInput.ownerTabId === tabInput.selectedTabId &&
       tabInput.inputCount === 1,
-    "Arrow navigation moved focus away from the Command Centre input",
+    "Second ArrowDown did not select the first actual tab with its integrated filter",
     tabInput,
+  );
+  const invalidInputNesting = await run.shell.evaluate(
+    `Boolean(document.querySelector('button input, [role="option"] input'))`,
+  );
+  assert(
+    invalidInputNesting === false,
+    "The shared tab filter was nested inside another interactive control",
   );
   await typeText(run.shell, "Beta");
   await poll(
@@ -693,17 +757,22 @@ try {
     () =>
       run.shell.evaluate(`(() => ({
         empty: document.querySelector('.command-centre-empty')?.textContent?.trim() ?? null,
-        selected: document.querySelector('#command-centre-tabs')?.dataset.selected,
+        focused: document.activeElement === document.querySelector('[data-command-centre-active-input="true"]'),
+        surfaceId: document.querySelector('[data-command-centre-active-input="true"]')
+          ?.closest('.command-centre-tab-filter-surface')?.id ?? null,
       }))()`),
-    (state) => state.empty?.includes("No open tabs match") && state.selected === "true",
-    "the empty tab-filter state to return selection to Open tabs",
+    (state) =>
+      state.empty?.includes("No open tabs match") &&
+      state.surfaceId === "command-centre-tab-filter" &&
+      state.focused === true,
+    "the empty tab-filter state to retain the integrated filter",
   );
   await replaceInput(run.shell, "Beta");
   const filteredTabs = await poll(
     () =>
       run.shell.evaluate(`(() => [...document.querySelectorAll(
         '[role="dialog"][aria-label="Command Centre"] [data-command-centre-kind="tab"]'
-      )].map((row) => ({ text: row.textContent?.trim(), selected: row.getAttribute('aria-selected') })))()`),
+      )].map((row) => ({ text: row.textContent?.trim(), selected: row.dataset.selected })))()`),
     (rows) =>
       rows.length === 1 &&
       rows[0].text.includes("Beta Workspace") &&
@@ -714,6 +783,7 @@ try {
     run.shell,
     "Beta Workspace",
   );
+  await waitForSettledInput(run.shell);
   await capture(run.shell, screenshotPaths.tabs);
   await pressKey(run.shell, "Enter", {
     code: "Enter",
@@ -723,6 +793,14 @@ try {
     () => run.shell.evaluate("window.chromecraft.getSnapshot()"),
     (snapshot) => snapshot.activeTabId === tabs.beta,
     "Enter to activate the selected tab",
+  );
+  await poll(
+    () =>
+      run.shell.evaluate(
+        `!document.querySelector('[role="dialog"][aria-label="Command Centre"]')`,
+      ),
+    Boolean,
+    "the selected-tab close animation to finish",
   );
 
   // Reconnect to the currently visible page and verify Ctrl+K toggles closed.
@@ -748,6 +826,10 @@ try {
     code: "Escape",
     windowsVirtualKeyCode: 27,
   });
+  const closingState = await run.shell.evaluate(
+    `Boolean(document.querySelector('.command-centre.closing'))`,
+  );
+  assert(closingState, "Escape bypassed the Command Centre closing animation");
   await poll(
     () =>
       run.shell.evaluate(
@@ -790,6 +872,7 @@ try {
     "Web-search draft was lost when changing modes",
     webDraft,
   );
+  await waitForSettledInput(run.shell);
   await capture(run.shell, screenshotPaths.web);
 
   // Switch once more to prove the Scout draft remains independent, then submit
@@ -908,27 +991,32 @@ try {
       bounds: { width: 720, height: 620, windowState: "normal" },
     });
   }
-  await run.shell.send("Emulation.setDeviceMetricsOverride", {
-    width: 720,
-    height: 620,
-    deviceScaleFactor: 1.5,
-    mobile: false,
-  });
-  const narrowGeometry = await poll(
-    () => commandCentreGeometry(run.shell),
-    (geometry) => geometry?.viewport.width === 720,
-    "the narrow Command Centre viewport",
-  );
-  assert(
-    narrowGeometry.rect.left >= 0 &&
-      narrowGeometry.rect.right <= narrowGeometry.viewport.width &&
-      narrowGeometry.rect.top >= 0 &&
-      narrowGeometry.rect.bottom <= narrowGeometry.viewport.height &&
-      narrowGeometry.scrollWidth <= narrowGeometry.clientWidth + 1 &&
-      narrowGeometry.inputVisible,
-    "Command Centre overflowed its narrow viewport",
-    narrowGeometry,
-  );
+  const scaledGeometry = [];
+  for (const deviceScaleFactor of [1.25, 1.5]) {
+    await run.shell.send("Emulation.setDeviceMetricsOverride", {
+      width: 720,
+      height: 620,
+      deviceScaleFactor,
+      mobile: false,
+    });
+    const geometry = await poll(
+      () => commandCentreGeometry(run.shell),
+      (candidate) => candidate?.viewport.width === 720,
+      `the Command Centre viewport at ${deviceScaleFactor * 100}% scaling`,
+    );
+    assert(
+      geometry.rect.left >= 0 &&
+        geometry.rect.right <= geometry.viewport.width &&
+        geometry.rect.top >= 0 &&
+        geometry.rect.bottom <= geometry.viewport.height &&
+        geometry.scrollWidth <= geometry.clientWidth + 1 &&
+        geometry.inputVisible,
+      `Command Centre overflowed at ${deviceScaleFactor * 100}% scaling`,
+      geometry,
+    );
+    scaledGeometry.push({ deviceScaleFactor, geometry });
+  }
+  const narrowGeometry = scaledGeometry.at(-1).geometry;
   await capture(run.shell, screenshotPaths.narrow);
   await run.shell.send("Emulation.clearDeviceMetricsOverride");
 
@@ -945,6 +1033,8 @@ try {
         configuredSearchEngine: searchSnapshot.preferences.searchEngine,
         nativeWindowResized: Boolean(browserWindow),
         nativeResizeUnavailable,
+        liveTabCount,
+        scaledGeometry,
         narrowGeometry,
         screenshots: Object.values(screenshotPaths),
       },

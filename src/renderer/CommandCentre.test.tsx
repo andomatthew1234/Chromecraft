@@ -80,6 +80,34 @@ describe("CommandCentre", () => {
     ).toEqual(["docs", "music"]);
   });
 
+  it("keeps a 100+ tab inventory stable without duplicating input surfaces", () => {
+    const manyTabs = Array.from({ length: 101 }, (_, index) =>
+      tab(
+        `tab-${index}`,
+        `Workspace ${index}`,
+        `https://example.com/articles/${index}`,
+      ),
+    );
+    const manySnapshot = {
+      ...snapshot,
+      tabs: manyTabs,
+      activeTabId: manyTabs[0].id,
+    } as BrowserSnapshot;
+    const markup = renderToStaticMarkup(
+      <CommandCentre
+        snapshot={manySnapshot}
+        close={vi.fn()}
+        askScout={vi.fn()}
+        searchWeb={vi.fn()}
+        activateTab={vi.fn()}
+      />,
+    );
+
+    expect(rankCommandCentreTabs(manyTabs, [], "workspace")).toHaveLength(101);
+    expect(markup.match(/data-command-centre-kind="tab"/g)).toHaveLength(101);
+    expect(markup.match(/data-command-centre-active-input/g)).toHaveLength(1);
+  });
+
   it("opens on Scout and renders cached favicons, tab metadata and keyboard help", () => {
     const markup = renderToStaticMarkup(
       <CommandCentre
@@ -107,7 +135,10 @@ describe("CommandCentre", () => {
     expect(markup).toContain('class="ai-static-avatar"');
     expect(markup).toContain("Start a new conversation with Scout.");
     expect(markup).toContain("Search using your default search engine.");
-    expect(markup).toContain('id="command-centre-tabs"');
+    expect(markup).toContain('class="command-centre-section-heading"');
+    expect(markup).toContain("Open tabs");
+    expect(markup).not.toContain('id="command-centre-tabs"');
+    expect(markup).not.toContain('aria-label="Open tabs" data-selected');
     expect(markup).toContain("data:image/png;base64,ZmF2aWNvbg==");
     expect(markup).toContain("Research");
     expect(markup).toContain("Active");

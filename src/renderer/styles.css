@@ -6621,10 +6621,10 @@ input::placeholder {
   inset: var(--base-chrome-height) 0 0;
   display: grid;
   place-items: start center;
-  padding: 18px 16px;
-  background: rgb(15 18 24 / 27%);
-  backdrop-filter: blur(4px);
-  -webkit-backdrop-filter: blur(4px);
+  padding: 14px 12px;
+  background: rgb(15 18 24 / 24%);
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
   animation: scrim-in 120ms ease-out both;
 }
 
@@ -6635,20 +6635,20 @@ input::placeholder {
 }
 
 .command-centre {
-  width: min(620px, calc(100vw - 32px));
-  max-height: calc(100vh - var(--base-chrome-height) - 36px);
+  width: min(590px, calc(100vw - 24px));
+  max-height: calc(100vh - var(--base-chrome-height) - 28px);
   display: flex;
   flex-direction: column;
   overflow: hidden;
   border: 1px solid
     color-mix(in srgb, var(--md-outline-variant) 78%, transparent);
-  border-radius: 28px;
+  border-radius: 22px;
   color: var(--md-on-surface);
   background: color-mix(in srgb, var(--md-surface-high) 95%, transparent);
   box-shadow:
-    0 18px 48px rgb(0 0 0 / 24%),
+    0 16px 42px rgb(0 0 0 / 22%),
     var(--elevation-2);
-  animation: command-centre-in 180ms cubic-bezier(0.2, 0, 0, 1) both;
+  animation: command-centre-in 160ms cubic-bezier(0.2, 0, 0, 1) both;
 }
 
 @keyframes command-centre-in {
@@ -6658,14 +6658,38 @@ input::placeholder {
   }
 }
 
+.command-centre-backdrop.closing {
+  pointer-events: none;
+  animation: command-centre-scrim-out 120ms ease-in both;
+}
+
+.command-centre.closing {
+  animation: command-centre-out 120ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+@keyframes command-centre-scrim-out {
+  to {
+    background-color: transparent;
+    backdrop-filter: blur(0);
+    -webkit-backdrop-filter: blur(0);
+  }
+}
+
+@keyframes command-centre-out {
+  to {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.99);
+  }
+}
+
 .command-centre kbd {
-  min-width: 24px;
-  height: 24px;
+  min-width: 20px;
+  height: 20px;
   display: inline-grid;
   place-items: center;
-  padding: 0 7px;
+  padding: 0 5px;
   border: 1px solid var(--md-outline-variant);
-  border-radius: 8px;
+  border-radius: 6px;
   color: var(--md-on-surface-variant);
   background: var(--md-surface-container);
   box-shadow: inset 0 -1px 0
@@ -6679,38 +6703,56 @@ input::placeholder {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  padding: 10px;
+  padding: 7px;
   overflow: hidden;
 }
 
 .command-centre-row {
   position: relative;
   width: 100%;
-  min-height: 54px;
+  min-height: 44px;
   display: grid;
-  grid-template-columns: 36px minmax(0, 1fr) auto auto;
+  grid-template-columns: 32px minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 12px;
-  padding: 7px 12px;
-  border-radius: 16px;
+  gap: 9px;
+  padding: 5px 9px;
+  border-radius: 13px;
   color: var(--md-on-surface);
   background: transparent;
   text-align: left;
   transition:
-    background-color 110ms ease,
-    color 110ms ease,
-    transform 110ms ease,
-    border-radius 180ms cubic-bezier(0.2, 0, 0, 1);
+    background-color 120ms ease,
+    color 120ms ease,
+    transform 120ms ease,
+    border-radius 160ms cubic-bezier(0.2, 0, 0, 1);
 }
 
 .command-centre-row:hover {
   background: var(--md-hover);
 }
 
-.command-centre-row[aria-selected="true"],
+.command-centre-tab[data-selected="true"],
 .command-centre-command[data-selected="true"] {
   color: var(--md-on-secondary-container);
   background: var(--md-secondary-container);
+}
+
+.command-centre-tab[data-selected="true"]::before,
+.command-centre-command[data-selected="true"]::before {
+  position: absolute;
+  inset: 8px auto 8px 0;
+  width: 3px;
+  border-radius: 0 4px 4px 0;
+  background: var(--md-primary);
+  content: "";
+  animation: command-centre-accent-in 140ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+
+@keyframes command-centre-accent-in {
+  from {
+    opacity: 0;
+    transform: scaleY(0.45);
+  }
 }
 
 .command-centre-row:active {
@@ -6728,7 +6770,7 @@ input::placeholder {
   grid-template-areas:
     "leading copy action"
     "input input input";
-  grid-template-columns: 36px minmax(0, 1fr) 28px;
+  grid-template-columns: 32px minmax(0, 1fr) 24px;
   cursor: text;
 }
 
@@ -6742,8 +6784,8 @@ input::placeholder {
 }
 
 .command-centre-row-action {
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   display: grid;
   grid-area: action;
   place-items: center;
@@ -6751,7 +6793,7 @@ input::placeholder {
 }
 
 .command-centre-row-action > .material-icon {
-  font-size: 20px;
+  font-size: 18px;
 }
 
 .command-centre-inline-input {
@@ -6771,8 +6813,8 @@ input::placeholder {
 }
 
 .command-centre-command.expanded .command-centre-inline-input {
-  max-height: 48px;
-  margin-top: 5px;
+  max-height: 38px;
+  margin-top: 3px;
   opacity: 1;
   transform: translateY(0);
 }
@@ -6780,17 +6822,18 @@ input::placeholder {
 .command-centre-inline-input > input {
   width: 100%;
   min-width: 0;
-  height: 42px;
-  padding: 0 13px;
-  border: 1px solid color-mix(in srgb, var(--md-outline) 52%, transparent);
-  border-radius: 13px;
+  height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 10px;
   outline: none;
   color: var(--md-on-surface);
-  background: color-mix(in srgb, var(--md-surface) 78%, transparent);
+  background: color-mix(in srgb, var(--md-surface) 72%, transparent);
   caret-color: var(--md-primary);
-  font: var(--type-body-large);
+  box-shadow: inset 0 -2px 0
+    color-mix(in srgb, var(--md-outline) 28%, transparent);
+  font: var(--type-body-medium);
   transition:
-    border-color 120ms ease,
     background-color 120ms ease,
     box-shadow 120ms ease;
 }
@@ -6800,9 +6843,8 @@ input::placeholder {
 }
 
 .command-centre-inline-input > input:focus {
-  border-color: var(--md-primary);
   background: var(--md-surface);
-  box-shadow: 0 0 0 1px var(--md-primary);
+  box-shadow: inset 0 -2px 0 var(--md-primary);
 }
 
 .command-centre-command:focus-within {
@@ -6816,11 +6858,11 @@ input::placeholder {
 .command-centre-leading,
 .command-centre-avatar,
 .command-centre-favicon {
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   display: grid;
   place-items: center;
-  border-radius: 12px;
+  border-radius: 10px;
   color: var(--md-on-primary-container);
   background: var(--md-primary-container);
 }
@@ -6835,8 +6877,8 @@ input::placeholder {
 }
 
 .command-centre-favicon img {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   object-fit: contain;
 }
 
@@ -6863,33 +6905,77 @@ input::placeholder {
   font: var(--type-label-small);
 }
 
-.command-centre-row[aria-selected="true"] .command-centre-copy small,
+.command-centre-tab[data-selected="true"] .command-centre-copy small,
 .command-centre-command[data-selected="true"] .command-centre-copy small {
   color: color-mix(in srgb, var(--md-on-secondary-container) 72%, transparent);
 }
 
 .command-centre-tab-list {
-  display: grid;
+  display: flex;
   flex: 1 1 auto;
-  align-content: start;
-  grid-auto-rows: min-content;
+  flex-direction: column;
   min-height: 0;
-  margin-top: 4px;
+  margin-top: 1px;
   overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
 }
 
-.command-centre-tabs-command {
-  margin-top: 4px;
+.command-centre-section-heading {
+  min-height: 28px;
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+  margin-top: 3px;
+  padding: 4px 10px 2px;
+  color: var(--md-on-surface-variant);
+  font: var(--type-label-small);
+  letter-spacing: 0.02em;
 }
 
-.command-centre-tabs-command.expanded:not([data-selected="true"]) {
-  background: color-mix(
-    in srgb,
-    var(--md-surface-container-high) 76%,
-    transparent
-  );
+.command-centre-section-count {
+  min-width: 20px;
+  height: 18px;
+  display: inline-grid;
+  place-items: center;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--md-surface-container-high);
+  font-variant-numeric: tabular-nums;
+}
+
+.command-centre-tab {
+  cursor: default;
+}
+
+.command-centre-tab.expanded {
+  border-end-start-radius: 5px;
+  border-end-end-radius: 5px;
+}
+
+.command-centre-tab-filter-surface {
+  z-index: 1;
+  flex: 0 0 auto;
+  margin: -1px 0 3px;
+  padding: 2px 9px 6px;
+  border-radius: 5px 5px 13px 13px;
+  background: var(--md-secondary-container);
+  animation: command-centre-filter-in 150ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+
+.command-centre-tab-filter-surface .command-centre-tab-input {
+  max-height: 38px;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@keyframes command-centre-filter-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px) scaleY(0.92);
+    transform-origin: top;
+  }
 }
 
 .command-centre-group {
@@ -6920,14 +7006,22 @@ input::placeholder {
 }
 
 .command-centre-empty {
-  min-height: 112px;
+  min-height: 92px;
   display: grid;
   place-items: center;
   align-content: center;
   gap: 4px;
-  padding: 20px;
+  padding: 8px 10px 14px;
   color: var(--md-on-surface-variant);
   text-align: center;
+  animation: command-centre-empty-in 140ms ease-out both;
+}
+
+@keyframes command-centre-empty-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
 }
 
 .command-centre-empty > .material-icon {
@@ -6945,20 +7039,16 @@ input::placeholder {
 }
 
 .command-centre-footer {
-  min-height: 40px;
+  min-height: 34px;
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 16px;
-  padding: 7px 14px;
+  gap: 12px;
+  padding: 5px 11px;
   border-top: 1px solid var(--md-outline-variant);
   color: var(--md-on-surface-variant);
   background: var(--md-surface-container-low);
   font: var(--type-label-small);
-}
-
-.command-centre-shortcut-open {
-  margin-right: auto;
 }
 
 .command-centre-footer > span {
@@ -6973,13 +7063,16 @@ input::placeholder {
   }
 
   .command-centre {
-    width: min(100%, 620px);
+    width: min(100%, 590px);
     max-height: calc(100vh - var(--base-chrome-height) - 16px);
     border-radius: 22px;
   }
 
   .command-centre-footer {
-    display: none;
+    min-height: 30px;
+    flex-wrap: wrap;
+    gap: 6px 10px;
+    padding: 4px 8px;
   }
 
   .command-centre-group,
@@ -6993,7 +7086,9 @@ input::placeholder {
   .command-centre,
   .command-centre-row,
   .command-centre-inline-input,
-  .command-centre-inline-input > input {
+  .command-centre-inline-input > input,
+  .command-centre-empty,
+  .command-centre-row::before {
     animation: none;
     transition: none;
   }

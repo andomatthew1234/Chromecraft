@@ -8747,6 +8747,7 @@ export function App() {
         setPaletteOpen(true);
       }
       if (event.key === "Escape") {
+        if (event.defaultPrevented) return;
         void window.chromecraft.closeExtensionPopup();
         setBrandMenuOpen(false);
         setToolbarManagerOpen(false);
