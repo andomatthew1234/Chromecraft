@@ -584,8 +584,7 @@ input::placeholder {
   flex: 1 1 72px;
 }
 
-.brand,
-.start-mark {
+.brand {
   display: grid;
   place-items: center;
   border: 0;
@@ -599,11 +598,6 @@ input::placeholder {
   object-fit: contain;
   pointer-events: none;
   user-select: none;
-}
-
-.start-mark {
-  color: var(--md-on-primary-container);
-  background: var(--md-primary-container);
 }
 
 .brand {
@@ -714,9 +708,12 @@ input::placeholder {
   flex: 0 0 42px;
   place-items: center;
   border-radius: 14px;
-  padding: 2px;
-  background: transparent;
-  box-shadow: 0 6px 16px color-mix(in srgb, var(--md-primary) 18%, transparent);
+  color: var(--md-on-primary);
+  background: var(--md-primary);
+  font-family: "Google Sans", "Segoe UI Variable Display", sans-serif;
+  font-size: 21px;
+  font-weight: 750;
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--md-primary) 30%, transparent);
 }
 
 .brand-menu-section-label {
@@ -6045,15 +6042,6 @@ input::placeholder {
   justify-items: center;
 }
 
-.start-mark {
-  width: 56px;
-  height: 56px;
-  margin: 0 auto var(--space-3);
-  border-radius: var(--shape-lg);
-  box-shadow: none;
-  font-size: 27px;
-}
-
 .start-panel h1 {
   margin: 0;
   color: var(--md-on-surface);
@@ -8279,12 +8267,6 @@ select:focus-visible,
 
   .start-panel h1 {
     font: var(--type-headline-small);
-  }
-
-  .start-mark {
-    width: 52px;
-    height: 52px;
-    font-size: 24px;
   }
 
   .full-settings-content {

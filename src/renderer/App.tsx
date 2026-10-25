@@ -2324,12 +2324,7 @@ export function TabStrip({
           >
             <header className="brand-menu-header">
               <span className="brand-menu-mark" aria-hidden="true">
-                <img
-                  className="chromecraft-logo"
-                  src={chromecraftLogoUrl}
-                  alt=""
-                  draggable={false}
-                />
+                C
               </span>
               <span>
                 <strong>Chromecraft</strong>
@@ -8084,14 +8079,6 @@ function NewTabSurface({
     >
       <section className="start-panel" aria-labelledby="new-tab-title">
         <header className="start-identity">
-          <div className="start-mark" aria-hidden="true">
-            <img
-              className="chromecraft-logo"
-              src={chromecraftLogoUrl}
-              alt=""
-              draggable={false}
-            />
-          </div>
           <h1 id="new-tab-title">Chromecraft</h1>
         </header>
         <form
