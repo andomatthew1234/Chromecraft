@@ -298,14 +298,15 @@ try {
     );
   }
   const providerTrigger = await reader.evaluate(
-    `(()=>{const trigger=document.querySelector('.scout-control.provider');return {compact:trigger?.classList.contains('icon-only'),text:trigger?.textContent?.trim(),label:trigger?.getAttribute('aria-label'),provider:trigger?.getAttribute('data-active-provider'),icon:Boolean(trigger?.querySelector('svg'))}})()`,
+    `(()=>{const trigger=document.querySelector('.scout-control.provider');const controls=[...document.querySelectorAll('.scout-actions > button')].map(button=>button.getBoundingClientRect());return {compact:trigger?.classList.contains('icon-only'),text:trigger?.textContent?.trim(),label:trigger?.getAttribute('aria-label'),provider:trigger?.getAttribute('data-active-provider'),logo:trigger?.querySelector('svg')?.classList.contains('ollama'),aligned:controls.length===3&&controls.every(bounds=>Math.abs(bounds.height-controls[0].height)<.5)}})()`,
   );
   if (
     !providerTrigger.compact ||
     providerTrigger.text ||
-    providerTrigger.label !== "Summary provider: Local AI" ||
+    providerTrigger.label !== "Summary provider: Ollama" ||
     providerTrigger.provider !== "ollama" ||
-    !providerTrigger.icon
+    !providerTrigger.logo ||
+    !providerTrigger.aligned
   ) {
     throw new Error(
       `Reader compact provider trigger regression: ${JSON.stringify(providerTrigger)}`,
@@ -315,10 +316,11 @@ try {
     "document.querySelector('.scout-control.provider')?.click()",
   );
   const providerMenu = await reader.evaluate(
-    `(()=>{const trigger=document.querySelector('.scout-control.provider');const menu=document.querySelector('.scout-menu[role="menu"]');if(!trigger||!menu)return null;const triggerBounds=trigger.getBoundingClientRect();const menuBounds=menu.getBoundingClientRect();return {opensDown:menuBounds.top>=triggerBounds.bottom-14,animation:getComputedStyle(menu).animationName,ollama:Boolean(menu.querySelector('[data-provider="ollama"]')),gemini:Boolean(menu.querySelector('[data-provider="gemini"]'))}})()`,
+    `(()=>{const trigger=document.querySelector('.scout-control.provider');const menu=document.querySelector('.scout-menu[role="menu"]');if(!trigger||!menu)return null;const triggerBounds=trigger.getBoundingClientRect();const menuBounds=menu.getBoundingClientRect();return {inViewport:menuBounds.top>=0&&menuBounds.bottom<=innerHeight,anchored:menuBounds.left<=triggerBounds.left+1&&menuBounds.right>=triggerBounds.right-1,animation:getComputedStyle(menu).animationName,ollama:Boolean(menu.querySelector('[data-provider="ollama"] .scout-provider-logo.ollama')),gemini:Boolean(menu.querySelector('[data-provider="gemini"] .scout-provider-logo.gemini'))}})()`,
   );
   if (
-    !providerMenu?.opensDown ||
+    !providerMenu?.inViewport ||
+    !providerMenu.anchored ||
     !providerMenu.animation.includes("scout-menu-descend") ||
     !providerMenu.ollama ||
     !providerMenu.gemini
@@ -333,11 +335,12 @@ try {
   await poll(
     () =>
       reader.evaluate(
-        `(()=>{const trigger=document.querySelector('.scout-control.provider');return {label:trigger?.getAttribute('aria-label'),provider:trigger?.getAttribute('data-active-provider')}})()`,
+        `(()=>{const trigger=document.querySelector('.scout-control.provider');return {label:trigger?.getAttribute('aria-label'),provider:trigger?.getAttribute('data-active-provider'),logo:trigger?.querySelector('svg')?.classList.contains('gemini')}})()`,
       ),
     (state) =>
       state.label === "Summary provider: Google Gemini" &&
-      state.provider === "gemini",
+      state.provider === "gemini" &&
+      state.logo === true,
     "Gemini provider icon",
   );
   await reader.evaluate(
@@ -352,7 +355,7 @@ try {
     "Ollama provider icon",
   );
   const summarySettings = await reader.evaluate(
-    `(()=>{document.querySelector('[data-action="settings"]')?.click();return {actionCount:document.querySelectorAll('.scout-actions > button').length,automatic:[...document.querySelectorAll('[data-model]')].some(button=>button.textContent.includes('Automatic (recommended)')),ollama:[...document.querySelectorAll('[data-provider]')].some(button=>button.textContent.trim()==='Local AI'),gemini:[...document.querySelectorAll('[data-provider]')].some(button=>button.textContent.trim()==='Google Gemini')}})()`,
+    `(()=>{document.querySelector('[data-action="settings"]')?.click();return {actionCount:document.querySelectorAll('.scout-actions > button').length,automatic:[...document.querySelectorAll('[data-model]')].some(button=>button.textContent.includes('Automatic (recommended)')),ollama:[...document.querySelectorAll('[data-provider]')].some(button=>button.textContent.trim()==='Ollama'),gemini:[...document.querySelectorAll('[data-provider]')].some(button=>button.textContent.trim()==='Google Gemini')}})()`,
   );
   if (
     summarySettings.actionCount !== 3 ||

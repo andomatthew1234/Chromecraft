@@ -5,6 +5,11 @@ make a network request while rendering Chromecraft settings.
 
 ## Google Gemini
 
+- `gemini-sparkle.svg`
+  - Vector geometry: the official Gemini sparkle in `gemini-api.svg` below
+  - Colour reference: the official multicolour `gemini-sparkle.png` below
+  - Adaptation: the official compact mark geometry is isolated and filled with
+    the product palette so Smart Reader can bundle a crisp, icon-only SVG
 - `gemini-sparkle.png`
   - Source: <https://www.gstatic.com/lamda/images/gemini_sparkle_4g_512_lt_f94943af3be039176192d.png>
   - Published by the official Gemini web application at
