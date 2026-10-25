@@ -94,9 +94,20 @@ describe("CommandCentre", () => {
     expect(markup).toContain('aria-label="Command Centre"');
     expect(markup).toContain('placeholder="Ask Scout..."');
     expect(markup).toContain('id="command-centre-scout"');
-    expect(markup).toContain('aria-selected="true"');
+    expect(markup).toContain('data-selected="true"');
+    expect(markup).toContain('data-command-centre-active-input="true"');
+    expect(markup.match(/data-command-centre-active-input/g)).toHaveLength(1);
+    expect(markup).not.toContain("command-centre-input-shell");
+    expect(markup.indexOf('id="command-centre-scout"')).toBeLessThan(
+      markup.indexOf('data-command-centre-active-input="true"'),
+    );
+    expect(
+      markup.indexOf('data-command-centre-active-input="true"'),
+    ).toBeLessThan(markup.indexOf('id="command-centre-search"'));
+    expect(markup).toContain('class="ai-static-avatar"');
     expect(markup).toContain("Start a new conversation with Scout.");
     expect(markup).toContain("Search using your default search engine.");
+    expect(markup).toContain('id="command-centre-tabs"');
     expect(markup).toContain("data:image/png;base64,ZmF2aWNvbg==");
     expect(markup).toContain("Research");
     expect(markup).toContain("Active");

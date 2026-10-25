@@ -2,6 +2,7 @@ import {
   type ChangeEvent,
   type KeyboardEvent,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -14,11 +15,7 @@ import type {
 } from "../shared/browser";
 import { StaticAssistantAvatar } from "./AssistantAvatar";
 
-type CommandCentreSelection =
-  | "scout"
-  | "search"
-  | "tabs-empty"
-  | `tab:${string}`;
+type CommandCentreSelection = "scout" | "search" | "tabs" | `tab:${string}`;
 
 export interface RankedCommandCentreTab {
   tab: BrowserTabSnapshot;
@@ -147,13 +144,13 @@ export function CommandCentre({
   const [searchDraft, setSearchDraft] = useState("");
   const [tabQuery, setTabQuery] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
-  const selectedRef = useRef<HTMLButtonElement>(null);
+  const selectedRef = useRef<HTMLElement>(null);
   const rankedTabs = useMemo(
     () => rankCommandCentreTabs(snapshot.tabs, snapshot.tabGroups, tabQuery),
     [snapshot.tabGroups, snapshot.tabs, tabQuery],
   );
   const currentTabId = selectedTabId(selection);
-  const tabMode = currentTabId !== null || selection === "tabs-empty";
+  const tabMode = currentTabId !== null || selection === "tabs";
   const inputValue =
     selection === "scout"
       ? scoutDraft
@@ -169,17 +166,19 @@ export function CommandCentre({
   const navigation: CommandCentreSelection[] = [
     "scout",
     "search",
+    "tabs",
     ...rankedTabs.map((item) => tabSelection(item.tab.id)),
   ];
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     inputRef.current?.focus();
   }, [selection]);
 
   useEffect(() => {
     if (!tabMode) return;
+    if (selection === "tabs") return;
     if (rankedTabs.length === 0) {
-      if (selection !== "tabs-empty") setSelection("tabs-empty");
+      setSelection("tabs");
       return;
     }
     if (
@@ -216,6 +215,7 @@ export function CommandCentre({
       searchWeb(query);
       return;
     }
+    if (selection === "tabs") return;
     if (
       !currentTabId ||
       !snapshot.tabs.some((tab) => tab.id === currentTabId)
@@ -260,50 +260,28 @@ export function CommandCentre({
         aria-label="Command Centre"
         onPointerDown={(event) => event.stopPropagation()}
       >
-        <label className="command-centre-input-shell">
-          {materialIcon(
-            selection === "scout"
-              ? "auto_awesome"
-              : selection === "search"
-                ? "travel_explore"
-                : "tab_search",
-          )}
-          <input
-            ref={inputRef}
-            value={inputValue}
-            onChange={updateDraft}
-            onKeyDown={onInputKeyDown}
-            placeholder={placeholder}
-            aria-label="Command Centre input"
-            aria-controls="command-centre-results"
-            aria-activedescendant={
-              selection === "tabs-empty"
-                ? undefined
-                : `command-centre-${selection.replace(":", "-")}`
-            }
-            autoComplete="off"
-            spellCheck={selection === "scout"}
-          />
-          <kbd>Ctrl K</kbd>
-        </label>
-
         <div
           className="command-centre-results"
           id="command-centre-results"
-          role="listbox"
           aria-label="Commands and open tabs"
         >
-          <button
+          <div
             id="command-centre-scout"
-            ref={selection === "scout" ? selectedRef : undefined}
-            type="button"
-            role="option"
-            aria-selected={selection === "scout"}
-            className="command-centre-row command-centre-action"
-            onPointerMove={() => setSelection("scout")}
+            ref={
+              selection === "scout"
+                ? (node) => {
+                    if (node) selectedRef.current = node;
+                  }
+                : undefined
+            }
+            role="group"
+            tabIndex={-1}
+            aria-label="Ask Scout"
+            data-selected={selection === "scout"}
+            className={`command-centre-row command-centre-command ${selection === "scout" ? "expanded" : ""}`}
             onClick={() => {
-              if (selection === "scout") runSelection();
-              else setSelection("scout");
+              setSelection("scout");
+              requestAnimationFrame(() => inputRef.current?.focus());
             }}
           >
             <span className="command-centre-avatar">
@@ -313,19 +291,43 @@ export function CommandCentre({
               <strong>Ask Scout</strong>
               <small>Start a new conversation with Scout.</small>
             </span>
-            {selection === "scout" && materialIcon("keyboard_return")}
-          </button>
-          <button
+            <span className="command-centre-row-action">
+              {selection === "scout" ? materialIcon("keyboard_return") : null}
+            </span>
+            <div className="command-centre-inline-input">
+              {selection === "scout" && (
+                <input
+                  ref={inputRef}
+                  value={inputValue}
+                  onChange={updateDraft}
+                  onKeyDown={onInputKeyDown}
+                  placeholder={placeholder}
+                  aria-label="Ask Scout prompt"
+                  data-command-centre-active-input="true"
+                  autoComplete="off"
+                  autoFocus
+                  spellCheck
+                />
+              )}
+            </div>
+          </div>
+          <div
             id="command-centre-search"
-            ref={selection === "search" ? selectedRef : undefined}
-            type="button"
-            role="option"
-            aria-selected={selection === "search"}
-            className="command-centre-row command-centre-action"
-            onPointerMove={() => setSelection("search")}
+            ref={
+              selection === "search"
+                ? (node) => {
+                    if (node) selectedRef.current = node;
+                  }
+                : undefined
+            }
+            role="group"
+            tabIndex={-1}
+            aria-label="Search the web"
+            data-selected={selection === "search"}
+            className={`command-centre-row command-centre-command ${selection === "search" ? "expanded" : ""}`}
             onClick={() => {
-              if (selection === "search") runSelection();
-              else setSelection("search");
+              setSelection("search");
+              requestAnimationFrame(() => inputRef.current?.focus());
             }}
           >
             <span className="command-centre-leading">
@@ -335,28 +337,107 @@ export function CommandCentre({
               <strong>Search the web</strong>
               <small>Search using your default search engine.</small>
             </span>
-            {selection === "search" && materialIcon("keyboard_return")}
-          </button>
-
-          <div className="command-centre-section-label" aria-hidden="true">
-            <span>Open tabs</span>
-            <span>{rankedTabs.length}</span>
+            <span className="command-centre-row-action">
+              {selection === "search" ? materialIcon("keyboard_return") : null}
+            </span>
+            <div className="command-centre-inline-input">
+              {selection === "search" && (
+                <input
+                  ref={inputRef}
+                  value={inputValue}
+                  onChange={updateDraft}
+                  onKeyDown={onInputKeyDown}
+                  placeholder={placeholder}
+                  aria-label="Web search query"
+                  data-command-centre-active-input="true"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              )}
+            </div>
           </div>
-          <div className="command-centre-tab-list">
+
+          <div
+            id="command-centre-tabs"
+            ref={
+              selection === "tabs"
+                ? (node) => {
+                    if (node) selectedRef.current = node;
+                  }
+                : undefined
+            }
+            role="group"
+            tabIndex={-1}
+            aria-label="Open tabs"
+            data-selected={selection === "tabs"}
+            className={`command-centre-row command-centre-command command-centre-tabs-command ${tabMode ? "expanded" : ""}`}
+            onClick={() => {
+              setSelection("tabs");
+              requestAnimationFrame(() => inputRef.current?.focus());
+            }}
+          >
+            <span className="command-centre-leading">
+              {materialIcon("tab_search")}
+            </span>
+            <span className="command-centre-copy">
+              <strong>Open tabs</strong>
+              <small>
+                {tabMode
+                  ? `${rankedTabs.length} matching ${rankedTabs.length === 1 ? "tab" : "tabs"}`
+                  : `${snapshot.tabs.length} open ${snapshot.tabs.length === 1 ? "tab" : "tabs"}`}
+              </small>
+            </span>
+            <span className="command-centre-row-action">
+              {tabMode ? materialIcon("filter_list") : null}
+            </span>
+            <div className="command-centre-inline-input">
+              {tabMode && (
+                <input
+                  ref={inputRef}
+                  value={inputValue}
+                  onChange={updateDraft}
+                  onKeyDown={onInputKeyDown}
+                  placeholder={placeholder}
+                  aria-label="Filter open tabs"
+                  data-command-centre-active-input="true"
+                  aria-controls="command-centre-tab-list"
+                  aria-activedescendant={
+                    currentTabId
+                      ? `command-centre-tab-${currentTabId}`
+                      : "command-centre-tabs"
+                  }
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              )}
+            </div>
+          </div>
+
+          <div
+            className="command-centre-tab-list"
+            id="command-centre-tab-list"
+            role="listbox"
+            aria-label="Open tabs"
+          >
             {rankedTabs.map(({ tab, group, hostname, displayUrl }) => {
               const key = tabSelection(tab.id);
               const selected = selection === key;
               return (
                 <button
                   id={`command-centre-tab-${tab.id}`}
-                  ref={selected ? selectedRef : undefined}
+                  ref={
+                    selected
+                      ? (node) => {
+                          if (node) selectedRef.current = node;
+                        }
+                      : undefined
+                  }
                   type="button"
                   role="option"
                   aria-selected={selected}
                   className="command-centre-row command-centre-tab"
                   data-command-centre-kind="tab"
                   key={tab.id}
-                  onPointerMove={() => setSelection(key)}
                   onClick={() => {
                     close();
                     activateTab(tab.id);
@@ -402,6 +483,9 @@ export function CommandCentre({
         </div>
 
         <footer className="command-centre-footer" aria-hidden="true">
+          <span className="command-centre-shortcut-open">
+            <kbd>Ctrl K</kbd>
+          </span>
           <span>
             <kbd>↑</kbd>
             <kbd>↓</kbd> Navigate

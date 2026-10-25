@@ -438,18 +438,20 @@ async function openFromWebpage(page, shell) {
 
 async function inputState(shell) {
   return shell.evaluate(`(() => {
-    const input = document.querySelector('input[aria-label="Command Centre input"]');
+    const input = document.querySelector('[data-command-centre-active-input="true"]');
     return input ? {
       value: input.value,
       placeholder: input.placeholder,
       focused: document.hasFocus() && document.activeElement === input,
+      surfaceId: input.closest('.command-centre-command')?.id ?? null,
+      inputCount: document.querySelectorAll('[data-command-centre-active-input="true"]').length,
     } : null;
   })()`);
 }
 
 async function replaceInput(shell, value) {
   const focused = await shell.evaluate(`(() => {
-    const input = document.querySelector('input[aria-label="Command Centre input"]');
+    const input = document.querySelector('[data-command-centre-active-input="true"]');
     if (!input) return false;
     input.focus();
     input.select();
@@ -462,7 +464,7 @@ async function replaceInput(shell, value) {
 async function chooseNamedControl(shell, label) {
   const clicked = await shell.evaluate(`(() => {
     const root = document.querySelector('[role="dialog"][aria-label="Command Centre"]');
-    const target = [...(root?.querySelectorAll('button, [role="option"]') ?? [])]
+    const target = [...(root?.querySelectorAll('button, [role="option"], [role="group"]') ?? [])]
       .find((entry) => entry.textContent?.trim().includes(${JSON.stringify(label)}));
     if (!target) return false;
     target.click();
@@ -512,7 +514,7 @@ async function commandCentreGeometry(shell) {
     const dialog = document.querySelector('[role="dialog"][aria-label="Command Centre"]');
     if (!dialog) return null;
     const rect = dialog.getBoundingClientRect();
-    const input = dialog.querySelector('input[aria-label="Command Centre input"]');
+    const input = dialog.querySelector('[data-command-centre-active-input="true"]');
     const selected = dialog.querySelector('[role="option"][aria-selected="true"]');
     return {
       viewport: { width: innerWidth, height: innerHeight },
@@ -621,7 +623,9 @@ try {
     initialInput,
   );
   assert(
-    initialInput?.focused === true,
+    initialInput?.focused === true &&
+      initialInput.surfaceId === "command-centre-scout" &&
+      initialInput.inputCount === 1,
     "Command Centre input was not keyboard-ready immediately after Ctrl+K",
     initialInput,
   );
@@ -634,10 +638,10 @@ try {
   );
   const fixedRows = await run.shell.evaluate(`(() =>
     [...document.querySelectorAll(
-      '[role="dialog"][aria-label="Command Centre"] [role="option"]'
+      '[role="dialog"][aria-label="Command Centre"] > .command-centre-results > [role="group"]'
     )].slice(0, 2).map((row) => ({
       name: row.querySelector('strong')?.textContent?.trim(),
-      selected: row.getAttribute('aria-selected'),
+      selected: row.dataset.selected,
     }))
   )()`);
   assert(
@@ -654,17 +658,47 @@ try {
     code: "ArrowDown",
     windowsVirtualKeyCode: 40,
   });
+  const searchInput = await waitForPlaceholder(run.shell, "Search the web...");
+  assert(
+    searchInput.focused === true &&
+      searchInput.surfaceId === "command-centre-search" &&
+      searchInput.inputCount === 1,
+    "Search did not expand into the focused input surface",
+    searchInput,
+  );
   await pressKey(run.shell, "ArrowDown", {
     code: "ArrowDown",
     windowsVirtualKeyCode: 40,
   });
   const tabInput = await waitForPlaceholder(run.shell, "Filter open tabs...");
   assert(
-    tabInput.focused === true,
+    tabInput.focused === true &&
+      tabInput.surfaceId === "command-centre-tabs" &&
+      tabInput.inputCount === 1,
     "Arrow navigation moved focus away from the Command Centre input",
     tabInput,
   );
   await typeText(run.shell, "Beta");
+  await poll(
+    () =>
+      run.shell.evaluate(`(() => ({
+        empty: document.querySelector('.command-centre-empty')?.textContent?.trim() ?? null,
+        input: document.querySelector('[data-command-centre-active-input="true"]')?.value ?? null,
+      }))()`),
+    (state) => state.input === "Beta",
+    "the initial tab filter value",
+  );
+  await replaceInput(run.shell, "No matching workspace");
+  await poll(
+    () =>
+      run.shell.evaluate(`(() => ({
+        empty: document.querySelector('.command-centre-empty')?.textContent?.trim() ?? null,
+        selected: document.querySelector('#command-centre-tabs')?.dataset.selected,
+      }))()`),
+    (state) => state.empty?.includes("No open tabs match") && state.selected === "true",
+    "the empty tab-filter state to return selection to Open tabs",
+  );
+  await replaceInput(run.shell, "Beta");
   const filteredTabs = await poll(
     () =>
       run.shell.evaluate(`(() => [...document.querySelectorAll(
@@ -726,7 +760,18 @@ try {
   // Scout and web search keep independent drafts while changing modes.
   await openFromWebpage(alphaPage, run.shell);
   await chooseNamedControl(run.shell, "Ask Scout");
-  await waitForPlaceholder(run.shell, "Ask Scout...");
+  const emptyScout = await waitForPlaceholder(run.shell, "Ask Scout...");
+  assert(emptyScout.value === "", "Scout did not open with an empty draft");
+  await pressKey(run.shell, "Enter", {
+    code: "Enter",
+    windowsVirtualKeyCode: 13,
+  });
+  const afterEmptyScout = await waitForPlaceholder(run.shell, "Ask Scout...");
+  assert(
+    afterEmptyScout.focused === true && afterEmptyScout.value === "",
+    "An empty Scout prompt closed the palette or lost focus",
+    afterEmptyScout,
+  );
   await replaceInput(run.shell, "Explain the deterministic fixture");
   await chooseNamedControl(run.shell, "Search the web");
   await waitForPlaceholder(run.shell, "Search the web...");
