@@ -9,7 +9,6 @@ import {
   clipboard,
   ipcMain,
   Menu,
-  nativeImage,
   nativeTheme,
   Notification,
   protocol,
@@ -111,6 +110,7 @@ import { GeminiCredentialStore } from "./ai/gemini-credential-store";
 import { OllamaClient } from "./ai/ollama-client";
 import { OrganiseTabsTool } from "./ai/organise-tabs-tool";
 import { AppMetricsCollector } from "./app-metrics-collector";
+import { chromecraftIcon, chromecraftIconPath } from "./app-icon";
 import { PerformanceCentreController } from "./performance-centre-controller";
 import { isPerformanceAction } from "../shared/performance-centre";
 import {
@@ -765,12 +765,7 @@ async function syncSmartBackgroundPreferences(
     });
   }
   if (backgroundEnabled && !smartDownloadsTray) {
-    const icon = nativeImage.createFromDataURL(
-      "data:image/svg+xml;charset=utf-8," +
-        encodeURIComponent(
-          '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32"><rect width="32" height="32" rx="9" fill="#0b57d0"/><path d="M9 10h14v4H13v8h10v-4h-6v-4h10v12H9z" fill="white"/></svg>',
-        ),
-    );
+    const icon = chromecraftIcon(32);
     smartDownloadsTray = new Tray(icon);
     smartDownloadsTray.setToolTip("Chromecraft Smart Downloads");
     smartDownloadsTray.on("double-click", showChromecraft);
@@ -2986,6 +2981,7 @@ async function createMainWindow(): Promise<void> {
   const initialWindowColors = titleBarColors();
   const window = new BaseWindow({
     title: "Chromecraft",
+    icon: chromecraftIconPath(),
     width: 1280,
     height: 820,
     minWidth: 760,
@@ -3275,6 +3271,7 @@ async function createMainWindow(): Promise<void> {
   const metrics = new AppMetricsCollector();
   appMetricsCollector = metrics;
   const performanceCentre = new PerformanceCentreController({
+    iconPath: chromecraftIconPath(),
     preloadPath: path.join(__dirname, "performance-centre-preload.cjs"),
     stateFilePath: path.join(
       app.getPath("userData"),

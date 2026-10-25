@@ -16,6 +16,8 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
+import chromecraftLogoUrl from "./assets/chromecraft-logo.png";
+
 import type {
   BrowserDataSnapshot,
   BrowserExtensionSnapshot,
@@ -756,7 +758,12 @@ function TabFavicon({
       {internalIcon ? (
         <Icon name={internalIcon} />
       ) : tab.isNewTab ? (
-        "C"
+        <img
+          className="tab-favicon-image chromecraft-logo"
+          src={chromecraftLogoUrl}
+          alt=""
+          draggable={false}
+        />
       ) : tab.faviconDataUrl ? (
         <img
           className="tab-favicon-image"
@@ -2297,7 +2304,12 @@ export function TabStrip({
             onToggleBrandMenu();
           }}
         >
-          C
+          <img
+            className="chromecraft-logo"
+            src={chromecraftLogoUrl}
+            alt=""
+            draggable={false}
+          />
         </button>
         {brandMenuOpen && (
           <section
@@ -2308,7 +2320,12 @@ export function TabStrip({
           >
             <header className="brand-menu-header">
               <span className="brand-menu-mark" aria-hidden="true">
-                C
+                <img
+                  className="chromecraft-logo"
+                  src={chromecraftLogoUrl}
+                  alt=""
+                  draggable={false}
+                />
               </span>
               <span>
                 <strong>Chromecraft</strong>
@@ -4792,7 +4809,12 @@ export function AboutSettingsPage({
           <Icon name="back" />
         </button>
         <span className="about-settings-brand" aria-hidden="true">
-          C
+          <img
+            className="chromecraft-logo"
+            src={chromecraftLogoUrl}
+            alt=""
+            draggable={false}
+          />
         </span>
         <span className="about-settings-heading">
           <small>About</small>
@@ -8053,7 +8075,12 @@ function NewTabSurface({
       <section className="start-panel" aria-labelledby="new-tab-title">
         <header className="start-identity">
           <div className="start-mark" aria-hidden="true">
-            C
+            <img
+              className="chromecraft-logo"
+              src={chromecraftLogoUrl}
+              alt=""
+              draggable={false}
+            />
           </div>
           <h1 id="new-tab-title">Chromecraft</h1>
         </header>

@@ -183,5 +183,7 @@ describe("full settings model", () => {
     expect(markup).toContain("Electron");
     expect(markup).toContain("Update Chromecraft");
     expect(markup).toContain('aria-label="Back to General settings"');
+    expect(markup).toContain('class="chromecraft-logo"');
+    expect(markup).toContain("chromecraft-logo.png");
   });
 });

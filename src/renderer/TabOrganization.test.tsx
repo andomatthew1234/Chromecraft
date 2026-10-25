@@ -503,6 +503,8 @@ describe("tab organisation renderer", () => {
     expect(markup).toContain("AI tools");
     expect(markup).toContain("Organise tabs");
     expect(markup).toContain("Manage toolbar");
+    expect(markup).toContain('class="chromecraft-logo"');
+    expect(markup).toContain("chromecraft-logo.png");
     expect(markup.indexOf('class="window-drag-region"')).toBeLessThan(
       markup.indexOf('aria-label="Search tabs"'),
     );

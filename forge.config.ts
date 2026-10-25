@@ -14,7 +14,15 @@ const execFileAsync = promisify(execFile);
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
-    extraResource: ["resources/extensions", "resources/media-tools"],
+    icon:
+      process.platform === "win32"
+        ? path.resolve("resources/icons/chromecraft.ico")
+        : path.resolve("resources/icons/chromecraft.png"),
+    extraResource: [
+      "resources/extensions",
+      "resources/icons",
+      "resources/media-tools",
+    ],
     executableName: "chromecraft",
   },
   hooks: {
@@ -34,6 +42,7 @@ const config: ForgeConfig = {
         description:
           "A dependable, local-first Electron browser for Windows and Linux.",
         setupExe: "ChromecraftSetup.exe",
+        setupIcon: path.resolve("resources/icons/chromecraft.ico"),
         noMsi: true,
       },
       ["win32"],
@@ -44,6 +53,7 @@ const config: ForgeConfig = {
         options: {
           name: "chromecraft",
           productName: "Chromecraft",
+          icon: path.resolve("resources/icons/chromecraft.png"),
           categories: ["Network"],
         },
       },

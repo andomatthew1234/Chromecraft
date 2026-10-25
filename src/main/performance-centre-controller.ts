@@ -20,6 +20,7 @@ import { channels } from "../shared/channels";
 const DEFAULT_BOUNDS: Rectangle = { x: 120, y: 100, width: 850, height: 580 };
 
 interface PerformanceCentreControllerOptions {
+  iconPath: string;
   preloadPath: string;
   stateFilePath: string;
   developmentUrl?: string;
@@ -58,6 +59,7 @@ export class PerformanceCentreController {
     const bounds = await this.loadBounds();
     const window = new BrowserWindow({
       title: "Performance Centre",
+      icon: this.options.iconPath,
       ...bounds,
       minWidth: 640,
       minHeight: 420,
