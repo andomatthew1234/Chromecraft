@@ -84,6 +84,37 @@ function context(runId = "run-1"): AgentToolContext {
 }
 
 describe("ResearchToolSet", () => {
+  it("recovers when the model guesses tab-1 before listing tabs", async () => {
+    const tools = new ResearchToolSet(browser());
+    const read = tools.tools.find(
+      (tool) => tool.description.id === "read_page_excerpt",
+    )!;
+    const value = { tabRef: "tab-1", maximumCharacters: 4_000 };
+    await expect(read.prepare(value, context())).rejects.toThrow(/stale/u);
+
+    const list = tools.tools.find(
+      (tool) => tool.description.id === "list_tabs",
+    )!;
+    const listed = await list.execute(
+      await list.prepare({}, context()),
+      context(),
+    );
+    expect(
+      (listed.modelResult as { tabs: Array<{ tabRef: string }> }).tabs[0]
+        ?.tabRef,
+    ).toBe("tab-1");
+
+    await expect(
+      read.execute(await read.prepare(value, context()), context()),
+    ).resolves.toEqual(
+      expect.objectContaining({
+        modelResult: expect.objectContaining({
+          untrustedPageText: "Evidence from Article 0",
+        }),
+      }),
+    );
+  });
+
   it("returns opaque references for 20+ tabs and never exposes internal IDs", async () => {
     const adapter = browser(
       Array.from({ length: 24 }, (_, index) => tab(index)),

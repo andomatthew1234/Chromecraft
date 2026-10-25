@@ -1825,33 +1825,35 @@ html[data-scout-reduced-motion="true"] .ai-popover {
   border-top: 1px solid var(--md-outline-variant);
 }
 
-.scout-research-consent {
-  display: flex;
-  align-items: flex-start;
+.scout-research-disclosure {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: start;
   gap: 10px;
   margin: 4px 2px 6px;
-  padding: 11px;
+  padding: 9px 11px;
   border: 1px solid color-mix(in srgb, var(--md-primary) 35%, transparent);
   border-radius: 16px;
   background: color-mix(in srgb, var(--md-primary-container) 46%, transparent);
 }
 
-.scout-research-consent input {
-  margin-top: 2px;
-  accent-color: var(--md-primary);
+.scout-research-disclosure > .material-icon {
+  margin-top: 1px;
+  color: var(--md-primary);
+  font-size: 20px;
 }
 
-.scout-research-consent span {
+.scout-research-disclosure span {
   min-width: 0;
   display: grid;
   gap: 2px;
 }
 
-.scout-research-consent strong {
+.scout-research-disclosure strong {
   font: var(--type-label-large);
 }
 
-.scout-research-consent small {
+.scout-research-disclosure small {
   color: var(--md-on-surface-variant);
   font: var(--type-body-small);
   line-height: 1.3;
@@ -1914,6 +1916,11 @@ html[data-scout-reduced-motion="true"] .ai-popover {
   background: var(--md-error-container);
 }
 
+.scout-run-card[data-status="completed"] .scout-run-state-icon {
+  color: var(--md-success);
+  background: var(--md-success-container);
+}
+
 .scout-run-current {
   display: flex;
   align-items: center;
@@ -1930,12 +1937,34 @@ html[data-scout-reduced-motion="true"] .ai-popover {
   font: var(--type-label-small);
 }
 
-.scout-run-current > span {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--md-primary);
-  animation: scout-thinking-dot 900ms ease-in-out infinite alternate;
+.scout-run-step-marker {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  flex: 0 0 22px;
+  place-items: center;
+}
+
+.scout-run-step-marker .material-icon {
+  font-size: 18px;
+}
+
+[data-step-state="active"] > .scout-run-step-marker .material-icon {
+  color: var(--md-primary);
+  animation: scout-step-spin 850ms linear infinite;
+}
+
+[data-step-state="complete"] > .scout-run-step-marker .material-icon {
+  color: var(--md-success);
+  font-variation-settings: "FILL" 1;
+}
+
+[data-step-state="warning"] > .scout-run-step-marker .material-icon {
+  color: var(--md-tertiary);
+}
+
+[data-step-state="error"] > .scout-run-step-marker .material-icon {
+  color: var(--md-error);
 }
 
 .scout-run-events {
@@ -1949,21 +1978,13 @@ html[data-scout-reduced-motion="true"] .ai-popover {
 .scout-run-events li {
   min-width: 0;
   display: grid;
-  grid-template-columns: 19px minmax(0, 1fr);
+  grid-template-columns: 22px minmax(0, 1fr);
   align-items: start;
   gap: 5px;
   color: var(--md-on-surface-variant);
 }
 
-.scout-run-events li[data-status="success"] > .material-icon {
-  color: var(--md-primary);
-}
-
-.scout-run-events .material-icon {
-  font-size: 17px;
-}
-
-.scout-run-events span {
+.scout-run-events li > span:last-child {
   min-width: 0;
   display: grid;
 }
@@ -1978,6 +1999,12 @@ html[data-scout-reduced-motion="true"] .ai-popover {
   font: var(--type-body-small);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+@keyframes scout-step-spin {
+  to {
+    transform: rotate(1turn);
+  }
 }
 
 .scout-source-section {
@@ -2140,7 +2167,7 @@ html[data-scout-reduced-motion="true"] .ai-popover {
   .scout-mode-button,
   .scout-mode-options > button,
   .scout-run-card,
-  .scout-run-current > span {
+  .scout-run-step-marker .material-icon {
     animation: none !important;
     transition: none !important;
   }
@@ -2149,7 +2176,7 @@ html[data-scout-reduced-motion="true"] .ai-popover {
 html[data-scout-reduced-motion="true"] .scout-mode-button,
 html[data-scout-reduced-motion="true"] .scout-mode-options > button,
 html[data-scout-reduced-motion="true"] .scout-run-card,
-html[data-scout-reduced-motion="true"] .scout-run-current > span {
+html[data-scout-reduced-motion="true"] .scout-run-step-marker .material-icon {
   animation: none !important;
   transition: none !important;
 }

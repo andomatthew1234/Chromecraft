@@ -299,7 +299,6 @@ export function AiAssistantPanel({
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
   const [readerPreview, setReaderPreview] =
     useState<AssistantAttachment | null>(null);
-  const [researchConsentChecked, setResearchConsentChecked] = useState(false);
 
   const panelRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -868,10 +867,7 @@ export function AiAssistantPanel({
         model: request.model,
         context: request.context,
         history: request.history,
-        cloudConsent:
-          request.provider !== "gemini" ||
-          scoutAgent.researchCloudConsentGranted ||
-          researchConsentChecked,
+        cloudConsent: request.provider === "gemini",
       })
       .catch((error: unknown) => {
         const friendly =
@@ -947,17 +943,6 @@ export function AiAssistantPanel({
               : "Could not queue that follow-up.",
           ),
         );
-      return;
-    }
-    if (
-      scoutAgent.permissionMode === "ask" &&
-      aiTools.provider === "gemini" &&
-      !scoutAgent.researchCloudConsentGranted &&
-      !researchConsentChecked
-    ) {
-      setStatusNote(
-        "Confirm Gemini research processing before starting this run.",
-      );
       return;
     }
     sendPrompt(draft);
@@ -1357,8 +1342,7 @@ export function AiAssistantPanel({
           visibleContextChips.length > 0 ||
           statusNote ||
           (scoutAgent.permissionMode === "ask" &&
-            aiTools.provider === "gemini" &&
-            !scoutAgent.researchCloudConsentGranted)) && (
+            aiTools.provider === "gemini")) && (
           <div className="ai-composer-extras">
             {capturing && (
               <div className="ai-capture-status" role="status">
@@ -1464,25 +1448,17 @@ export function AiAssistantPanel({
               </p>
             )}
             {scoutAgent.permissionMode === "ask" &&
-              aiTools.provider === "gemini" &&
-              !scoutAgent.researchCloudConsentGranted && (
-                <label className="scout-research-consent">
-                  <input
-                    type="checkbox"
-                    checked={researchConsentChecked}
-                    onChange={(event) =>
-                      setResearchConsentChecked(event.target.checked)
-                    }
-                  />
+              aiTools.provider === "gemini" && (
+                <div className="scout-research-disclosure" role="note">
+                  {icon("cloud_upload")}
                   <span>
-                    <strong>Allow Gemini research</strong>
+                    <strong>Gemini research</strong>
                     <small>
-                      Open-tab titles and relevant content from the tabs Scout
-                      chooses may be sent to Google. Full unrelated pages are
-                      not uploaded.
+                      Relevant open-tab titles and page content Scout chooses
+                      may be sent to Google. Unrelated tabs are not uploaded.
                     </small>
                   </span>
-                </label>
+                </div>
               )}
           </div>
         )}

@@ -779,14 +779,6 @@ export class AgentRuntime {
     ) {
       throw new RunLimitError("Scout reached the screenshot limit.");
     }
-    const fingerprint = safeInputFingerprint(call.id, call.input);
-    const repeated = (record.repeatedCalls.get(fingerprint) ?? 0) + 1;
-    record.repeatedCalls.set(fingerprint, repeated);
-    if (repeated > this.limits.maximumRepeatedToolCalls) {
-      throw new RunLimitError(
-        `Scout repeated the same ${call.id} request too many times, so the run was stopped safely.`,
-      );
-    }
     this.transition(record, "tool-proposed");
     this.addEvent(record, {
       type: "tool-proposed",
@@ -804,6 +796,14 @@ export class AgentRuntime {
     } catch (error) {
       await this.recordToolFailure(record, call, errorMessage(error));
       return;
+    }
+    const fingerprint = safeInputFingerprint(call.id, prepared.input);
+    const repeated = (record.repeatedCalls.get(fingerprint) ?? 0) + 1;
+    record.repeatedCalls.set(fingerprint, repeated);
+    if (repeated > this.limits.maximumRepeatedToolCalls) {
+      throw new RunLimitError(
+        `Scout repeated the same ${call.id} request too many times, so the run was stopped safely.`,
+      );
     }
     const decision = this.policy.evaluate({
       mode: "ask",

@@ -12,6 +12,47 @@ function icon(name: string) {
 
 const terminal = new Set(["completed", "failed", "cancelled"]);
 
+type StepState = "active" | "complete" | "info" | "warning" | "error";
+
+function stepState(
+  event: AgentRunSnapshot["events"][number],
+  index: number,
+  events: AgentRunSnapshot["events"],
+  progressing: boolean,
+  runStatus: AgentRunSnapshot["status"],
+): StepState {
+  const status = event.status;
+  if (status === "success") return "complete";
+  if (status === "error") return "error";
+  if (status === "warning") return "warning";
+  if (status === "working") {
+    const later = events.slice(index + 1);
+    const resolution = event.toolId
+      ? later.find(
+          (candidate) =>
+            candidate.toolId === event.toolId &&
+            ["success", "warning", "error"].includes(candidate.status),
+        )
+      : later[0];
+    if (resolution?.status === "success") return "complete";
+    if (resolution?.status === "warning") return "warning";
+    if (resolution?.status === "error") return "error";
+    if (progressing && index === events.length - 1) return "active";
+    if (runStatus === "completed") return "complete";
+    if (runStatus === "failed") return "error";
+    return "info";
+  }
+  return "info";
+}
+
+function stepIcon(state: StepState): string {
+  if (state === "active") return "progress_activity";
+  if (state === "complete") return "check_circle";
+  if (state === "error") return "error";
+  if (state === "warning") return "warning";
+  return "radio_button_checked";
+}
+
 export function ScoutAgentTimeline({
   run,
   command,
@@ -29,6 +70,13 @@ export function ScoutAgentTimeline({
     .sort((left, right) => left.sequence - right.sequence)
     .slice(-8);
   const active = !terminal.has(run.status);
+  const progressing =
+    active && run.status !== "paused" && run.status !== "awaiting-approval";
+  const rows = events.map((event, index) => ({
+    event,
+    state: stepState(event, index, events, progressing, run.status),
+  }));
+  const hasActiveRow = rows.some((row) => row.state === "active");
 
   const dispatch = async (value: AgentRunCommand) => {
     if (busy) return;
@@ -59,7 +107,9 @@ export function ScoutAgentTimeline({
                   ? "stop_circle"
                   : run.status === "paused"
                     ? "pause_circle"
-                    : "travel_explore",
+                    : run.status === "awaiting-approval"
+                      ? "verified_user"
+                      : "travel_explore",
           )}
         </span>
         <span>
@@ -80,16 +130,50 @@ export function ScoutAgentTimeline({
 
       {expanded && (
         <>
-          <div className="scout-run-current" role="status">
-            <span aria-hidden="true" />
-            <strong>{run.statusLabel}</strong>
-          </div>
+          {progressing && !hasActiveRow && (
+            <div
+              className="scout-run-current"
+              data-step-state="active"
+              role="status"
+              aria-current="step"
+            >
+              <span className="scout-run-step-marker">
+                {icon("progress_activity")}
+              </span>
+              <span className="visually-hidden">In progress: </span>
+              <strong>{run.statusLabel}</strong>
+            </div>
+          )}
+          {!progressing && active && (
+            <div className="scout-run-current" role="status">
+              <span className="scout-run-step-marker">
+                {icon(
+                  run.status === "paused" ? "pause_circle" : "verified_user",
+                )}
+              </span>
+              <strong>{run.statusLabel}</strong>
+            </div>
+          )}
           {events.length > 0 && (
             <ol className="scout-run-events">
-              {events.map((event) => (
-                <li key={event.id} data-status={event.status}>
-                  {icon(event.status === "success" ? "check" : "arrow_right")}
+              {rows.map(({ event, state }) => (
+                <li
+                  key={event.id}
+                  data-status={event.status}
+                  data-step-state={state}
+                  aria-current={state === "active" ? "step" : undefined}
+                >
+                  <span className="scout-run-step-marker">
+                    {icon(stepIcon(state))}
+                  </span>
                   <span>
+                    <span className="visually-hidden">
+                      {state === "active"
+                        ? "In progress: "
+                        : state === "complete"
+                          ? "Completed: "
+                          : ""}
+                    </span>
                     <b>{event.label}</b>
                     {event.detail && <small>{event.detail}</small>}
                   </span>

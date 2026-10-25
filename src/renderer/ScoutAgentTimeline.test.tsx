@@ -17,12 +17,24 @@ function run(status: AgentRunSnapshot["status"]): AgentRunSnapshot {
     statusLabel: status === "paused" ? "Research paused" : "Scout is thinking",
     createdAt: 1,
     updatedAt: 2,
-    completedAt: null,
+    completedAt: status === "completed" ? 2 : null,
     events: [
+      {
+        id: "event-0",
+        runId: "opaque-run",
+        sequence: 1,
+        timestamp: 1,
+        type: "tool-proposed",
+        label: "Read page",
+        detail: "Preparing a bounded page excerpt",
+        toolId: "read_page_excerpt",
+        status: "working",
+        metadata: {},
+      },
       {
         id: "event-1",
         runId: "opaque-run",
-        sequence: 1,
+        sequence: 2,
         timestamp: 1,
         type: "tab-inspected",
         label: "Read Example article",
@@ -62,6 +74,11 @@ describe("ScoutAgentTimeline", () => {
     );
     expect(markup).toContain("Scout is researching");
     expect(markup).toContain("Read Example article");
+    expect(markup).toContain('data-step-state="complete"');
+    expect(markup).toContain("check_circle");
+    expect(markup).toContain('data-step-state="active"');
+    expect(markup).toContain('aria-current="step"');
+    expect(markup).toContain("progress_activity");
     expect(markup).toContain("Pause");
     expect(markup).toContain("Stop");
     expect(markup).not.toContain("tabId");
@@ -78,5 +95,19 @@ describe("ScoutAgentTimeline", () => {
     );
     expect(markup).toContain("Resume");
     expect(markup).not.toContain(">Pause<");
+  });
+
+  it("shows green completion markers without an active spinner after completion", () => {
+    const markup = renderToStaticMarkup(
+      <ScoutAgentTimeline
+        run={run("completed")}
+        command={vi.fn()}
+        onError={vi.fn()}
+      />,
+    );
+    expect(markup).toContain('data-step-state="complete"');
+    expect(markup).toContain("check_circle");
+    expect(markup).not.toContain('data-step-state="active"');
+    expect(markup).not.toContain("progress_activity");
   });
 });

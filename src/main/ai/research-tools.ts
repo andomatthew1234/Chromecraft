@@ -31,6 +31,7 @@ interface RunScope {
   byRef: Map<string, RunTabReference>;
   refByTab: Map<string, string>;
   sourceByTab: Map<string, string>;
+  nextTabReference: number;
 }
 
 function record(value: unknown): Record<string, unknown> {
@@ -178,6 +179,7 @@ export class ResearchToolSet implements AgentSourceValidator {
         byRef: new Map(),
         refByTab: new Map(),
         sourceByTab: new Map(),
+        nextTabReference: 1,
       };
       this.scopes.set(runId, scope);
     }
@@ -197,7 +199,8 @@ export class ResearchToolSet implements AgentSourceValidator {
       }
     }
     return tabs.map((tab) => {
-      const ref = scope.refByTab.get(tab.tabId) ?? `tab-${randomUUID()}`;
+      const ref =
+        scope.refByTab.get(tab.tabId) ?? `tab-${scope.nextTabReference++}`;
       const registered = { ref, tab };
       scope.refByTab.set(tab.tabId, ref);
       scope.byRef.set(ref, registered);

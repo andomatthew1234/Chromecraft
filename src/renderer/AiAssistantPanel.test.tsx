@@ -146,7 +146,7 @@ describe("AiAssistantPanel", () => {
     expect(markup).not.toContain("Allow this message");
   });
 
-  it("shows the active Ask mode and explicit Gemini research consent", () => {
+  it("discloses Gemini Ask processing without an extra confirmation", () => {
     const scoutAgent: ScoutAgentSnapshot = {
       permissionMode: "ask",
       researchCloudConsentGranted: false,
@@ -182,7 +182,9 @@ describe("AiAssistantPanel", () => {
     );
 
     expect(markup).toContain("Scout permission mode: ask");
-    expect(markup).toContain("Allow Gemini research");
-    expect(markup).toContain("Full unrelated pages are not uploaded");
+    expect(markup).toContain("may be sent to Google");
+    expect(markup).toContain("Unrelated tabs are not uploaded");
+    expect(markup).not.toContain('type="checkbox"');
+    expect(markup).not.toContain("Allow Gemini research");
   });
 });

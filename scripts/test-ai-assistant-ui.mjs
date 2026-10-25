@@ -628,6 +628,23 @@ try {
     (value) => value?.mode === "ask" && value?.label?.includes("Ask"),
     "Ask mode to become authoritative",
   );
+  await cdp.evaluate("window.chromecraft.setAiProvider('gemini')");
+  const geminiDisclosure = await poll(
+    () =>
+      cdp.evaluate(`(() => {
+        const disclosure = document.querySelector('.scout-research-disclosure');
+        return disclosure ? {
+          text: disclosure.textContent?.replace(/\\s+/g, ' ').trim() || '',
+          checkboxCount: disclosure.querySelectorAll('input[type="checkbox"]').length,
+        } : null;
+      })()`),
+    (value) => Boolean(value?.text?.includes("may be sent to Google")),
+    "the Gemini research disclosure",
+  );
+  assert(
+    geminiDisclosure.checkboxCount === 0,
+    "Gemini Ask mode still requires a confirmation checkbox",
+  );
   await cdp.evaluate("document.querySelector('.scout-mode-button')?.click()");
   await poll(
     () =>
@@ -716,6 +733,7 @@ try {
         darkScreenshotPath,
         modeScreenshotPath,
         modeBounds,
+        geminiDisclosure,
         shortWindowContainment,
         themeAndMotion,
       },

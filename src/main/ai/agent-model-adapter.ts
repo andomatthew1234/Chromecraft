@@ -119,13 +119,15 @@ export class StructuredAgentModelAdapter implements AgentModelAdapter {
           type: "array",
           maxItems: 3,
           items: {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              id: { type: "string", enum: [...availableTools] },
-              input: { type: "object" },
-            },
-            required: ["id", "input"],
+            anyOf: input.tools.map((tool) => ({
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                id: { type: "string", enum: [tool.id] },
+                input: tool.inputSchema,
+              },
+              required: ["id", "input"],
+            })),
           },
         },
       },
@@ -141,7 +143,7 @@ export class StructuredAgentModelAdapter implements AgentModelAdapter {
       `INSPECTED SOURCES\n${sourcesForModel(input.sources)}`,
       input.images.length > 0 &&
         `${input.images.length} screenshot observation(s) are attached to this turn. Analyse only those browser-tab images.`,
-      "Return tool calls when more evidence is required. Return an empty toolCalls array only when the answer is ready. Cite inspected sources using [1], [2], and so on, matching INSPECTED SOURCES. Never invent a source or claim an unavailable action was performed.",
+      "Before using any tool that requires tabRef, call list_tabs or search_open_tabs in this run and copy the exact returned tabRef. Never guess or reuse a tab reference that a tool rejected. Return tool calls when more evidence is required. Return an empty toolCalls array only when the answer is ready. Cite inspected sources using [1], [2], and so on, matching INSPECTED SOURCES. Never invent a source or claim an unavailable action was performed.",
     ]
       .filter(Boolean)
       .join("\n\n---\n\n");
