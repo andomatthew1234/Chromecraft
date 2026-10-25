@@ -62,14 +62,15 @@ export function ScoutAgentTimeline({
   command: (command: AgentRunCommand) => Promise<void>;
   onError: (message: string) => void;
 }) {
-  const [expanded, setExpanded] = useState(true);
+  const active = !terminal.has(run.status);
+  const [terminalExpanded, setTerminalExpanded] = useState(false);
+  const expanded = active || terminalExpanded;
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const events = run.events
     .filter((event) => event.type !== "status-changed")
     .sort((left, right) => left.sequence - right.sequence)
     .slice(-8);
-  const active = !terminal.has(run.status);
   const progressing =
     active && run.status !== "paused" && run.status !== "awaiting-approval";
   const rows = events.map((event, index) => ({
@@ -118,10 +119,15 @@ export function ScoutAgentTimeline({
         </span>
         <button
           type="button"
-          onClick={() => setExpanded((value) => !value)}
+          disabled={active}
+          onClick={() => setTerminalExpanded((value) => !value)}
           aria-expanded={expanded}
           aria-label={
-            expanded ? "Collapse research details" : "Expand research details"
+            active
+              ? "Research details stay expanded while Scout is researching"
+              : expanded
+                ? "Collapse research details"
+                : "Expand research details"
           }
         >
           {icon(expanded ? "expand_less" : "expand_more")}

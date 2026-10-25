@@ -182,8 +182,9 @@ describe("AiAssistantPanel", () => {
     );
 
     expect(markup).toContain("Scout permission mode: ask");
-    expect(markup).toContain("may be sent to Google");
-    expect(markup).toContain("Unrelated tabs are not uploaded");
+    expect(markup).toContain("Ask mode is on");
+    expect(markup).toContain("We&#x27;ll send relevant tabs to Gemini.");
+    expect(markup).not.toContain("Gemini research");
     expect(markup).not.toContain('type="checkbox"');
     expect(markup).not.toContain("Allow Gemini research");
   });

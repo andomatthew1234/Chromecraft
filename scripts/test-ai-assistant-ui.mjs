@@ -216,6 +216,53 @@ try {
     60_000,
   );
   console.log("Connected to the rendered Chromecraft shell.");
+  const markdownHistory = JSON.stringify([
+    {
+      id: "markdown-ui-check",
+      title: "Markdown UI check",
+      updatedAt: Date.now(),
+      draft: "",
+      messages: [
+        {
+          id: "markdown-user",
+          text: "Compare these coolers",
+          createdAt: Date.now() - 1000,
+          attachments: [],
+          role: "user",
+          status: "complete",
+          model: "gemini-flash-lite-latest",
+        },
+        {
+          id: "markdown-assistant",
+          text: [
+            "## Recommendation",
+            "",
+            "Choose the **280 A-RGB**.",
+            "",
+            "- Larger fans",
+            "- Same price",
+            "",
+            "| Cooler | Price |",
+            "| --- | ---: |",
+            "| 280 | $139 |",
+            "",
+            "```txt",
+            "38 mm radiator",
+            "```",
+          ].join("\n"),
+          createdAt: Date.now(),
+          attachments: [],
+          role: "assistant",
+          status: "complete",
+          model: "gemini-flash-lite-latest",
+        },
+      ],
+    },
+  ]);
+  await cdp.evaluate(`localStorage.setItem(
+    'chromecraft-ai-assistant-history-v1',
+    ${JSON.stringify(markdownHistory)},
+  )`);
   const hasAssistantButton = await cdp.evaluate(
     "Boolean(document.querySelector('button[aria-label=\"Scout\"]'))",
   );
@@ -638,7 +685,11 @@ try {
           checkboxCount: disclosure.querySelectorAll('input[type="checkbox"]').length,
         } : null;
       })()`),
-    (value) => Boolean(value?.text?.includes("may be sent to Google")),
+    (value) =>
+      Boolean(
+        value?.text?.includes("Ask mode is on") &&
+        value?.text?.includes("We'll send relevant tabs to Gemini."),
+      ),
     "the Gemini research disclosure",
   );
   assert(
@@ -678,6 +729,48 @@ try {
   })()`);
   await new Promise((resolve) => setTimeout(resolve, 360));
 
+  await cdp.evaluate(
+    "document.querySelector('button[aria-label=\"Conversation history\"]')?.click()",
+  );
+  await poll(
+    () =>
+      cdp.evaluate("Boolean(document.querySelector('.ai-history-popover'))"),
+    Boolean,
+    "conversation history",
+  );
+  await cdp.evaluate(`([...document.querySelectorAll('.ai-history-list button')]
+    .find((item) => item.textContent?.includes('Markdown UI check')))?.click()`);
+  const markdownLayout = await poll(
+    () =>
+      cdp.evaluate(`(() => {
+        const markdown = document.querySelector('.scout-markdown');
+        const panel = document.querySelector('.ai-assistant-panel');
+        if (!markdown || !panel) return null;
+        return {
+          heading: markdown.querySelector('h2')?.textContent?.trim() || '',
+          bold: markdown.querySelector('strong')?.textContent?.trim() || '',
+          listItems: markdown.querySelectorAll('li').length,
+          tableCount: markdown.querySelectorAll('table').length,
+          code: markdown.querySelector('pre code')?.textContent?.trim() || '',
+          rawImages: markdown.querySelectorAll('img').length,
+          panelOverflow: panel.scrollWidth - panel.clientWidth,
+        };
+      })()`),
+    (value) => Boolean(value?.heading === "Recommendation"),
+    "the Markdown conversation",
+  );
+  assert(
+    markdownLayout.bold === "280 A-RGB" &&
+      markdownLayout.listItems === 2 &&
+      markdownLayout.tableCount === 1 &&
+      markdownLayout.code === "38 mm radiator",
+    "Assistant Markdown did not render its rich structures",
+  );
+  assert(
+    markdownLayout.rawImages === 0 && markdownLayout.panelOverflow <= 1,
+    "Assistant Markdown rendered remote media or overflowed the panel",
+  );
+
   const screenshot = await cdp.send("Page.captureScreenshot", {
     format: "png",
   });
@@ -698,7 +791,7 @@ try {
     lightSurfaceToken: ${JSON.stringify(lightSurfaceToken)},
     darkSurfaceToken: getComputedStyle(document.documentElement).getPropertyValue('--md-surface-container-low').trim(),
     panelAnimation: getComputedStyle(document.querySelector('.ai-assistant-panel')).animationName,
-    avatarAnimation: getComputedStyle(document.querySelector('.ai-character')).animationName,
+    messageAnimation: getComputedStyle(document.querySelector('.ai-message')).animationName,
     scrollBehavior: getComputedStyle(document.querySelector('.ai-assistant-scroll')).scrollBehavior,
   }))()`);
   console.log("Theme and motion:", themeAndMotion);
@@ -708,7 +801,7 @@ try {
   );
   assert(
     themeAndMotion.panelAnimation === "none" &&
-      themeAndMotion.avatarAnimation === "none" &&
+      themeAndMotion.messageAnimation === "none" &&
       themeAndMotion.scrollBehavior === "auto",
     "Reduced-motion mode left assistant animation enabled",
   );
@@ -734,6 +827,7 @@ try {
         modeScreenshotPath,
         modeBounds,
         geminiDisclosure,
+        markdownLayout,
         shortWindowContainment,
         themeAndMotion,
       },

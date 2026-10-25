@@ -73,8 +73,8 @@ describe("ScoutAgentTimeline", () => {
       />,
     );
     expect(markup).toContain("Scout is researching");
+    expect(markup).toContain('aria-expanded="true"');
     expect(markup).toContain("Read Example article");
-    expect(markup).toContain('data-step-state="complete"');
     expect(markup).toContain("check_circle");
     expect(markup).toContain('data-step-state="active"');
     expect(markup).toContain('aria-current="step"');
@@ -105,8 +105,9 @@ describe("ScoutAgentTimeline", () => {
         onError={vi.fn()}
       />,
     );
-    expect(markup).toContain('data-step-state="complete"');
     expect(markup).toContain("check_circle");
+    expect(markup).toContain('aria-expanded="false"');
+    expect(markup).not.toContain("Read Example article");
     expect(markup).not.toContain('data-step-state="active"');
     expect(markup).not.toContain("progress_activity");
   });

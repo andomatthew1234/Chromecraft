@@ -34,7 +34,10 @@ import {
   StaticAssistantAvatar,
 } from "./AssistantAvatar";
 import { AssistantPopover } from "./AssistantPopover";
-import { ScoutAgentTimeline } from "./ScoutAgentTimeline";
+import {
+  resolveScoutResponse,
+  ScoutResponseContent,
+} from "./ScoutResponseContent";
 import "./ai-assistant.css";
 
 const HISTORY_STORAGE_KEY = "chromecraft-ai-assistant-history-v1";
@@ -323,6 +326,8 @@ export function AiAssistantPanel({
     .sort((left, right) => right.createdAt - left.createdAt);
   const activeRun =
     currentRuns.find((run) => !TERMINAL_AGENT_STATES.has(run.status)) ?? null;
+  const latestRun = currentRuns[0] ?? null;
+  const latestRunSequence = latestRun?.events.at(-1)?.sequence ?? -1;
   const agentBusy = Boolean(activeRun);
   const statusLabel = activeRun
     ? activeRun.statusLabel
@@ -557,7 +562,12 @@ export function AiAssistantPanel({
     if (nearBottomRef.current) {
       scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" });
     }
-  }, [currentConversation?.messages.length, conversationId]);
+  }, [
+    currentConversation?.messages.length,
+    conversationId,
+    latestRun?.status,
+    latestRunSequence,
+  ]);
 
   const setOnlyPopover = (popover: Exclude<OpenPopover, null>) => {
     setOpenPopover((current) => (current === popover ? null : popover));
@@ -1253,66 +1263,60 @@ export function AiAssistantPanel({
             </section>
           ) : (
             <section className="ai-message-list" aria-live="polite">
-              {currentConversation.messages.map((message) => (
-                <article
-                  className={`ai-message ai-message-${message.role} ${
-                    message.status === "error" ? "ai-message-error" : ""
-                  }`}
-                  key={message.id}
-                  aria-busy={message.status === "thinking" || undefined}
-                >
-                  {message.role === "assistant" && (
-                    <StaticAssistantAvatar
-                      className="ai-message-avatar"
-                      size={24}
-                    />
-                  )}
-                  {message.status === "thinking" ? (
-                    <div className="ai-thinking-indicator" role="status">
-                      <span />
-                      <span />
-                      <span />
-                      <span className="sr-only">Scout is thinking</span>
-                    </div>
-                  ) : (
-                    <p>{message.text}</p>
-                  )}
-                  {message.role === "assistant" &&
-                    runForMessage(message.id) && (
-                      <ScoutAgentTimeline
-                        run={runForMessage(message.id)!}
-                        command={(command) =>
-                          window.chromecraft.commandScoutAgent(command)
-                        }
-                        onError={setStatusNote}
+              {currentConversation.messages.map((message) => {
+                const run = runForMessage(message.id);
+                const display = resolveScoutResponse(message, run);
+                return (
+                  <article
+                    className={`ai-message ai-message-${message.role} ${
+                      display.status === "error" ? "ai-message-error" : ""
+                    }`}
+                    key={message.id}
+                    aria-busy={display.status === "thinking" || undefined}
+                  >
+                    {message.role === "assistant" && (
+                      <StaticAssistantAvatar
+                        className="ai-message-avatar"
+                        size={24}
                       />
                     )}
-                  <footer>
-                    <small>
-                      {message.status === "error"
-                        ? "Could not complete"
-                        : message.role === "assistant"
-                          ? (message.model ?? "Scout")
-                          : "You"}{" "}
-                      ·{" "}
-                      {new Date(message.createdAt).toLocaleTimeString([], {
-                        hour: "numeric",
-                        minute: "2-digit",
-                      })}
-                    </small>
-                    {message.status !== "thinking" && (
-                      <button
-                        type="button"
-                        onClick={() => void copyMessage(message)}
-                        aria-label="Copy message"
-                        title="Copy message"
-                      >
-                        {icon("content_copy")}
-                      </button>
-                    )}
-                  </footer>
-                </article>
-              ))}
+                    <ScoutResponseContent
+                      message={message}
+                      run={run}
+                      command={(command) =>
+                        window.chromecraft.commandScoutAgent(command)
+                      }
+                      onError={setStatusNote}
+                    />
+                    <footer>
+                      <small>
+                        {display.status === "error"
+                          ? "Could not complete"
+                          : display.role === "assistant"
+                            ? (display.model ?? "Scout")
+                            : "You"}{" "}
+                        ·{" "}
+                        {new Date(display.createdAt).toLocaleTimeString([], {
+                          hour: "numeric",
+                          minute: "2-digit",
+                        })}
+                      </small>
+                      {display.status !== "thinking" && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void copyMessage({ ...message, text: display.text })
+                          }
+                          aria-label="Copy message"
+                          title="Copy message"
+                        >
+                          {icon("content_copy")}
+                        </button>
+                      )}
+                    </footer>
+                  </article>
+                );
+              })}
             </section>
           )}
         </div>
@@ -1452,11 +1456,8 @@ export function AiAssistantPanel({
                 <div className="scout-research-disclosure" role="note">
                   {icon("cloud_upload")}
                   <span>
-                    <strong>Gemini research</strong>
-                    <small>
-                      Relevant open-tab titles and page content Scout chooses
-                      may be sent to Google. Unrelated tabs are not uploaded.
-                    </small>
+                    <strong>Ask mode is on</strong>
+                    <small>We'll send relevant tabs to Gemini.</small>
                   </span>
                 </div>
               )}
