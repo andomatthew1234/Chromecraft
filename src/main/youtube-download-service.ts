@@ -635,9 +635,9 @@ export class YouTubeDownloadService {
           error,
         );
       }
+      await this.cleanStaging(job);
       job.snapshot.stage = "completed";
       job.snapshot.percent = 100;
-      await this.cleanStaging(job);
       this.emit(true);
     } catch (error) {
       await this.fail(job, error);
