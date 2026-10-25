@@ -30,6 +30,11 @@ const darkScreenshotPath = path.join(
   ".artifacts",
   "ai-assistant-dark-reduced-motion.png",
 );
+const modeScreenshotPath = path.join(
+  root,
+  ".artifacts",
+  "scout-permission-mode-popover.png",
+);
 
 async function freePort() {
   const server = net.createServer();
@@ -571,6 +576,81 @@ try {
     "Scout Power to close",
   );
 
+  await cdp.evaluate("document.querySelector('.scout-mode-button')?.click()");
+  const modeBounds = await poll(
+    () =>
+      cdp.evaluate(`(() => {
+        const popover = document.querySelector('.scout-mode-popover');
+        const panel = document.querySelector('.ai-assistant-panel');
+        if (!popover || !panel) return null;
+        const p = popover.getBoundingClientRect();
+        const b = panel.getBoundingClientRect();
+        return {
+          left: p.left, right: p.right, top: p.top, bottom: p.bottom,
+          visibility: popover.style.visibility,
+          panelLeft: b.left, panelRight: b.right, panelTop: b.top, panelBottom: b.bottom,
+          viewportHeight: innerHeight,
+          modeCount: popover.querySelectorAll('[role="menuitemradio"]').length,
+          comingSoonCount: [...popover.querySelectorAll('em')]
+            .filter((item) => item.textContent?.includes('Coming soon')).length,
+        };
+      })()`),
+    (value) => Boolean(value && value.visibility === "visible"),
+    "the Scout permission-mode popover",
+  );
+  assert(
+    modeBounds.left >= modeBounds.panelLeft - 0.5 &&
+      modeBounds.right <= modeBounds.panelRight + 0.5 &&
+      modeBounds.top >= Math.max(0, modeBounds.panelTop) - 0.5 &&
+      modeBounds.bottom <=
+        Math.min(modeBounds.viewportHeight, modeBounds.panelBottom) + 0.5,
+    "Scout permission mode escaped the available panel bounds",
+  );
+  assert(
+    modeBounds.modeCount === 4 && modeBounds.comingSoonCount === 2,
+    "Scout permission mode options are incomplete",
+  );
+  const modeScreenshot = await cdp.send("Page.captureScreenshot", {
+    format: "png",
+  });
+  await fs.writeFile(
+    modeScreenshotPath,
+    Buffer.from(modeScreenshot.data, "base64"),
+  );
+  await cdp.evaluate(`([...document.querySelectorAll('[role="menuitemradio"]')]
+    .find((item) => item.textContent?.includes('Let Scout inspect browser tabs')))?.click()`);
+  await poll(
+    () =>
+      cdp.evaluate(`window.chromecraft.getScoutAgent().then((snapshot) => ({
+        mode: snapshot.permissionMode,
+        label: document.querySelector('.scout-mode-button')?.textContent?.trim(),
+      }))`),
+    (value) => value?.mode === "ask" && value?.label?.includes("Ask"),
+    "Ask mode to become authoritative",
+  );
+  await cdp.evaluate("document.querySelector('.scout-mode-button')?.click()");
+  await poll(
+    () =>
+      cdp.evaluate("Boolean(document.querySelector('.scout-mode-popover'))"),
+    Boolean,
+    "the Scout permission-mode popover to reopen",
+  );
+  await cdp.evaluate(`([...document.querySelectorAll('[role="menuitemradio"]')]
+    .find((item) => item.textContent?.includes('Let Scout carry out authorised tasks')))?.click()`);
+  const unavailableMode = await poll(
+    () =>
+      cdp.evaluate(`window.chromecraft.getScoutAgent().then((snapshot) => ({
+        mode: snapshot.permissionMode,
+        note: document.querySelector('.ai-status-note')?.textContent?.trim() || '',
+      }))`),
+    (value) => value?.note?.includes("coming soon"),
+    "the unavailable-mode explanation",
+  );
+  assert(
+    unavailableMode.mode === "ask",
+    "Selecting Automated changed the current permission mode",
+  );
+
   await cdp.evaluate(`(() => {
     document.documentElement.style.setProperty('--sidebar-width', '500px');
     const sidebar = document.querySelector('.sidebar');
@@ -634,6 +714,8 @@ try {
         screenshotPath,
         contextScreenshotPath,
         darkScreenshotPath,
+        modeScreenshotPath,
+        modeBounds,
         shortWindowContainment,
         themeAndMotion,
       },

@@ -159,7 +159,20 @@ export class GeminiClient implements StructuredModelProvider {
           signal: scoped.signal,
           body: JSON.stringify({
             systemInstruction: { parts: [{ text: request.system }] },
-            contents: [{ role: "user", parts: [{ text: request.prompt }] }],
+            contents: [
+              {
+                role: "user",
+                parts: [
+                  { text: request.prompt },
+                  ...(request.images ?? []).map((image) => ({
+                    inlineData: {
+                      mimeType: image.mimeType,
+                      data: image.data,
+                    },
+                  })),
+                ],
+              },
+            ],
             generationConfig: {
               maxOutputTokens: 2_048,
               responseMimeType: "application/json",

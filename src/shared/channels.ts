@@ -239,4 +239,8 @@ export const channels = {
   assistantContextCaptured: "ai-assistant:context-captured",
   sendAssistantMessage: "ai-assistant:send-message",
   cancelAssistantMessage: "ai-assistant:cancel-message",
+  getScoutAgent: "scout-agent:get-snapshot",
+  startScoutAgent: "scout-agent:start",
+  commandScoutAgent: "scout-agent:command",
+  scoutAgentChanged: "scout-agent:snapshot-changed",
 } as const;

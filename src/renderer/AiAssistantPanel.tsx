@@ -24,15 +24,27 @@ import {
   SCOUT_REDUCED_MOTION_STORAGE_KEY,
 } from "../shared/ai-assistant";
 import type { BrowserTabSnapshot } from "../shared/browser";
+import type {
+  AgentRunSnapshot,
+  ScoutAgentSnapshot,
+  ScoutPermissionMode,
+} from "../shared/agent";
 import {
   AnimatedAssistantAvatar,
   StaticAssistantAvatar,
 } from "./AssistantAvatar";
 import { AssistantPopover } from "./AssistantPopover";
+import { ScoutAgentTimeline } from "./ScoutAgentTimeline";
 import "./ai-assistant.css";
 
 const HISTORY_STORAGE_KEY = "chromecraft-ai-assistant-history-v1";
 const MAX_HISTORY = 24;
+const TERMINAL_AGENT_STATES = new Set(["completed", "failed", "cancelled"]);
+const EMPTY_SCOUT_AGENT: ScoutAgentSnapshot = {
+  permissionMode: "chat",
+  researchCloudConsentGranted: false,
+  runs: [],
+};
 
 export interface AssistantCommandLaunch {
   id: number;
@@ -61,7 +73,7 @@ type PendingAssistantPrompt = {
   assistantMessage: ConversationMessage;
   targetConversationId: string;
 };
-type OpenPopover = "attachments" | "history" | "more" | "power" | null;
+type OpenPopover = "attachments" | "history" | "more" | "power" | "mode" | null;
 
 function icon(name: string) {
   return (
@@ -245,6 +257,7 @@ function responseError(error: unknown, provider: AiProviderId): string {
 export function AiAssistantPanel({
   activeTab,
   aiTools,
+  scoutAgent = EMPTY_SCOUT_AGENT,
   close,
   onOrganiseTabs,
   onOpenSettings,
@@ -255,6 +268,7 @@ export function AiAssistantPanel({
 }: {
   activeTab: BrowserTabSnapshot;
   aiTools: AiToolsSnapshot;
+  scoutAgent?: ScoutAgentSnapshot;
   close: () => void;
   onOrganiseTabs: () => void;
   onOpenSettings: () => void;
@@ -285,6 +299,7 @@ export function AiAssistantPanel({
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
   const [readerPreview, setReaderPreview] =
     useState<AssistantAttachment | null>(null);
+  const [researchConsentChecked, setResearchConsentChecked] = useState(false);
 
   const panelRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -296,15 +311,26 @@ export function AiAssistantPanel({
   const contextButtonRef = useRef<HTMLButtonElement>(null);
   const attachmentAnchorRef = useRef<HTMLElement>(null);
   const powerButtonRef = useRef<HTMLButtonElement>(null);
+  const modeButtonRef = useRef<HTMLButtonElement>(null);
   const powerChangeRef = useRef(0);
   const automaticallyRefreshedProviderRef = useRef<AiProviderId | null>(null);
   const handledCommandRef = useRef<number | null>(null);
 
   const [providerStatusLabel, providerStatusKind] = statusFor(aiTools);
-  const statusLabel = sending ? "Thinking" : providerStatusLabel;
-  const statusKind = sending ? "thinking" : providerStatusKind;
   const currentConversation =
     conversations.find((item) => item.id === conversationId) ?? null;
+  const currentRuns = scoutAgent.runs
+    .filter((run) => run.conversationId === conversationId)
+    .sort((left, right) => right.createdAt - left.createdAt);
+  const activeRun =
+    currentRuns.find((run) => !TERMINAL_AGENT_STATES.has(run.status)) ?? null;
+  const agentBusy = Boolean(activeRun);
+  const statusLabel = activeRun
+    ? activeRun.statusLabel
+    : sending
+      ? "Thinking"
+      : providerStatusLabel;
+  const statusKind = activeRun || sending ? "thinking" : providerStatusKind;
   const included = useMemo(
     () => contextAttachments(page, choices, attachments),
     [attachments, choices, page],
@@ -392,6 +418,12 @@ export function AiAssistantPanel({
 
   useEffect(() => {
     const clearHistory = () => {
+      for (const conversation of conversations) {
+        void window.chromecraft.commandScoutAgent({
+          type: "clear-conversation",
+          conversationId: conversation.id,
+        });
+      }
       setConversations([]);
       setConversationId(identifier("chat"));
       setDraft("");
@@ -400,7 +432,7 @@ export function AiAssistantPanel({
     };
     addEventListener("scout-history-cleared", clearHistory);
     return () => removeEventListener("scout-history-cleared", clearHistory);
-  }, []);
+  }, [conversations]);
 
   useEffect(() => {
     if (!powerBusy) setPendingModel(null);
@@ -424,6 +456,47 @@ export function AiAssistantPanel({
       ),
     [],
   );
+
+  useEffect(() => {
+    if (scoutAgent.runs.length === 0) return;
+    setConversations((current) =>
+      current.map((conversation) => {
+        const runs = scoutAgent.runs.filter(
+          (run) => run.conversationId === conversation.id,
+        );
+        if (runs.length === 0) return conversation;
+        return {
+          ...conversation,
+          updatedAt: Math.max(
+            conversation.updatedAt,
+            ...runs.map((run) => run.updatedAt),
+          ),
+          messages: conversation.messages.map((message) => {
+            const run = runs.find(
+              (item) => `reply-${item.messageId}` === message.id,
+            );
+            if (!run) return message;
+            if (!TERMINAL_AGENT_STATES.has(run.status)) {
+              return { ...message, status: "thinking" as const };
+            }
+            return {
+              ...message,
+              text:
+                run.finalText ??
+                run.error ??
+                "Scout could not complete this research run.",
+              createdAt: run.completedAt ?? run.updatedAt,
+              status:
+                run.status === "failed"
+                  ? ("error" as const)
+                  : ("complete" as const),
+              model: run.model,
+            };
+          }),
+        };
+      }),
+    );
+  }, [scoutAgent.runs]);
 
   useEffect(() => {
     localStorage.setItem(
@@ -610,6 +683,25 @@ export function AiAssistantPanel({
     }
   };
 
+  const selectPermissionMode = async (mode: ScoutPermissionMode) => {
+    try {
+      await window.chromecraft.commandScoutAgent({ type: "set-mode", mode });
+      setOpenPopover(null);
+      setStatusNote(
+        mode === "ask"
+          ? "Ask mode can inspect relevant eligible tabs for research."
+          : "Chat mode selected. Scout will only use context you choose.",
+      );
+    } catch (error) {
+      setStatusNote(
+        error instanceof Error
+          ? error.message
+          : "That Scout mode is not available yet.",
+      );
+      setOpenPopover(null);
+    }
+  };
+
   const newConversation = () => {
     if (activeMessageId) {
       void window.chromecraft.cancelAssistantMessage(activeMessageId);
@@ -761,6 +853,55 @@ export function AiAssistantPanel({
       });
   };
 
+  const dispatchResearchPrompt = ({
+    request,
+    assistantMessage,
+    targetConversationId,
+  }: PendingAssistantPrompt) => {
+    void window.chromecraft
+      .startScoutAgent({
+        conversationId: request.conversationId,
+        messageId: request.messageId,
+        objective: request.prompt,
+        createdAt: request.createdAt,
+        provider: request.provider,
+        model: request.model,
+        context: request.context,
+        history: request.history,
+        cloudConsent:
+          request.provider !== "gemini" ||
+          scoutAgent.researchCloudConsentGranted ||
+          researchConsentChecked,
+      })
+      .catch((error: unknown) => {
+        const friendly =
+          error instanceof Error && error.message
+            ? error.message
+            : responseError(error, request.provider);
+        setConversations((current) =>
+          current.map((conversation) =>
+            conversation.id !== targetConversationId
+              ? conversation
+              : {
+                  ...conversation,
+                  messages: conversation.messages.map((entry) =>
+                    entry.id === assistantMessage.id
+                      ? { ...entry, text: friendly, status: "error" as const }
+                      : entry,
+                  ),
+                },
+          ),
+        );
+      })
+      .finally(() => {
+        setSending(false);
+        setActiveMessageId((current) =>
+          current === request.messageId ? null : current,
+        );
+        requestAnimationFrame(() => textareaRef.current?.focus());
+      });
+  };
+
   const sendPrompt = (
     promptValue: string,
     targetConversationId = conversationId,
@@ -776,12 +917,49 @@ export function AiAssistantPanel({
       allowWhileCancelling,
     );
     if (!pending) return false;
-    dispatchPrompt(pending);
+    if (scoutAgent.permissionMode === "ask") {
+      dispatchResearchPrompt(pending);
+    } else {
+      dispatchPrompt(pending);
+    }
     return true;
   };
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
+    if (scoutAgent.permissionMode === "ask" && activeRun) {
+      const text = draft.trim();
+      if (!text) return;
+      void window.chromecraft
+        .commandScoutAgent({
+          type: "enqueue",
+          runId: activeRun.id,
+          message: { id: identifier("queue"), text, createdAt: Date.now() },
+        })
+        .then(() => {
+          setDraft("");
+          setStatusNote("Follow-up queued for this research run.");
+        })
+        .catch((error: unknown) =>
+          setStatusNote(
+            error instanceof Error
+              ? error.message
+              : "Could not queue that follow-up.",
+          ),
+        );
+      return;
+    }
+    if (
+      scoutAgent.permissionMode === "ask" &&
+      aiTools.provider === "gemini" &&
+      !scoutAgent.researchCloudConsentGranted &&
+      !researchConsentChecked
+    ) {
+      setStatusNote(
+        "Confirm Gemini research processing before starting this run.",
+      );
+      return;
+    }
     sendPrompt(draft);
   };
 
@@ -849,7 +1027,11 @@ export function AiAssistantPanel({
               },
         ),
       );
-      dispatchPrompt({ ...pending, request });
+      if (scoutAgent.permissionMode === "ask") {
+        dispatchResearchPrompt({ ...pending, request });
+      } else {
+        dispatchPrompt({ ...pending, request });
+      }
       onInitialCommandConsumed?.();
     })();
     return () => {
@@ -882,8 +1064,12 @@ export function AiAssistantPanel({
     }
   };
 
+  const runForMessage = (messageId: string): AgentRunSnapshot | null =>
+    currentRuns.find((run) => `reply-${run.messageId}` === messageId) ?? null;
+
   const characterState =
-    capturing || sending ? "thinking" : draft ? "typing" : "idle";
+    capturing || sending || agentBusy ? "thinking" : draft ? "typing" : "idle";
+  const composerWillStop = sending || Boolean(activeRun && !draft.trim());
 
   return (
     <div className="ai-assistant-panel" ref={panelRef}>
@@ -1106,6 +1292,16 @@ export function AiAssistantPanel({
                   ) : (
                     <p>{message.text}</p>
                   )}
+                  {message.role === "assistant" &&
+                    runForMessage(message.id) && (
+                      <ScoutAgentTimeline
+                        run={runForMessage(message.id)!}
+                        command={(command) =>
+                          window.chromecraft.commandScoutAgent(command)
+                        }
+                        onError={setStatusNote}
+                      />
+                    )}
                   <footer>
                     <small>
                       {message.status === "error"
@@ -1157,7 +1353,12 @@ export function AiAssistantPanel({
       </div>
 
       <form className="ai-composer" onSubmit={submit}>
-        {(capturing || visibleContextChips.length > 0 || statusNote) && (
+        {(capturing ||
+          visibleContextChips.length > 0 ||
+          statusNote ||
+          (scoutAgent.permissionMode === "ask" &&
+            aiTools.provider === "gemini" &&
+            !scoutAgent.researchCloudConsentGranted)) && (
           <div className="ai-composer-extras">
             {capturing && (
               <div className="ai-capture-status" role="status">
@@ -1262,6 +1463,27 @@ export function AiAssistantPanel({
                 {statusNote}
               </p>
             )}
+            {scoutAgent.permissionMode === "ask" &&
+              aiTools.provider === "gemini" &&
+              !scoutAgent.researchCloudConsentGranted && (
+                <label className="scout-research-consent">
+                  <input
+                    type="checkbox"
+                    checked={researchConsentChecked}
+                    onChange={(event) =>
+                      setResearchConsentChecked(event.target.checked)
+                    }
+                  />
+                  <span>
+                    <strong>Allow Gemini research</strong>
+                    <small>
+                      Open-tab titles and relevant content from the tabs Scout
+                      chooses may be sent to Google. Full unrelated pages are
+                      not uploaded.
+                    </small>
+                  </span>
+                </label>
+              )}
           </div>
         )}
 
@@ -1320,6 +1542,24 @@ export function AiAssistantPanel({
                 </small>
               )}
             </button>
+            <button
+              ref={modeButtonRef}
+              type="button"
+              className="scout-mode-button"
+              onClick={() => setOnlyPopover("mode")}
+              aria-label={`Scout permission mode: ${scoutAgent.permissionMode}`}
+              title="Scout permission mode"
+              aria-haspopup="menu"
+              aria-expanded={openPopover === "mode"}
+              data-mode={scoutAgent.permissionMode}
+            >
+              {icon(
+                scoutAgent.permissionMode === "ask" ? "travel_explore" : "chat",
+              )}
+              <span>
+                {scoutAgent.permissionMode === "ask" ? "Ask" : "Chat"}
+              </span>
+            </button>
             <span className="ai-composer-toolbar-spacer" />
             <button
               ref={powerButtonRef}
@@ -1335,15 +1575,32 @@ export function AiAssistantPanel({
               {icon("speed")}
             </button>
             <button
-              type={sending ? "button" : "submit"}
+              type={composerWillStop ? "button" : "submit"}
               className="ai-send"
-              disabled={(!draft.trim() || powerBusy) && !sending}
-              aria-label={sending ? "Stop response" : "Send message"}
-              title={sending ? "Stop response" : "Send message"}
+              disabled={(!draft.trim() || powerBusy) && !composerWillStop}
+              aria-label={
+                composerWillStop
+                  ? "Stop response"
+                  : activeRun
+                    ? "Queue follow-up"
+                    : "Send message"
+              }
+              title={
+                composerWillStop
+                  ? "Stop response"
+                  : activeRun
+                    ? "Queue follow-up"
+                    : "Send message"
+              }
               onClick={
-                sending
+                composerWillStop
                   ? () => {
-                      if (activeMessageId) {
+                      if (activeRun) {
+                        void window.chromecraft.commandScoutAgent({
+                          type: "cancel",
+                          runId: activeRun.id,
+                        });
+                      } else if (activeMessageId) {
                         void window.chromecraft.cancelAssistantMessage(
                           activeMessageId,
                         );
@@ -1352,7 +1609,7 @@ export function AiAssistantPanel({
                   : undefined
               }
             >
-              {icon(sending ? "stop" : "arrow_upward")}
+              {icon(composerWillStop ? "stop" : "arrow_upward")}
             </button>
           </div>
         </div>
@@ -1473,6 +1730,85 @@ export function AiAssistantPanel({
                 </div>
               </details>
             )}
+          </AssistantPopover>
+        )}
+
+        {openPopover === "mode" && (
+          <AssistantPopover
+            anchorRef={modeButtonRef}
+            boundaryRef={panelRef}
+            className="scout-mode-popover"
+            idealWidth={344}
+            label="Scout permission mode"
+            onClose={() => setOpenPopover(null)}
+            role="menu"
+          >
+            <header className="scout-mode-heading">
+              <span>{icon("tune")}</span>
+              <span>
+                <strong>Permission mode</strong>
+                <small>Choose what Scout may do for new requests.</small>
+              </span>
+            </header>
+            <div className="scout-mode-options">
+              {(
+                [
+                  {
+                    mode: "chat",
+                    icon: "chat",
+                    name: "Chat",
+                    description:
+                      "Talk with Scout and share context when you choose.",
+                    available: true,
+                  },
+                  {
+                    mode: "ask",
+                    icon: "travel_explore",
+                    name: "Ask",
+                    description:
+                      "Let Scout inspect browser tabs and research with you.",
+                    available: true,
+                  },
+                  {
+                    mode: "smart-approval",
+                    icon: "verified_user",
+                    name: "Smart approval",
+                    description: "Automatically handle safe actions.",
+                    available: false,
+                  },
+                  {
+                    mode: "automated",
+                    icon: "rocket_launch",
+                    name: "Automated",
+                    description: "Let Scout carry out authorised tasks.",
+                    available: false,
+                  },
+                ] as const
+              ).map((choice) => (
+                <button
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={scoutAgent.permissionMode === choice.mode}
+                  data-selected={scoutAgent.permissionMode === choice.mode}
+                  key={choice.mode}
+                  onClick={() => void selectPermissionMode(choice.mode)}
+                >
+                  <span className="scout-mode-option-icon">
+                    {icon(choice.icon)}
+                  </span>
+                  <span>
+                    <b>{choice.name}</b>
+                    <small>{choice.description}</small>
+                    {!choice.available && <em>Coming soon</em>}
+                  </span>
+                  {scoutAgent.permissionMode === choice.mode && icon("check")}
+                </button>
+              ))}
+            </div>
+            <footer>
+              Mode changes apply to new runs. Existing research keeps its
+              original permissions.
+            </footer>
           </AssistantPopover>
         )}
 

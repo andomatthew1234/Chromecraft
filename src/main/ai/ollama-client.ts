@@ -189,6 +189,11 @@ export class OllamaClient implements StructuredModelProvider {
   async chatStructured(request: OllamaChatRequest): Promise<unknown> {
     const model = cleanText(request.model, 256);
     if (!model) throw new TypeError("A valid Ollama model is required.");
+    if (request.images?.length) {
+      throw new Error(
+        "Chromecraft cannot verify image support for this Ollama model. Use Gemini for screenshot research.",
+      );
+    }
     const scoped = requestSignal(request.signal, CHAT_TIMEOUT_MS);
     try {
       if (scoped.signal.aborted)
@@ -213,7 +218,10 @@ export class OllamaClient implements StructuredModelProvider {
           keep_alive: "60s",
           options: {
             temperature: 0.1,
-            num_ctx: 4_096,
+            num_ctx: Math.max(
+              4_096,
+              Math.min(32_768, Math.trunc(request.contextTokens ?? 4_096)),
+            ),
             num_predict: 2_048,
           },
         }),

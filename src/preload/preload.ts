@@ -43,6 +43,12 @@ import type {
   AssistantMessageResponse,
   AssistantPageContext,
 } from "../shared/ai-assistant";
+import type {
+  AgentRunCommand,
+  AgentRunSnapshot,
+  AgentRunStartRequest,
+  ScoutAgentSnapshot,
+} from "../shared/agent";
 
 const api: ChromecraftApi = {
   getSnapshot: () =>
@@ -647,6 +653,18 @@ const api: ChromecraftApi = {
       channels.cancelAssistantMessage,
       messageId,
     ) as Promise<void>,
+  getScoutAgent: () =>
+    ipcRenderer.invoke(channels.getScoutAgent) as Promise<ScoutAgentSnapshot>,
+  startScoutAgent: (request) =>
+    ipcRenderer.invoke(
+      channels.startScoutAgent,
+      request as AgentRunStartRequest,
+    ) as Promise<AgentRunSnapshot>,
+  commandScoutAgent: (command) =>
+    ipcRenderer.invoke(
+      channels.commandScoutAgent,
+      command as AgentRunCommand,
+    ) as Promise<void>,
   onSnapshot: (listener) => {
     const handler = (
       _event: Electron.IpcRendererEvent,
@@ -779,6 +797,15 @@ const api: ChromecraftApi = {
     ) => listener(snapshot);
     ipcRenderer.on(channels.aiToolsChanged, handler);
     return () => ipcRenderer.removeListener(channels.aiToolsChanged, handler);
+  },
+  onScoutAgent: (listener) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      snapshot: ScoutAgentSnapshot,
+    ) => listener(snapshot);
+    ipcRenderer.on(channels.scoutAgentChanged, handler);
+    return () =>
+      ipcRenderer.removeListener(channels.scoutAgentChanged, handler);
   },
   onShowScoutSettings: (listener) => {
     const handler = () => listener();

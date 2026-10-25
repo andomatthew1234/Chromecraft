@@ -62,6 +62,12 @@ import type {
   AssistantElementContext,
   AssistantMessageRequest,
 } from "../shared/ai-assistant";
+import type {
+  AgentRunCommand,
+  AgentRunStartRequest,
+  ScoutAgentSnapshot,
+  ScoutPermissionMode,
+} from "../shared/agent";
 import { isAllowedWebUrl } from "../shared/navigation";
 import { BrowserDataStore } from "./browser-data";
 import { ReadingPositionStore } from "./reading-position-store";
@@ -109,6 +115,8 @@ import { AiToolsController } from "./ai/controller";
 import { GeminiCredentialStore } from "./ai/gemini-credential-store";
 import { OllamaClient } from "./ai/ollama-client";
 import { OrganiseTabsTool } from "./ai/organise-tabs-tool";
+import { ScoutAgentController } from "./ai/scout-agent-controller";
+import { ScoutAgentModelResolver } from "./ai/agent-provider-resolver";
 import { AppMetricsCollector } from "./app-metrics-collector";
 import { chromecraftIcon, chromecraftIconPath } from "./app-icon";
 import { PerformanceCentreController } from "./performance-centre-controller";
@@ -221,6 +229,7 @@ let offlinePageStore: OfflinePageStore | null = null;
 let galleryMediaRepairService: GalleryMediaRepairService | null = null;
 let smartDownloadsService: SmartDownloadsService | null = null;
 let aiToolsController: AiToolsController | null = null;
+let scoutAgentController: ScoutAgentController | null = null;
 let smartDownloadsTray: Tray | null = null;
 let quittingCompletely = false;
 let deleteAllGalleryItemsInFlight = false;
@@ -358,6 +367,11 @@ function sendAiToolsSnapshot(snapshot: AiToolsSnapshot): void {
   shellView.webContents.send(channels.aiToolsChanged, snapshot);
 }
 
+function sendScoutAgentSnapshot(snapshot: ScoutAgentSnapshot): void {
+  if (!shellView || shellView.webContents.isDestroyed()) return;
+  shellView.webContents.send(channels.scoutAgentChanged, snapshot);
+}
+
 function requireUpdateManager(): UpdateManager {
   if (!updateManager) throw new Error("The update service is unavailable.");
   return updateManager;
@@ -369,10 +383,19 @@ function requireAiTools(event: IpcMainInvokeEvent): AiToolsController {
   return aiToolsController;
 }
 
+function requireScoutAgent(event: IpcMainInvokeEvent): ScoutAgentController {
+  requireTrusted(event);
+  if (!scoutAgentController) throw new Error("Scout research is not ready.");
+  return scoutAgentController;
+}
+
 function prepareForUpdateRestart(): Promise<void> {
   if (updateShutdownPromise) return updateShutdownPromise;
-  aiToolsController?.dispose();
+  const agentShutdown = (
+    scoutAgentController?.dispose() ?? Promise.resolve()
+  ).finally(() => aiToolsController?.dispose());
   updateShutdownPromise = Promise.all([
+    agentShutdown,
     tabManager?.flushSession() ?? Promise.resolve(),
     downloadManager?.dispose() ?? Promise.resolve(),
     smartDownloadsService?.dispose() ?? Promise.resolve(),
@@ -1148,6 +1171,114 @@ function requireAssistantMessageRequest(
   };
 }
 
+function requireScoutAgentStartRequest(value: unknown): AgentRunStartRequest {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("The Scout research request is invalid.");
+  }
+  const source = value as Record<string, unknown>;
+  const parsed = requireAssistantMessageRequest({
+    ...source,
+    prompt: source.objective,
+  });
+  return {
+    conversationId: parsed.conversationId,
+    messageId: parsed.messageId,
+    objective: parsed.prompt,
+    createdAt: parsed.createdAt,
+    provider: parsed.provider,
+    model: parsed.model,
+    context: parsed.context,
+    history: parsed.history,
+    cloudConsent: requireBoolean(source.cloudConsent, "cloudConsent"),
+  };
+}
+
+function requireScoutPermissionMode(value: unknown): ScoutPermissionMode {
+  if (
+    value !== "chat" &&
+    value !== "ask" &&
+    value !== "smart-approval" &&
+    value !== "automated"
+  ) {
+    throw new TypeError("Choose a supported Scout permission mode.");
+  }
+  return value;
+}
+
+function requireScoutAgentCommand(value: unknown): AgentRunCommand {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError("The Scout research command is invalid.");
+  }
+  const command = value as Record<string, unknown>;
+  if (command.type === "set-mode") {
+    return { type: "set-mode", mode: requireScoutPermissionMode(command.mode) };
+  }
+  if (command.type === "clear-conversation") {
+    return {
+      type: "clear-conversation",
+      conversationId: requireString(
+        command.conversationId,
+        "conversation id",
+        128,
+      ),
+    };
+  }
+  const runId = requireString(command.runId, "run id", 128);
+  if (
+    command.type === "pause" ||
+    command.type === "resume" ||
+    command.type === "cancel"
+  ) {
+    return { type: command.type, runId };
+  }
+  if (command.type === "open-source") {
+    return {
+      type: "open-source",
+      runId,
+      sourceId: requireString(command.sourceId, "source id", 128),
+    };
+  }
+  if (command.type === "enqueue") {
+    if (!command.message || typeof command.message !== "object") {
+      throw new TypeError("The queued Scout message is invalid.");
+    }
+    const queued = command.message as Record<string, unknown>;
+    return {
+      type: "enqueue",
+      runId,
+      message: {
+        id: requireString(queued.id, "queued message id", 128),
+        text: requireString(queued.text, "queued message", 4_000),
+        createdAt:
+          typeof queued.createdAt === "number" &&
+          Number.isFinite(queued.createdAt)
+            ? queued.createdAt
+            : Date.now(),
+      },
+    };
+  }
+  if (command.type === "approval") {
+    if (!command.decision || typeof command.decision !== "object") {
+      throw new TypeError("The Scout approval decision is invalid.");
+    }
+    const decision = command.decision as Record<string, unknown>;
+    return {
+      type: "approval",
+      decision: {
+        runId: requireString(decision.runId, "run id", 128),
+        approvalId: requireString(decision.approvalId, "approval id", 128),
+        preparedActionHash: requireString(
+          decision.preparedActionHash,
+          "prepared action hash",
+          128,
+        ),
+        approved: requireBoolean(decision.approved, "approved"),
+      },
+    };
+  }
+  throw new TypeError("The Scout research command is not supported.");
+}
+
 function requireOrganiseTabsProposal(value: unknown): OrganiseTabsProposal {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new TypeError("The tab proposal is invalid.");
@@ -1417,6 +1548,16 @@ function registerIpc(): void {
         requireString(messageId, "message id", 128),
       );
     },
+  );
+  ipcMain.handle(
+    channels.getScoutAgent,
+    (event) => requireScoutAgent(event).snapshot,
+  );
+  ipcMain.handle(channels.startScoutAgent, (event, request: unknown) =>
+    requireScoutAgent(event).start(requireScoutAgentStartRequest(request)),
+  );
+  ipcMain.handle(channels.commandScoutAgent, (event, command: unknown) =>
+    requireScoutAgent(event).command(requireScoutAgentCommand(command)),
   );
   ipcMain.handle(channels.createTab, (event, input?: unknown) =>
     requireManager(event).createTab(
@@ -3377,18 +3518,34 @@ async function createMainWindow(): Promise<void> {
   );
   tabManager = manager;
   const organiseTabs = new OrganiseTabsTool(manager);
+  await scoutAgentController?.dispose();
+  scoutAgentController = null;
   aiToolsController?.dispose();
+  const ollama = new OllamaClient();
+  const credentials = new GeminiCredentialStore(
+    path.join(app.getPath("userData"), "gemini-api-key.bin"),
+  );
   const aiTools = new AiToolsController({
     stateFilePath: path.join(app.getPath("userData"), "ai-tools.json"),
-    ollama: new OllamaClient(),
-    credentials: new GeminiCredentialStore(
-      path.join(app.getPath("userData"), "gemini-api-key.bin"),
-    ),
+    ollama,
+    credentials,
     organiseTabs,
     onChange: sendAiToolsSnapshot,
   });
   aiToolsController = aiTools;
   await aiTools.initialize();
+  const scoutAgent = new ScoutAgentController({
+    settingsFilePath: path.join(
+      app.getPath("userData"),
+      "scout-agent-settings.json",
+    ),
+    runStorePath: path.join(app.getPath("userData"), "scout-agent-runs.json"),
+    models: new ScoutAgentModelResolver(aiTools, ollama, credentials),
+    browser: manager,
+    onChange: sendScoutAgentSnapshot,
+  });
+  scoutAgentController = scoutAgent;
+  await scoutAgent.initialize();
   websitePermissionController = new WebsitePermissionController({
     contextFor: (contents) =>
       manager.getActiveWebsitePermissionContext(contents),
@@ -3427,6 +3584,7 @@ async function createMainWindow(): Promise<void> {
     if (closingApproved || updateRestartPrepared) {
       performanceCentre.dispose();
       aiTools.dispose();
+      void scoutAgent.dispose();
       suggestions.dispose();
       hyperdrive.dispose();
       manager.dispose();
@@ -3453,6 +3611,7 @@ async function createMainWindow(): Promise<void> {
       smartDownloads.dispose(),
       youtubeDownloads.dispose(),
       downloads.dispose(),
+      scoutAgent.dispose(),
     ]).finally(() => {
       closingApproved = true;
       window.close();
@@ -3487,6 +3646,8 @@ async function createMainWindow(): Promise<void> {
       smartDownloadsService = null;
       aiTools.dispose();
       if (aiToolsController === aiTools) aiToolsController = null;
+      void scoutAgent.dispose();
+      if (scoutAgentController === scoutAgent) scoutAgentController = null;
       smartDownloadsTray?.destroy();
       smartDownloadsTray = null;
       if (youtubeIndicatorHideTimer) clearTimeout(youtubeIndicatorHideTimer);

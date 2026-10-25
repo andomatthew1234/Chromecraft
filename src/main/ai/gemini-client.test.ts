@@ -120,6 +120,31 @@ describe("GeminiClient", () => {
     expect(body.generationConfig).not.toHaveProperty("temperature");
   });
 
+  it("attaches bounded tab screenshots as Gemini inline data", async () => {
+    const request = vi.fn().mockResolvedValue(
+      json({
+        candidates: [{ content: { parts: [{ text: '{"reply":"seen"}' }] } }],
+      }),
+    );
+    const client = new GeminiClient(
+      "secret",
+      request as unknown as typeof fetch,
+    );
+    await client.chatStructured({
+      model: "gemini-flash-latest",
+      system: "System",
+      prompt: "Inspect the attached tab",
+      schema: { type: "object" },
+      signal: new AbortController().signal,
+      images: [{ mimeType: "image/png", data: "cG5n" }],
+    });
+    const body = JSON.parse(String(request.mock.calls[0][1].body));
+    expect(body.contents[0].parts).toEqual([
+      { text: "Inspect the attached tab" },
+      { inlineData: { mimeType: "image/png", data: "cG5n" } },
+    ]);
+  });
+
   it("keeps the latest aliases instead of pinning concrete list results", async () => {
     const request = vi.fn().mockResolvedValue(
       json({

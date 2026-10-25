@@ -168,7 +168,7 @@ export function AssistantPopover({
       if (popoverElement.contains(document.activeElement)) return;
       const selector =
         role === "menu"
-          ? '[role="menuitem"]'
+          ? '[role="menuitem"], [role="menuitemradio"]'
           : '[autofocus], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
       popoverElement.querySelector<HTMLElement>(selector)?.focus();
     };
@@ -188,7 +188,7 @@ export function AssistantPopover({
         if (role !== "menu" || !popoverRef.current) return;
         const items = [
           ...popoverRef.current.querySelectorAll<HTMLElement>(
-            '[role="menuitem"]:not([disabled])',
+            '[role="menuitem"]:not([disabled]), [role="menuitemradio"]:not([disabled])',
           ),
         ];
         if (!items.length) return;

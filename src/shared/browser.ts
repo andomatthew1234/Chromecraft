@@ -20,6 +20,12 @@ import type {
   AssistantPageContext,
 } from "./ai-assistant";
 import type {
+  AgentRunCommand,
+  AgentRunSnapshot,
+  AgentRunStartRequest,
+  ScoutAgentSnapshot,
+} from "./agent";
+import type {
   SmartReaderAppearance,
   SmartReaderCommand,
   SmartReaderTabSnapshot,
@@ -997,6 +1003,9 @@ export interface ChromecraftApi {
     request: AssistantMessageRequest,
   ): Promise<AssistantMessageResponse>;
   cancelAssistantMessage(messageId: string): Promise<void>;
+  getScoutAgent(): Promise<ScoutAgentSnapshot>;
+  startScoutAgent(request: AgentRunStartRequest): Promise<AgentRunSnapshot>;
+  commandScoutAgent(command: AgentRunCommand): Promise<void>;
   onSnapshot(listener: (snapshot: BrowserSnapshot) => void): () => void;
   onBrowserData(listener: (snapshot: BrowserDataSnapshot) => void): () => void;
   onDownloads(listener: (snapshot: DownloadSnapshot) => void): () => void;
@@ -1024,6 +1033,7 @@ export interface ChromecraftApi {
   onExtensions(listener: (snapshot: ExtensionsSnapshot) => void): () => void;
   onUpdateSnapshot(listener: (snapshot: UpdateSnapshot) => void): () => void;
   onAiTools(listener: (snapshot: AiToolsSnapshot) => void): () => void;
+  onScoutAgent(listener: (snapshot: ScoutAgentSnapshot) => void): () => void;
   onShowScoutSettings(listener: () => void): () => void;
   onAssistantContextCaptured(
     listener: (context: AssistantContextCaptured) => void,

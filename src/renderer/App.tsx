@@ -59,6 +59,7 @@ import type {
   OrganiseTabsRequest,
 } from "../shared/ai-tools";
 import type { AssistantAttachment } from "../shared/ai-assistant";
+import type { ScoutAgentSnapshot } from "../shared/agent";
 import {
   ExtensionInstallBanner,
   type ExtensionInstallBannerState,
@@ -246,6 +247,11 @@ const emptyAiTools: AiToolsSnapshot = {
     proposalId: null,
     undoAvailable: false,
   },
+};
+const emptyScoutAgent: ScoutAgentSnapshot = {
+  permissionMode: "chat",
+  researchCloudConsentGranted: false,
+  runs: [],
 };
 
 type IconName =
@@ -6267,6 +6273,7 @@ function Sidebar({
   requestClearHistory,
   activeTab,
   aiTools,
+  scoutAgent,
   openOrganiseTabs,
   openScoutSettings,
   readerAttachment,
@@ -6287,6 +6294,7 @@ function Sidebar({
   requestClearHistory: (range: "hour" | "day" | "all") => void;
   activeTab: BrowserTabSnapshot;
   aiTools: AiToolsSnapshot;
+  scoutAgent: ScoutAgentSnapshot;
   openOrganiseTabs: () => void;
   openScoutSettings: () => void;
   readerAttachment: AssistantAttachment | null;
@@ -6594,6 +6602,7 @@ function Sidebar({
             <AiAssistantPanel
               activeTab={activeTab}
               aiTools={aiTools}
+              scoutAgent={scoutAgent}
               close={() => {
                 setTool(null);
                 void window.chromecraft.setSidebarOpen(false);
@@ -8440,6 +8449,8 @@ export function App() {
   const [extensions, setExtensions] = useState(emptyExtensions);
   const [updates, setUpdates] = useState<UpdateSnapshot | null>(null);
   const [aiTools, setAiTools] = useState<AiToolsSnapshot>(emptyAiTools);
+  const [scoutAgent, setScoutAgent] =
+    useState<ScoutAgentSnapshot>(emptyScoutAgent);
   const [aiContextStatus, setAiContextStatus] = useState<
     "idle" | "loading" | "ready" | "error"
   >("idle");
@@ -8527,6 +8538,7 @@ export function App() {
       window.chromecraft.getOfflinePages(),
       window.chromecraft.getSmartDownloads(),
       window.chromecraft.getAiTools(),
+      window.chromecraft.getScoutAgent(),
     ]).then(
       ([
         nextSnapshot,
@@ -8540,6 +8552,7 @@ export function App() {
         nextOfflinePages,
         nextSmartDownloads,
         nextAiTools,
+        nextScoutAgent,
       ]) => {
         if (mounted) {
           latestSnapshot.current = nextSnapshot;
@@ -8555,6 +8568,7 @@ export function App() {
           setOfflinePages(nextOfflinePages);
           setSmartDownloads(nextSmartDownloads);
           setAiTools(nextAiTools);
+          setScoutAgent(nextScoutAgent);
         }
       },
     );
@@ -8577,6 +8591,7 @@ export function App() {
       window.chromecraft.onSmartDownloads(setSmartDownloads),
       window.chromecraft.onWebsiteControls(setWebsiteControls),
       window.chromecraft.onAiTools(setAiTools),
+      window.chromecraft.onScoutAgent(setScoutAgent),
       window.chromecraft.onShowScoutSettings(() => {
         void (async () => {
           const currentSettingsId = latestFullSettingsTabId.current;
@@ -9321,6 +9336,7 @@ export function App() {
         openFullSettings={openFullSettings}
         activeTab={activeTab}
         aiTools={aiTools}
+        scoutAgent={scoutAgent}
         openOrganiseTabs={openOrganiseTabs}
         openScoutSettings={openAiSettings}
         readerAttachment={readerScoutAttachment}

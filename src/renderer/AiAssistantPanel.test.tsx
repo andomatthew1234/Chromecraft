@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { AiToolsSnapshot } from "../shared/ai-tools";
 import type { AssistantPageContext } from "../shared/ai-assistant";
 import type { BrowserTabSnapshot } from "../shared/browser";
+import type { ScoutAgentSnapshot } from "../shared/agent";
 import { AiAssistantPanel, contextAttachments } from "./AiAssistantPanel";
 
 const activeTab = {
@@ -143,5 +144,45 @@ describe("AiAssistantPanel", () => {
     expect(markup).toContain("Ready · Gemini");
     expect(markup).not.toContain('type="checkbox"');
     expect(markup).not.toContain("Allow this message");
+  });
+
+  it("shows the active Ask mode and explicit Gemini research consent", () => {
+    const scoutAgent: ScoutAgentSnapshot = {
+      permissionMode: "ask",
+      researchCloudConsentGranted: false,
+      runs: [],
+    };
+    const markup = renderToStaticMarkup(
+      <AiAssistantPanel
+        activeTab={activeTab}
+        aiTools={{
+          ...aiTools,
+          provider: "gemini",
+          gemini: {
+            ...aiTools.gemini,
+            connection: "connected",
+            apiKeyConfigured: true,
+            selectedModel: "gemini-flash-lite-latest",
+            models: [
+              {
+                name: "gemini-flash-lite-latest",
+                size: null,
+                modifiedAt: null,
+                family: "gemini",
+                parameterSize: null,
+              },
+            ],
+          },
+        }}
+        scoutAgent={scoutAgent}
+        close={vi.fn()}
+        onOrganiseTabs={vi.fn()}
+        onOpenSettings={vi.fn()}
+      />,
+    );
+
+    expect(markup).toContain("Scout permission mode: ask");
+    expect(markup).toContain("Allow Gemini research");
+    expect(markup).toContain("Full unrelated pages are not uploaded");
   });
 });

@@ -70,6 +70,15 @@ import { parseYouTubeWatchUrl } from "../shared/youtube-watch";
 import { sidebarWidth } from "../shared/sidebar";
 import { BrowserDataStore, type SessionTabInput } from "./browser-data";
 import { ReadingPositionStore } from "./reading-position-store";
+import type {
+  BrowserPageObservation,
+  BrowserReaderObservation,
+  BrowserResearchAdapter,
+  BrowserResearchTab,
+  BrowserScreenshotObservation,
+} from "./ai/browser-research";
+import { buildResearchPageExtractionScript } from "./ai/research-page-extraction";
+import { isResearchEligibleUrl } from "./ai/research-origin-policy";
 import { ChromeWebStoreExtensionService } from "./chrome-web-store-extension-service";
 import { ExtensionPopupController } from "./extension-popup-controller";
 import { FullscreenHintController } from "./fullscreen-hint-controller";
@@ -181,6 +190,7 @@ interface TabRecord {
   findRequestId: number;
   nextHistoryEntryTyped: boolean;
   documentEpoch: number;
+  researchContentRevision: number;
   dismissedWebStoreExtensionId: string | null;
   dismissedYouTubeVideoId: string | null;
   webStoreListingTitle: string | null;
@@ -519,7 +529,7 @@ function cloneExtensionTab(tab: ExtensionTabSnapshot): ExtensionTabSnapshot {
   return { ...tab };
 }
 
-export class TabManager {
+export class TabManager implements BrowserResearchAdapter {
   private youtubeDownloadIndicatorVisible = false;
   private readonly tabs = new Map<TabId, TabRecord>();
   private readonly order: TabId[] = [];
@@ -927,6 +937,154 @@ export class TabManager {
     if (!tab.view || tab.view.webContents.isDestroyed())
       throw new Error("The active tab has no live page.");
     return (await tab.view.webContents.capturePage()).toPNG();
+  }
+
+  async listTabs(signal: AbortSignal): Promise<BrowserResearchTab[]> {
+    if (signal.aborted) throw new DOMException("Cancelled", "AbortError");
+    return this.order
+      .map((tabId) => this.tabs.get(tabId))
+      .filter((tab): tab is TabRecord =>
+        Boolean(
+          tab &&
+          !tab.crashed &&
+          !tab.isNewTab &&
+          tab.view &&
+          !tab.view.webContents.isDestroyed() &&
+          isResearchEligibleUrl(tab.url),
+        ),
+      )
+      .map((tab) => this.researchTabSnapshot(tab));
+  }
+
+  async inspectMetadata(
+    tabId: string,
+    expectedRevision: string,
+    signal: AbortSignal,
+  ): Promise<BrowserResearchTab> {
+    const tab = this.requireResearchTab(tabId, expectedRevision, signal);
+    return this.researchTabSnapshot(tab);
+  }
+
+  async readPageExcerpt(
+    tabId: string,
+    expectedRevision: string,
+    maximumCharacters: number,
+    signal: AbortSignal,
+  ): Promise<BrowserPageObservation> {
+    const tab = this.requireResearchTab(tabId, expectedRevision, signal);
+    const contents = tab.view!.webContents;
+    const limit = Math.max(1_000, Math.min(24_000, maximumCharacters));
+    const value = (await contents.executeJavaScriptInIsolatedWorld(1002, [
+      { code: buildResearchPageExtractionScript(limit + 1) },
+    ])) as { text?: unknown; headings?: unknown };
+    this.requireResearchTab(tabId, expectedRevision, signal);
+    const rawText = typeof value.text === "string" ? value.text : "";
+    if (!rawText) throw new Error("This page did not expose readable text.");
+    return {
+      tab: this.researchTabSnapshot(tab),
+      text: rawText.slice(0, limit),
+      headings: Array.isArray(value.headings)
+        ? value.headings
+            .filter((heading): heading is string => typeof heading === "string")
+            .map((heading) => heading.slice(0, 300))
+            .slice(0, 32)
+        : [],
+      complete: rawText.length <= limit,
+    };
+  }
+
+  async readReaderArticle(
+    tabId: string,
+    expectedRevision: string,
+    offset: number,
+    maximumCharacters: number,
+    signal: AbortSignal,
+  ): Promise<BrowserReaderObservation> {
+    const tab = this.requireResearchTab(tabId, expectedRevision, signal);
+    if (!tab.readerArticle) {
+      await this.requestSmartReaderExtraction(tab, false);
+    }
+    this.requireResearchTab(tabId, expectedRevision, signal);
+    const article = tab.readerArticle;
+    if (!article) {
+      throw new Error(
+        "Smart Reader could not extract an article from this page.",
+      );
+    }
+    const start = Math.max(
+      0,
+      Math.min(Math.trunc(offset), article.textContent.length),
+    );
+    const limit = Math.max(1_000, Math.min(24_000, maximumCharacters));
+    const end = Math.min(article.textContent.length, start + limit);
+    return {
+      tab: this.researchTabSnapshot(tab),
+      text: article.textContent.slice(start, end),
+      headings: article.headings.slice(0, 64),
+      complete:
+        end >= article.textContent.length && !article.textContentTruncated,
+      author: article.byline,
+      siteName: article.siteName,
+      publishedTime: article.publishedTime,
+      offset: start,
+      nextOffset: end < article.textContent.length ? end : null,
+    };
+  }
+
+  async captureScreenshot(
+    tabId: string,
+    expectedRevision: string,
+    signal: AbortSignal,
+  ): Promise<BrowserScreenshotObservation> {
+    const tab = this.requireResearchTab(tabId, expectedRevision, signal);
+    const image = await tab.view!.webContents.capturePage();
+    this.requireResearchTab(tabId, expectedRevision, signal);
+    if (image.isEmpty())
+      throw new Error("Scout could not capture this browser tab.");
+    const size = image.getSize();
+    const width = Math.min(1_200, size.width);
+    const bounded =
+      width < size.width
+        ? image.resize({
+            width,
+            height: Math.max(1, Math.round((size.height / size.width) * width)),
+            quality: "good",
+          })
+        : image;
+    const png = bounded.toPNG();
+    if (png.byteLength > 1_500_000) {
+      throw new Error("This tab screenshot exceeded Scout's safe image limit.");
+    }
+    return {
+      tab: this.researchTabSnapshot(tab),
+      mimeType: "image/png",
+      data: png.toString("base64"),
+    };
+  }
+
+  currentRevision(tabId: string): string | null {
+    const tab = this.tabs.get(tabId);
+    return tab && isResearchEligibleUrl(tab.url)
+      ? this.researchObservationRevision(tab)
+      : null;
+  }
+
+  currentDocumentRevision(tabId: string): string | null {
+    const tab = this.tabs.get(tabId);
+    return tab && isResearchEligibleUrl(tab.url)
+      ? this.researchDocumentRevision(tab)
+      : null;
+  }
+
+  async openTab(tabId: string, fallbackUrl: string): Promise<void> {
+    if (this.tabs.has(tabId)) {
+      this.activateTab(tabId);
+      return;
+    }
+    if (!isResearchEligibleUrl(fallbackUrl)) {
+      throw new Error("This research source is no longer available.");
+    }
+    this.createTab(fallbackUrl);
   }
 
   async getAssistantPageContext(tabId: string): Promise<AssistantPageContext> {
@@ -3415,6 +3573,7 @@ export class TabManager {
       findRequestId: 0,
       nextHistoryEntryTyped: false,
       documentEpoch: 0,
+      researchContentRevision: 0,
       dismissedWebStoreExtensionId: null,
       dismissedYouTubeVideoId: null,
       webStoreListingTitle: null,
@@ -3750,6 +3909,7 @@ export class TabManager {
         ) {
           return;
         }
+        tab.researchContentRevision += 1;
         if (this.pendingSavedArticleReaders.has(tab.id)) {
           const pendingSavedReader = this.pendingSavedArticleReaders.get(
             tab.id,
@@ -3794,6 +3954,9 @@ export class TabManager {
       }
     });
     contents.on("did-start-navigation", (details) => {
+      if (details.isMainFrame) {
+        tab.researchContentRevision += 1;
+      }
       if (details.isMainFrame && !details.isSameDocument) {
         if (details.url !== tab.url) tab.faviconDataUrl = null;
         tab.documentEpoch += 1;
@@ -3864,6 +4027,7 @@ export class TabManager {
     });
     contents.on("did-navigate-in-page", (_event, url) => {
       const previousUrl = tab.url;
+      tab.researchContentRevision += 1;
       this.updateNavigatedUrl(tab, url);
       try {
         const previous = new URL(previousUrl);
@@ -5753,6 +5917,59 @@ export class TabManager {
         return Boolean(tab && this.isSplitEligibleTab(tab));
       }),
     );
+  }
+
+  private researchDocumentRevision(tab: TabRecord): string {
+    const urlRevision = createHash("sha256")
+      .update(tab.url)
+      .digest("hex")
+      .slice(0, 16);
+    return `${tab.documentEpoch}:${urlRevision}`;
+  }
+
+  private researchObservationRevision(tab: TabRecord): string {
+    return `${this.researchDocumentRevision(tab)}:${tab.researchContentRevision}:${tab.reader.revision}`;
+  }
+
+  private researchTabSnapshot(tab: TabRecord): BrowserResearchTab {
+    return {
+      tabId: tab.id,
+      windowId: String(this.window.id),
+      title: cleanAssistantText(tab.title, 240) ?? "Untitled page",
+      url: tab.url,
+      hostname: new URL(tab.url).hostname.toLowerCase(),
+      active: tab.id === this.activeTabId,
+      readerAvailable:
+        Boolean(tab.readerArticle) || tab.reader.availability === "available",
+      faviconDataUrl: tab.faviconDataUrl,
+      documentRevision: this.researchDocumentRevision(tab),
+      observationRevision: this.researchObservationRevision(tab),
+    };
+  }
+
+  private requireResearchTab(
+    tabId: string,
+    expectedRevision: string,
+    signal: AbortSignal,
+  ): TabRecord {
+    if (signal.aborted) throw new DOMException("Cancelled", "AbortError");
+    const tab = this.tabs.get(tabId);
+    if (
+      !tab ||
+      tab.crashed ||
+      tab.isNewTab ||
+      !tab.view ||
+      tab.view.webContents.isDestroyed() ||
+      !isResearchEligibleUrl(tab.url)
+    ) {
+      throw new Error("This browser tab is closed or cannot be inspected.");
+    }
+    if (this.researchDocumentRevision(tab) !== expectedRevision) {
+      throw new Error(
+        "This browser tab changed before Scout could inspect it.",
+      );
+    }
+    return tab;
   }
 
   private requireTab(tabId: TabId): TabRecord {

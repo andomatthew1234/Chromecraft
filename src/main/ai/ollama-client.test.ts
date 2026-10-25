@@ -115,4 +115,20 @@ describe("OllamaClient", () => {
     );
     expect(request).not.toHaveBeenCalled();
   });
+
+  it("fails closed when screenshot support cannot be verified", async () => {
+    const request = vi.fn();
+    const client = new OllamaClient(request as unknown as typeof fetch);
+    await expect(
+      client.chatStructured({
+        model: "qwen3:4b",
+        system: "System",
+        prompt: "Prompt",
+        schema: { type: "object" },
+        signal: new AbortController().signal,
+        images: [{ mimeType: "image/png", data: "cG5n" }],
+      }),
+    ).rejects.toThrow(/cannot verify image support/u);
+    expect(request).not.toHaveBeenCalled();
+  });
 });

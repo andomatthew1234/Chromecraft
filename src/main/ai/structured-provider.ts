@@ -6,6 +6,11 @@ export interface StructuredGenerationRequest {
   prompt: string;
   schema: Record<string, unknown>;
   signal: AbortSignal;
+  images?: Array<{
+    mimeType: "image/png" | "image/jpeg" | "image/webp";
+    data: string;
+  }>;
+  contextTokens?: number;
 }
 
 export interface StructuredModelProvider {
