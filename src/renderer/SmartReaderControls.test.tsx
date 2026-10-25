@@ -56,7 +56,7 @@ describe("SmartReaderControls", () => {
     expect(markup).not.toContain("Reading appearance");
   });
 
-  it("keeps exit and appearance controls visible while active", () => {
+  it("keeps only the main exit control in browser chrome while active", () => {
     const markup = renderToStaticMarkup(
       <SmartReaderControls
         tab={tab("available", true)}
@@ -64,7 +64,8 @@ describe("SmartReaderControls", () => {
       />,
     );
     expect(markup).toContain("Exit Smart Reader");
-    expect(markup).toContain("Reading appearance");
     expect(markup).toContain('aria-pressed="true"');
+    expect(markup).not.toContain("Reading appearance");
+    expect(markup).not.toContain("Save for later");
   });
 });

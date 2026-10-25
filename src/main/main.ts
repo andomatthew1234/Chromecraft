@@ -1548,6 +1548,17 @@ function registerIpc(): void {
         command,
       ),
   );
+  ipcMain.handle(channels.getSmartReaderToolbar, (event) => {
+    if (!tabManager) throw new Error("The browser window is unavailable.");
+    return tabManager.getSmartReaderToolbarState(event.sender);
+  });
+  ipcMain.handle(
+    channels.runSmartReaderToolbarAction,
+    (event, action: unknown) => {
+      if (!tabManager) throw new Error("The browser window is unavailable.");
+      return tabManager.runSmartReaderToolbarAction(event.sender, action);
+    },
+  );
   ipcMain.handle(
     channels.getSmartReaderArticleAttachment,
     (event, tabId: unknown) =>

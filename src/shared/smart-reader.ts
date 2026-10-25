@@ -137,6 +137,22 @@ export interface SmartReaderAppearance {
   textScale: number;
 }
 
+export interface SmartReaderToolbarState {
+  appearance: SmartReaderAppearance;
+  saved: boolean;
+  progressVisible: boolean;
+  navigationOpen: boolean;
+  narrationOpen: boolean;
+}
+
+export type SmartReaderToolbarAction =
+  | { type: "set-appearance"; appearance: SmartReaderAppearance }
+  | { type: "toggle-saved" }
+  | { type: "set-progress-visible"; visible: boolean }
+  | { type: "toggle-navigation" }
+  | { type: "toggle-narration" }
+  | { type: "ask-scout" };
+
 export const defaultSmartReaderAppearance: SmartReaderAppearance = {
   theme: "system",
   font: "serif",

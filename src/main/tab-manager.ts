@@ -47,6 +47,8 @@ import type {
   SmartReaderSummaryResult,
   SmartReaderSummarySnapshot,
   SmartReaderTabSnapshot,
+  SmartReaderToolbarAction,
+  SmartReaderToolbarState,
   SmartReaderViewSnapshot,
 } from "../shared/smart-reader";
 import { normalizeSmartReaderAppearance } from "../shared/smart-reader";
@@ -192,6 +194,7 @@ interface TabRecord {
   readerError: string | null;
   readerAppearanceCssKey: string | null;
   readerAppearanceRevision: number;
+  readerAppearance: SmartReaderAppearance;
   readerMutationTimer: ReturnType<typeof setTimeout> | null;
   readerTimers: Set<ReturnType<typeof setTimeout>>;
   readerProgressTimer: ReturnType<typeof setTimeout> | null;
@@ -2328,10 +2331,13 @@ export class TabManager {
         return detected;
       }
     }
-    await this.enterSmartReader(
-      tab,
-      normalizeSmartReaderAppearance(appearanceValue),
-    );
+    const requestedAppearance = normalizeSmartReaderAppearance(appearanceValue);
+    const appearance =
+      this.preferences.snapshot.smartReaderAppearance ?? requestedAppearance;
+    if (!this.preferences.snapshot.smartReaderAppearance) {
+      await this.preferences.setSmartReaderAppearance(appearance);
+    }
+    await this.enterSmartReader(tab, appearance);
     return this.smartReaderSnapshot(tab);
   }
 
@@ -2345,10 +2351,13 @@ export class TabManager {
     }
     const detected = await this.requestSmartReaderExtraction(tab, true);
     if (detected.availability !== "available") return detected;
-    await this.enterSmartReader(
-      tab,
-      normalizeSmartReaderAppearance(appearanceValue),
-    );
+    const requestedAppearance = normalizeSmartReaderAppearance(appearanceValue);
+    const appearance =
+      this.preferences.snapshot.smartReaderAppearance ?? requestedAppearance;
+    if (!this.preferences.snapshot.smartReaderAppearance) {
+      await this.preferences.setSmartReaderAppearance(appearance);
+    }
+    await this.enterSmartReader(tab, appearance);
     return this.smartReaderSnapshot(tab);
   }
 
@@ -2392,6 +2401,9 @@ export class TabManager {
     }
     await this.applySmartReaderAppearance(
       tab,
+      normalizeSmartReaderAppearance(appearanceValue),
+    );
+    await this.preferences.setSmartReaderAppearance(
       normalizeSmartReaderAppearance(appearanceValue),
     );
     return this.smartReaderSnapshot(tab);
@@ -2460,7 +2472,9 @@ export class TabManager {
   ): Promise<SavedArticleOpenResult> {
     const article = this.browserData.findSavedArticleById(id);
     if (!article) throw new Error("This saved article is no longer available.");
-    const appearance = normalizeSmartReaderAppearance(appearanceValue);
+    const appearance =
+      this.preferences.snapshot.smartReaderAppearance ??
+      normalizeSmartReaderAppearance(appearanceValue);
     const tabId = this.createTab(undefined, false);
     const tab = this.requireTab(tabId);
 
@@ -2533,6 +2547,57 @@ export class TabManager {
     }
     this.sendSmartReaderCommand(tab, { type } as SmartReaderCommand);
     this.emitSnapshot();
+  }
+
+  getSmartReaderToolbarState(source: WebContents): SmartReaderToolbarState {
+    const tab = this.requireReaderTab(source);
+    if (!tab.reader.active) throw new Error("Smart Reader is not open.");
+    return this.smartReaderToolbarState(tab);
+  }
+
+  async runSmartReaderToolbarAction(
+    source: WebContents,
+    value: unknown,
+  ): Promise<SmartReaderToolbarState> {
+    const tab = this.requireReaderTab(source);
+    if (!tab.reader.active) throw new Error("Smart Reader is not open.");
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new TypeError("Unknown Smart Reader toolbar action.");
+    }
+    const action = value as Partial<SmartReaderToolbarAction>;
+    if (action.type === "set-appearance") {
+      await this.setSmartReaderAppearance(tab.id, action.appearance);
+    } else if (action.type === "toggle-saved") {
+      await this.toggleSavedArticle(tab.id);
+    } else if (action.type === "set-progress-visible") {
+      if (typeof action.visible !== "boolean") {
+        throw new TypeError("Reading progress visibility must be a boolean.");
+      }
+      await this.setSmartReaderProgressVisible(tab.id, action.visible);
+    } else if (
+      action.type === "toggle-navigation" ||
+      action.type === "toggle-narration"
+    ) {
+      this.runSmartReaderCommand(tab.id, { type: action.type });
+    } else if (action.type === "ask-scout") {
+      if (tab.id !== this.activeTabId) {
+        throw new Error("Focus this Reader article before asking Scout.");
+      }
+      this.shellView.webContents.send(channels.smartReaderOpenScout, tab.id);
+    } else {
+      throw new TypeError("Unknown Smart Reader toolbar action.");
+    }
+    return this.smartReaderToolbarState(tab);
+  }
+
+  private smartReaderToolbarState(tab: TabRecord): SmartReaderToolbarState {
+    return structuredClone({
+      appearance: tab.readerAppearance,
+      saved: tab.reader.saved === true,
+      progressVisible: this.preferences.snapshot.smartReaderProgressVisible,
+      navigationOpen: tab.reader.navigationOpen === true,
+      narrationOpen: tab.reader.narrationOpen === true,
+    });
   }
 
   handleSmartReaderPanelClosed(source: WebContents, value: unknown): void {
@@ -3370,6 +3435,9 @@ export class TabManager {
       readerError: null,
       readerAppearanceCssKey: null,
       readerAppearanceRevision: 0,
+      readerAppearance:
+        this.preferences?.snapshot.smartReaderAppearance ??
+        normalizeSmartReaderAppearance(null),
       readerMutationTimer: null,
       readerTimers: new Set(),
       readerProgressTimer: null,
@@ -4993,6 +5061,7 @@ export class TabManager {
       return;
     }
     tab.readerAppearanceCssKey = nextKey;
+    tab.readerAppearance = appearance;
     if (previousKey && previousKey !== nextKey) {
       await contents.removeInsertedCSS(previousKey).catch(() => undefined);
     }

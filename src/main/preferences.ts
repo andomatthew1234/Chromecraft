@@ -7,6 +7,8 @@ import type {
   SearchEngine,
   ToolbarAction,
 } from "../shared/browser";
+import type { SmartReaderAppearance } from "../shared/smart-reader";
+import { normalizeSmartReaderAppearance } from "../shared/smart-reader";
 
 export interface BrowserPreferences {
   ublockEnabled: boolean;
@@ -31,6 +33,7 @@ export interface BrowserPreferences {
   showDownloadCompletionNotification: boolean;
   addVideosToGallery: boolean;
   smartReaderProgressVisible: boolean;
+  smartReaderAppearance: SmartReaderAppearance | null;
 }
 
 const defaults: BrowserPreferences = {
@@ -56,6 +59,7 @@ const defaults: BrowserPreferences = {
   showDownloadCompletionNotification: true,
   addVideosToGallery: true,
   smartReaderProgressVisible: false,
+  smartReaderAppearance: null,
 };
 
 const themes = new Set<NewTabTheme>(["overworld", "nether", "end", "minimal"]);
@@ -224,6 +228,11 @@ export class PreferencesStore {
           typeof parsed.smartReaderProgressVisible === "boolean"
             ? parsed.smartReaderProgressVisible
             : defaults.smartReaderProgressVisible,
+        smartReaderAppearance:
+          parsed.smartReaderAppearance &&
+          typeof parsed.smartReaderAppearance === "object"
+            ? normalizeSmartReaderAppearance(parsed.smartReaderAppearance)
+            : defaults.smartReaderAppearance,
       };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
@@ -348,6 +357,14 @@ export class PreferencesStore {
 
   async setSmartReaderProgressVisible(visible: boolean): Promise<void> {
     await this.update({ smartReaderProgressVisible: visible });
+  }
+
+  async setSmartReaderAppearance(
+    appearance: SmartReaderAppearance,
+  ): Promise<void> {
+    await this.update({
+      smartReaderAppearance: normalizeSmartReaderAppearance(appearance),
+    });
   }
 
   private async update(patch: Partial<BrowserPreferences>): Promise<void> {

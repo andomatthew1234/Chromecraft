@@ -1,22 +1,7 @@
-import {
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type CSSProperties,
-} from "react";
-import { createPortal } from "react-dom";
+import { useEffect } from "react";
 
 import type { BrowserTabSnapshot } from "../shared/browser";
-import type {
-  SmartReaderAppearance,
-  SmartReaderFont,
-  SmartReaderTheme,
-} from "../shared/smart-reader";
-import {
-  readSmartReaderAppearance,
-  writeSmartReaderAppearance,
-} from "./smart-reader-appearance";
+import { readSmartReaderAppearance } from "./smart-reader-appearance";
 import "./smart-reader-controls.css";
 
 function MaterialIcon({ name }: { name: string }) {
@@ -27,183 +12,8 @@ function MaterialIcon({ name }: { name: string }) {
   );
 }
 
-function AppearancePopover({
-  tabId,
-  anchor,
-  close,
-}: {
-  tabId: string;
-  anchor: HTMLButtonElement;
-  close: () => void;
-}) {
-  const panel = useRef<HTMLDivElement>(null);
-  const [appearance, setAppearance] = useState(readSmartReaderAppearance);
-  const [style, setStyle] = useState<CSSProperties>({ opacity: 0 });
-
-  useLayoutEffect(() => {
-    const place = () => {
-      const anchorRect = anchor.getBoundingClientRect();
-      const panelRect = panel.current?.getBoundingClientRect();
-      const width = Math.min(320, window.innerWidth - 16);
-      const height = panelRect?.height ?? 330;
-      setStyle({
-        width,
-        left: Math.max(
-          8,
-          Math.min(anchorRect.right - width, window.innerWidth - width - 8),
-        ),
-        top: Math.max(
-          8,
-          Math.min(anchorRect.bottom + 8, window.innerHeight - height - 8),
-        ),
-        opacity: 1,
-      });
-    };
-    place();
-    const observer = new ResizeObserver(place);
-    if (panel.current) observer.observe(panel.current);
-    window.addEventListener("resize", place);
-    window.visualViewport?.addEventListener("resize", place);
-    return () => {
-      observer.disconnect();
-      window.removeEventListener("resize", place);
-      window.visualViewport?.removeEventListener("resize", place);
-    };
-  }, [anchor]);
-
-  useEffect(() => {
-    panel.current?.focus();
-    const onPointerDown = (event: PointerEvent) => {
-      if (
-        event.target instanceof Node &&
-        (panel.current?.contains(event.target) || anchor.contains(event.target))
-      ) {
-        return;
-      }
-      close();
-    };
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      close();
-    };
-    document.addEventListener("pointerdown", onPointerDown, true);
-    document.addEventListener("keydown", onKeyDown, true);
-    return () => {
-      document.removeEventListener("pointerdown", onPointerDown, true);
-      document.removeEventListener("keydown", onKeyDown, true);
-      anchor.focus();
-    };
-  }, [anchor, close]);
-
-  const update = (next: SmartReaderAppearance) => {
-    const saved = writeSmartReaderAppearance(next);
-    setAppearance(saved);
-    void window.chromecraft.setSmartReaderAppearance(tabId, saved);
-  };
-  const chooseTheme = (theme: SmartReaderTheme) =>
-    update({ ...appearance, theme });
-  const chooseFont = (font: SmartReaderFont) => update({ ...appearance, font });
-
-  return createPortal(
-    <div
-      ref={panel}
-      className="reader-appearance-popover"
-      style={style}
-      role="dialog"
-      aria-label="Smart Reader appearance"
-      tabIndex={-1}
-      data-smart-reader-appearance
-    >
-      <header>
-        <span className="reader-appearance-icon">
-          <MaterialIcon name="text_fields" />
-        </span>
-        <span>
-          <strong>Reading appearance</strong>
-          <small>Comfortable on every page</small>
-        </span>
-      </header>
-      <section aria-labelledby="reader-theme-title">
-        <h3 id="reader-theme-title">Paper</h3>
-        <div className="reader-theme-grid">
-          {(
-            [
-              ["system", "System"],
-              ["light", "Light"],
-              ["warm", "Warm"],
-              ["dark", "Dark"],
-            ] as const
-          ).map(([theme, label]) => (
-            <button
-              key={theme}
-              type="button"
-              className={`reader-theme-choice reader-theme-${theme}`}
-              aria-pressed={appearance.theme === theme}
-              onClick={() => chooseTheme(theme)}
-            >
-              <span aria-hidden="true">Aa</span>
-              {label}
-            </button>
-          ))}
-        </div>
-      </section>
-      <section aria-labelledby="reader-size-title">
-        <h3 id="reader-size-title">Text size</h3>
-        <div className="reader-size-control">
-          <button
-            type="button"
-            aria-label="Decrease text size"
-            disabled={appearance.textScale <= 0.8}
-            onClick={() =>
-              update({ ...appearance, textScale: appearance.textScale - 0.05 })
-            }
-          >
-            A−
-          </button>
-          <output>{Math.round(appearance.textScale * 100)}%</output>
-          <button
-            type="button"
-            aria-label="Increase text size"
-            disabled={appearance.textScale >= 1.35}
-            onClick={() =>
-              update({ ...appearance, textScale: appearance.textScale + 0.05 })
-            }
-          >
-            A+
-          </button>
-        </div>
-      </section>
-      <section aria-labelledby="reader-font-title">
-        <h3 id="reader-font-title">Typeface</h3>
-        <div className="reader-font-control">
-          <button
-            type="button"
-            className="serif"
-            aria-pressed={appearance.font === "serif"}
-            onClick={() => chooseFont("serif")}
-          >
-            Serif
-          </button>
-          <button
-            type="button"
-            aria-pressed={appearance.font === "sans"}
-            onClick={() => chooseFont("sans")}
-          >
-            Sans
-          </button>
-        </div>
-      </section>
-    </div>,
-    document.body,
-  );
-}
-
 export function SmartReaderControls({
   tab,
-  progressVisible = false,
-  onAskScout = () => undefined,
   onPopoverOpenChange,
 }: {
   tab: BrowserTabSnapshot;
@@ -211,45 +21,15 @@ export function SmartReaderControls({
   onAskScout?: () => void;
   onPopoverOpenChange: (open: boolean) => void;
 }) {
-  const appearanceButton = useRef<HTMLButtonElement>(null);
-  const [appearanceOpen, setAppearanceOpen] = useState(false);
-  const [overflowOpen, setOverflowOpen] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const narrationOpen = tab.reader.narrationOpen === true;
-  const navigationOpen = tab.reader.navigationOpen === true;
   const visible = tab.reader.availability === "available" || tab.reader.active;
 
   useEffect(() => {
-    setAppearanceOpen(false);
-    setOverflowOpen(false);
-  }, [tab.id, tab.reader.active]);
-  useEffect(() => {
-    onPopoverOpenChange(appearanceOpen || overflowOpen);
+    onPopoverOpenChange(false);
     return () => onPopoverOpenChange(false);
-  }, [appearanceOpen, overflowOpen, onPopoverOpenChange]);
+  }, [tab.id, tab.reader.active, onPopoverOpenChange]);
+
   if (!visible) return null;
 
-  const toggle = () => {
-    setAppearanceOpen(false);
-    setOverflowOpen(false);
-    void window.chromecraft.toggleSmartReader(
-      tab.id,
-      readSmartReaderAppearance(),
-    );
-  };
-  const command = (type: "toggle-narration" | "toggle-navigation") => {
-    setOverflowOpen(false);
-    void window.chromecraft.runSmartReaderCommand(tab.id, { type });
-  };
-  const save = async () => {
-    if (saving) return;
-    setSaving(true);
-    try {
-      await window.chromecraft.toggleSavedArticle(tab.id);
-    } finally {
-      window.setTimeout(() => setSaving(false), 260);
-    }
-  };
   return (
     <div
       className="reader-toolbar-cluster"
@@ -265,156 +45,16 @@ export function SmartReaderControls({
           tab.reader.active ? "Exit Smart Reader" : "Open Smart Reader"
         }
         aria-pressed={tab.reader.active}
-        title="Smart Reader"
-        onClick={toggle}
+        title={tab.reader.active ? "Exit Smart Reader" : "Open Smart Reader"}
+        onClick={() =>
+          void window.chromecraft.toggleSmartReader(
+            tab.id,
+            readSmartReaderAppearance(),
+          )
+        }
       >
         <MaterialIcon name="chrome_reader_mode" />
       </button>
-      {tab.reader.active && (
-        <>
-          <button
-            ref={appearanceButton}
-            type="button"
-            className="tool-button reader-appearance-button"
-            data-smart-reader-appearance-button
-            aria-label="Reading appearance"
-            aria-haspopup="dialog"
-            aria-expanded={appearanceOpen}
-            title="Reading appearance"
-            onClick={() => setAppearanceOpen((open) => !open)}
-          >
-            <MaterialIcon name="text_fields" />
-          </button>
-          <button
-            type="button"
-            className={`tool-button reader-save-button ${saving ? "confirming" : ""}`}
-            aria-label={
-              tab.reader.saved
-                ? "Remove from saved articles"
-                : "Save for later reading"
-            }
-            aria-pressed={tab.reader.saved}
-            title={
-              tab.reader.saved ? "Saved for later" : "Save for later reading"
-            }
-            onClick={() => void save()}
-          >
-            <MaterialIcon
-              name={tab.reader.saved ? "bookmark_added" : "bookmark_add"}
-            />
-          </button>
-          <button
-            type="button"
-            className="tool-button reader-progress-button reader-overflowable"
-            aria-label="Reading progress"
-            aria-pressed={progressVisible}
-            title="Reading progress"
-            onClick={() =>
-              void window.chromecraft.setSmartReaderProgressVisible(
-                tab.id,
-                !progressVisible,
-              )
-            }
-          >
-            <MaterialIcon name="progress_activity" />
-          </button>
-          <button
-            type="button"
-            className="tool-button reader-scout-button reader-overflowable"
-            aria-label="Ask Scout about this article"
-            title="Ask Scout about this article"
-            onClick={onAskScout}
-          >
-            <MaterialIcon name="auto_awesome" />
-          </button>
-          <button
-            type="button"
-            className="tool-button reader-secondary"
-            aria-label="Read aloud"
-            aria-pressed={narrationOpen}
-            title="Read aloud"
-            onClick={() => command("toggle-narration")}
-          >
-            <MaterialIcon name="headphones" />
-          </button>
-          <button
-            type="button"
-            className="tool-button reader-secondary"
-            aria-label="Article navigation"
-            aria-pressed={navigationOpen}
-            title="Article navigation"
-            onClick={() => command("toggle-navigation")}
-          >
-            <MaterialIcon name="toc" />
-          </button>
-          <span className="reader-overflow-anchor">
-            <button
-              type="button"
-              className="tool-button reader-overflow-button"
-              aria-label="More Smart Reader actions"
-              aria-haspopup="menu"
-              aria-expanded={overflowOpen}
-              title="More Smart Reader actions"
-              onClick={() => setOverflowOpen((open) => !open)}
-            >
-              <MaterialIcon name="more_vert" />
-            </button>
-            {overflowOpen && (
-              <span className="reader-overflow-menu" role="menu">
-                <button
-                  type="button"
-                  role="menuitemcheckbox"
-                  aria-checked={progressVisible}
-                  onClick={() => {
-                    setOverflowOpen(false);
-                    void window.chromecraft.setSmartReaderProgressVisible(
-                      tab.id,
-                      !progressVisible,
-                    );
-                  }}
-                >
-                  <MaterialIcon name="progress_activity" />
-                  <span>Reading progress</span>
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    setOverflowOpen(false);
-                    onAskScout();
-                  }}
-                >
-                  <MaterialIcon name="auto_awesome" />
-                  <span>Ask Scout</span>
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => command("toggle-narration")}
-                >
-                  <MaterialIcon name="headphones" />
-                  <span>Read aloud</span>
-                </button>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => command("toggle-navigation")}
-                >
-                  <MaterialIcon name="toc" />
-                  <span>Article navigation</span>
-                </button>
-              </span>
-            )}
-          </span>
-        </>
-      )}
-      {appearanceOpen && appearanceButton.current && (
-        <AppearancePopover
-          tabId={tab.id}
-          anchor={appearanceButton.current}
-          close={() => setAppearanceOpen(false)}
-        />
-      )}
     </div>
   );
 }

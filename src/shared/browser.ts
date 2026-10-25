@@ -808,6 +808,7 @@ export interface ChromecraftApi {
     command: SmartReaderCommand,
   ): Promise<void>;
   getSmartReaderArticleAttachment(tabId: TabId): Promise<AssistantAttachment>;
+  onSmartReaderOpenScout(listener: (tabId: TabId) => void): () => void;
   duplicateTab(tabId: TabId): Promise<TabId>;
   reopenClosedTab(id?: string): Promise<TabId | null>;
   createTabGroup(

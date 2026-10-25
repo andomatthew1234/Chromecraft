@@ -55,6 +55,10 @@ describe("Smart Reader protocol", () => {
     const html = await response.text();
     expect(html).toContain('data-theme="warm"');
     expect(html).toContain("A &lt;safe&gt; article");
+    expect(html).toContain("data-reader-tools-host");
+    expect(html.indexOf("data-reader-tools-host")).toBeLessThan(
+      html.indexOf('class="reader-header"'),
+    );
     expect(html.indexOf("data-scout-summary-host")).toBeLessThan(
       html.indexOf("data-smart-reader-article"),
     );

@@ -40,6 +40,23 @@ describe("PreferencesStore search suggestions", () => {
     expect(reloaded.snapshot.smartReaderProgressVisible).toBe(true);
   });
 
+  it("persists and normalises the Smart Reader appearance", async () => {
+    const preferences = new PreferencesStore(filePath);
+    await preferences.load();
+    await preferences.setSmartReaderAppearance({
+      theme: "warm",
+      font: "sans",
+      textScale: 1.2,
+    });
+    const reloaded = new PreferencesStore(filePath);
+    await reloaded.load();
+    expect(reloaded.snapshot.smartReaderAppearance).toEqual({
+      theme: "warm",
+      font: "sans",
+      textScale: 1.2,
+    });
+  });
+
   it("keeps legacy sidebar preferences attached and preserves panel state", async () => {
     await fs.writeFile(
       filePath,

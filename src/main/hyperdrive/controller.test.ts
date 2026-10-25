@@ -33,6 +33,7 @@ function makePreferences(
     addVideosToGallery: true,
     smartReaderProgressVisible: false,
     ...patch,
+    smartReaderAppearance: patch.smartReaderAppearance ?? null,
   };
   return {
     get snapshot() {

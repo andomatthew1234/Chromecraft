@@ -8557,6 +8557,21 @@ export function App() {
     addEventListener("chromecraft-open-scout", openScout);
     return () => removeEventListener("chromecraft-open-scout", openScout);
   }, []);
+  useEffect(
+    () =>
+      window.chromecraft.onSmartReaderOpenScout((tabId) => {
+        setTool("assistant");
+        void window.chromecraft.setSidebarAttached(true);
+        void window.chromecraft.setSidebarOpen(true);
+        void window.chromecraft
+          .getSmartReaderArticleAttachment(tabId)
+          .then(setReaderScoutAttachment)
+          .catch(() =>
+            setReaderTryError("Scout could not attach this Reader article."),
+          );
+      }),
+    [],
+  );
   useEffect(() => {
     let mounted = true;
     void window.chromecraft

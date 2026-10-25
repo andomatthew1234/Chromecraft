@@ -280,7 +280,9 @@ try {
       reader.evaluate(
         `(()=>({title:document.querySelector('h1')?.textContent,table:Boolean(document.querySelector('table')),code:Boolean(document.querySelector('pre code')),image:Boolean(document.querySelector('img')),fragmentTarget:Boolean(document.querySelector('#details')),fragmentLink:document.querySelector('a[href^="#"]')?.getAttribute('href'),summaryButton:document.querySelector('[data-action="generate"]')?.textContent?.trim(),scriptCount:document.scripts.length,overflow:document.documentElement.scrollWidth>innerWidth}))()`,
       ),
-    (value) => value.title === "Reader fixture",
+    (value) =>
+      value.title === "Reader fixture" &&
+      value.summaryButton === "Generate summary",
     "rendered Reader article",
   );
   if (
@@ -313,10 +315,10 @@ try {
     );
   }
   await reader.evaluate(
-    "document.querySelector('.scout-control.provider')?.click()",
+    `(()=>{const trigger=document.querySelector('.scout-control.provider');trigger?.scrollIntoView({block:'center'});trigger?.click()})()`,
   );
   const providerMenu = await reader.evaluate(
-    `(()=>{const trigger=document.querySelector('.scout-control.provider');const menu=document.querySelector('.scout-menu[role="menu"]');if(!trigger||!menu)return null;const triggerBounds=trigger.getBoundingClientRect();const menuBounds=menu.getBoundingClientRect();return {inViewport:menuBounds.top>=0&&menuBounds.bottom<=innerHeight,anchored:menuBounds.left<=triggerBounds.left+1&&menuBounds.right>=triggerBounds.right-1,animation:getComputedStyle(menu).animationName,ollama:Boolean(menu.querySelector('[data-provider="ollama"] .scout-provider-logo.ollama')),gemini:Boolean(menu.querySelector('[data-provider="gemini"] .scout-provider-logo.gemini'))}})()`,
+    `(()=>{const trigger=document.querySelector('.scout-control.provider');const menu=document.querySelector('.scout-menu[role="menu"]');if(!trigger||!menu)return null;const triggerBounds=trigger.getBoundingClientRect();const menuBounds=menu.getBoundingClientRect();return {inViewport:menuBounds.top>=0&&menuBounds.bottom<=innerHeight,top:menuBounds.top,bottom:menuBounds.bottom,viewportHeight:innerHeight,anchored:menuBounds.left<=triggerBounds.left+1&&menuBounds.right>=triggerBounds.right-1,animation:getComputedStyle(menu).animationName,ollama:Boolean(menu.querySelector('[data-provider="ollama"] .scout-provider-logo.ollama')),gemini:Boolean(menu.querySelector('[data-provider="gemini"] .scout-provider-logo.gemini'))}})()`,
   );
   if (
     !providerMenu?.inViewport ||
@@ -371,21 +373,17 @@ try {
     "document.querySelector('[data-action=\"settings\"]')?.click()",
   );
   await poll(
-    () =>
-      shell.evaluate(
-        "Boolean(document.querySelector('[data-smart-reader-appearance-button]'))",
-      ),
+    () => reader.evaluate("Boolean(document.querySelector('.reader-tools'))"),
     Boolean,
     "active Reader toolbar state",
   );
-  const featureToolbar = await shell.evaluate(
-    `(()=>({labels:[...document.querySelectorAll('.reader-toolbar-cluster button')].map(button=>button.getAttribute('aria-label')),overflow:Boolean(document.querySelector('.reader-overflow-button'))}))()`,
+  const featureToolbar = await reader.evaluate(
+    `(()=>({labels:[...document.querySelectorAll('.reader-tools-actions > button')].map(button=>button.getAttribute('aria-label')),overflow:Boolean(document.querySelector('[data-reader-more]')),sticky:getComputedStyle(document.querySelector('.reader-tools')).position}))()`,
   );
   for (const label of [
-    "Exit Smart Reader",
     "Reading appearance",
-    "Save for later reading",
-    "Reading progress",
+    "Save article",
+    "Show reading progress",
     "Ask Scout about this article",
     "Read aloud",
     "Article navigation",
@@ -395,6 +393,11 @@ try {
         `Missing Smart Reader toolbar action ${label}: ${JSON.stringify(featureToolbar)}`,
       );
     }
+  }
+  if (featureToolbar.sticky !== "sticky") {
+    throw new Error(
+      `Reader toolbar is not sticky: ${JSON.stringify(featureToolbar)}`,
+    );
   }
   const articleAttachment = await shell.evaluate(
     `(async()=>{const snapshot=await window.chromecraft.getSnapshot();const attachment=await window.chromecraft.getSmartReaderArticleAttachment(snapshot.activeTabId);return {kind:attachment?.kind,title:attachment?.data?.readerArticle?.title,textLength:attachment?.data?.readerArticle?.text?.length,complete:attachment?.data?.readerArticle?.complete}})()`,
@@ -408,8 +411,8 @@ try {
       `Full Reader attachment regression: ${JSON.stringify(articleAttachment)}`,
     );
   }
-  await shell.evaluate(
-    "document.querySelector('.reader-save-button')?.click()",
+  await reader.evaluate(
+    "document.querySelector('[data-reader-save]')?.click()",
   );
   await poll(
     () =>
@@ -419,8 +422,8 @@ try {
     (value) => value.saved === true && value.librarySize === 1,
     "saved article persistence",
   );
-  await shell.evaluate(
-    "document.querySelector('.reader-progress-button')?.click()",
+  await reader.evaluate(
+    "document.querySelector('[data-reader-progress]')?.click()",
   );
   await poll(
     () =>
@@ -430,7 +433,7 @@ try {
     Boolean,
     "Reader progress indicator",
   );
-  await shell.evaluate(
+  await reader.evaluate(
     "document.querySelector('[aria-label=\"Article navigation\"]')?.click()",
   );
   const navigationPanel = await poll(
@@ -466,13 +469,13 @@ try {
   );
   await poll(
     () =>
-      shell.evaluate(
+      reader.evaluate(
         `document.querySelector('[aria-label="Article navigation"]')?.getAttribute('aria-pressed')`,
       ),
     (value) => value === "false",
     "navigation toolbar state after Escape",
   );
-  await shell.evaluate(
+  await reader.evaluate(
     "document.querySelector('[aria-label=\"Read aloud\"]')?.click()",
   );
   const narrationPanel = await poll(
@@ -564,24 +567,24 @@ try {
   );
   await poll(
     () =>
-      shell.evaluate(
+      reader.evaluate(
         `document.querySelector('[aria-label="Read aloud"]')?.getAttribute('aria-pressed')`,
       ),
     (value) => value === "false",
     "narration toolbar state after panel close",
   );
-  await shell.evaluate(
-    "document.querySelector('[data-smart-reader-appearance-button]').click()",
+  await reader.evaluate(
+    "document.querySelector('[data-reader-appearance]').click()",
   );
   const popoverBounds = await poll(
     () =>
-      shell.evaluate(
-        `(()=>{const p=document.querySelector('[data-smart-reader-appearance]');if(!p)return null;const r=p.getBoundingClientRect();return {left:r.left,top:r.top,right:r.right,bottom:r.bottom,width:r.width}})()`,
+      reader.evaluate(
+        `(()=>{const p=document.querySelector('[data-reader-appearance-popover]');if(!p||p.hidden)return null;const r=p.getBoundingClientRect();return {left:r.left,top:r.top,right:r.right,bottom:r.bottom,width:r.width}})()`,
       ),
     Boolean,
     "appearance popover",
   );
-  const viewport = await shell.evaluate(
+  const viewport = await reader.evaluate(
     "({width:innerWidth,height:innerHeight})",
   );
   if (
@@ -594,7 +597,7 @@ try {
       `Appearance popover clipped: ${JSON.stringify({ popoverBounds, viewport })}`,
     );
   }
-  await shell.evaluate("document.querySelector('.reader-theme-warm').click()");
+  await reader.evaluate("document.querySelector('[data-theme=warm]').click()");
   await poll(
     () =>
       reader.evaluate(

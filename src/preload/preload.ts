@@ -95,6 +95,13 @@ const api: ChromecraftApi = {
     ) as Promise<void>,
   getSmartReaderArticleAttachment: (tabId) =>
     ipcRenderer.invoke(channels.getSmartReaderArticleAttachment, tabId),
+  onSmartReaderOpenScout: (listener) => {
+    const handler = (_event: Electron.IpcRendererEvent, tabId: string) =>
+      listener(tabId);
+    ipcRenderer.on(channels.smartReaderOpenScout, handler);
+    return () =>
+      ipcRenderer.removeListener(channels.smartReaderOpenScout, handler);
+  },
   duplicateTab: (tabId) =>
     ipcRenderer.invoke(channels.duplicateTab, tabId) as Promise<TabId>,
   reopenClosedTab: (id) =>

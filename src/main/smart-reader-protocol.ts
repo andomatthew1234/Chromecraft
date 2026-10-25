@@ -48,9 +48,24 @@ export function renderSmartReaderDocument(
   article: SmartReaderArticle,
   appearance: SmartReaderAppearance,
 ): string {
-  const metadata = [article.byline, article.publishedTime, article.siteName]
-    .filter(Boolean)
-    .map((value) => `<span>${escapeHtml(value ?? "")}</span>`)
+  const seenMetadata = new Set<string>();
+  const metadata = (
+    [
+      ["source", article.siteName],
+      ["byline", article.byline],
+      ["published", article.publishedTime],
+    ] as const
+  )
+    .filter(([, value]) => {
+      const key = value?.trim().toLocaleLowerCase() ?? "";
+      if (!key || seenMetadata.has(key)) return false;
+      seenMetadata.add(key);
+      return true;
+    })
+    .map(
+      ([kind, value]) =>
+        `<span class="meta-${kind}">${escapeHtml(value?.trim() ?? "")}</span>`,
+    )
     .join("<span class=dot aria-hidden=true>•</span>");
   return `<!doctype html>
 <html lang="en" data-theme="${pageTheme(appearance.theme)}" data-font="${appearance.font}" style="--reader-scale:${appearance.textScale}">
@@ -66,14 +81,14 @@ export function renderSmartReaderDocument(
 :root[data-theme=warm]{color-scheme:light;--paper:#f4ecd8;--ink:#302b23;--muted:#716758;--line:#d7c9ad;--link:#75521b;--code:#e9ddc3}
 :root[data-theme=dark]{color-scheme:dark;--paper:#171717;--ink:#e7e1d7;--muted:#aaa39a;--line:#45413c;--link:#a8c7fa;--code:#242321}
 @media(prefers-color-scheme:dark){:root[data-theme=system]{--paper:#171717;--ink:#e7e1d7;--muted:#aaa39a;--line:#45413c;--link:#a8c7fa;--code:#242321}}
-*{box-sizing:border-box}html{min-height:100%;background:var(--paper)}body{min-height:100%;margin:0;background:var(--paper);color:var(--ink);font-family:var(--font-serif);font-size:calc(19px * var(--reader-scale));line-height:1.72;text-rendering:optimizeLegibility}html[data-font=sans] body{font-family:var(--font-sans);line-height:1.65}
-.reader{width:min(720px,calc(100% - clamp(32px,8vw,112px)));margin:0 auto;padding:clamp(42px,8vh,88px) 0 104px}.reader-header{margin:0 0 clamp(32px,6vh,56px);padding-bottom:24px;border-bottom:1px solid var(--line)}h1{margin:0 0 16px;font-family:var(--font-serif);font-size:clamp(2.1rem,5vw,3.45rem);font-weight:650;line-height:1.08;letter-spacing:-.025em;text-wrap:balance}html[data-font=sans] h1{font-family:var(--font-sans)}.meta{display:flex;flex-wrap:wrap;gap:6px 10px;color:var(--muted);font-family:var(--font-sans);font-size:.78em;line-height:1.45}.dot{opacity:.6}.excerpt{margin:16px 0 0;color:var(--muted);font-style:italic}
-.scout-summary-host{display:block;margin:-20px 0 32px;font-family:var(--font-sans);font-size:16px;line-height:1.5}.article-body{overflow-wrap:anywhere}.article-body>:first-child{margin-top:0}.article-body p{margin:1.1em 0}.article-body h2,.article-body h3,.article-body h4{margin:1.85em 0 .65em;font-family:var(--font-serif);line-height:1.2;text-wrap:balance}html[data-font=sans] :is(.article-body h2,.article-body h3,.article-body h4){font-family:var(--font-sans)}.article-body h2{font-size:1.62em}.article-body h3{font-size:1.3em}.article-body :is(ul,ol){padding-left:1.45em}.article-body li{margin:.45em 0}.article-body a{color:var(--link);text-decoration-thickness:.08em;text-underline-offset:.16em}.article-body a:hover{text-decoration-thickness:.13em}.article-body blockquote{margin:1.5em 0;padding:.2em 0 .2em 1.15em;border-left:4px solid var(--line);color:var(--muted)}.article-body figure{margin:2em min(0px,calc((680px - 100%)/-2));text-align:center}.article-body img{display:block;max-width:100%;height:auto;margin:1.6em auto;border-radius:12px}.article-body figcaption{margin:.75em auto 0;color:var(--muted);font-family:var(--font-sans);font-size:.78em}.article-body pre{max-width:100%;overflow:auto;padding:18px;border:1px solid var(--line);border-radius:12px;background:var(--code);font:calc(.78em * var(--reader-scale))/1.55 ui-monospace,"Cascadia Code",Consolas,monospace}.article-body code{padding:.12em .28em;border-radius:5px;background:var(--code);font-family:ui-monospace,"Cascadia Code",Consolas,monospace;font-size:.86em}.article-body pre code{padding:0;background:transparent;font-size:inherit}.article-body table{display:block;max-width:100%;overflow:auto;border-collapse:collapse;margin:1.6em 0;font-family:var(--font-sans);font-size:.84em}.article-body :is(th,td){padding:10px 12px;border:1px solid var(--line);text-align:left}.article-body th{background:var(--code)}hr{margin:2.2em 0;border:0;border-top:1px solid var(--line)}
-@media(max-width:620px){.reader{width:calc(100% - 32px);padding-top:36px}h1{font-size:2rem}.article-body figure{margin-inline:0}}
+*{box-sizing:border-box}html{min-height:100%;scroll-padding-top:96px;background:var(--paper)}body{min-height:100%;margin:0;background:var(--paper);color:var(--ink);font-family:var(--font-serif);font-size:calc(19px * var(--reader-scale));line-height:1.74;text-rendering:optimizeLegibility}html[data-font=sans] body{font-family:var(--font-sans);line-height:1.67}
+.reader{width:min(748px,calc(100% - clamp(32px,8vw,120px)));margin:0 auto;padding:clamp(24px,5vh,52px) 0 112px}.reader-tools-host{display:contents;font-family:var(--font-sans)}.reader-header{margin:0 0 clamp(34px,6vh,58px);padding-bottom:clamp(26px,4vh,38px);border-bottom:1px solid color-mix(in srgb,var(--line) 48%,transparent)}h1{max-width:18ch;margin:0 0 18px;font-family:var(--font-serif);font-size:clamp(2.15rem,5vw,3.55rem);font-weight:640;line-height:1.07;letter-spacing:-.03em;text-wrap:balance}html[data-font=sans] h1{font-family:var(--font-sans)}.meta{display:flex;flex-wrap:wrap;gap:6px 10px;color:var(--muted);font-family:var(--font-sans);font-size:.76em;line-height:1.5}.meta-source{color:var(--ink);font-weight:650}.dot{opacity:.45}.excerpt{max-width:62ch;margin:20px 0 0;color:var(--muted);font-size:1.02em;font-style:italic;line-height:1.62}
+.scout-summary-host{display:block;margin:0 0 clamp(32px,5vh,44px);font-family:var(--font-sans);font-size:16px;line-height:1.5}.article-body{overflow-wrap:anywhere}.article-body>:first-child{margin-top:0}.article-body p{margin:1.18em 0}.article-body h2,.article-body h3,.article-body h4{margin:2.05em 0 .72em;font-family:var(--font-serif);line-height:1.18;letter-spacing:-.012em;text-wrap:balance}html[data-font=sans] :is(.article-body h2,.article-body h3,.article-body h4){font-family:var(--font-sans)}.article-body h2{padding-top:.15em;font-size:1.64em}.article-body h3{font-size:1.31em}.article-body :is(ul,ol){padding-left:1.45em}.article-body li{margin:.5em 0}.article-body a{color:var(--link);text-decoration-thickness:.08em;text-underline-offset:.16em}.article-body a:hover{text-decoration-thickness:.13em}.article-body blockquote{margin:1.8em 0;padding:.35em 0 .35em 1.2em;border-left:3px solid color-mix(in srgb,var(--link) 52%,var(--line));color:var(--muted)}.article-body figure{margin:2.25em min(0px,calc((700px - 100%)/-2));text-align:center}.article-body img{display:block;max-width:100%;height:auto;margin:1.8em auto;border-radius:14px}.article-body figcaption{margin:.75em auto 0;color:var(--muted);font-family:var(--font-sans);font-size:.76em}.article-body pre{max-width:100%;overflow:auto;padding:18px;border:1px solid var(--line);border-radius:14px;background:var(--code);font:calc(.78em * var(--reader-scale))/1.55 ui-monospace,"Cascadia Code",Consolas,monospace}.article-body code{padding:.12em .28em;border-radius:5px;background:var(--code);font-family:ui-monospace,"Cascadia Code",Consolas,monospace;font-size:.86em}.article-body pre code{padding:0;background:transparent;font-size:inherit}.article-body table{display:block;max-width:100%;overflow:auto;border-collapse:collapse;margin:1.8em 0;font-family:var(--font-sans);font-size:.84em}.article-body :is(th,td){padding:10px 12px;border:1px solid var(--line);text-align:left}.article-body th{background:var(--code)}hr{margin:2.6em 0;border:0;border-top:1px solid color-mix(in srgb,var(--line) 82%,transparent)}
+@media(max-width:620px){html{scroll-padding-top:82px}.reader{width:calc(100% - 28px);padding-top:16px}h1{font-size:2rem}.article-body figure{margin-inline:0}}
 @media(prefers-reduced-motion:no-preference){body{animation:reader-in 220ms cubic-bezier(.2,0,0,1)}@keyframes reader-in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}}
 </style>
 </head>
-<body data-smart-reader-surface><main class="reader"><header class="reader-header"><h1>${escapeHtml(article.title)}</h1>${metadata ? `<div class="meta">${metadata}</div>` : ""}${article.excerpt ? `<p class="excerpt">${escapeHtml(article.excerpt)}</p>` : ""}</header><section class="scout-summary-host" data-scout-summary-host aria-label="Scout article summary"></section><article class="article-body" data-smart-reader-article>${article.content}</article></main></body>
+<body data-smart-reader-surface><main class="reader"><section class="reader-tools-host" data-reader-tools-host aria-label="Smart Reader tools"></section><header class="reader-header"><h1>${escapeHtml(article.title)}</h1>${metadata ? `<div class="meta">${metadata}</div>` : ""}${article.excerpt ? `<p class="excerpt">${escapeHtml(article.excerpt)}</p>` : ""}</header><section class="scout-summary-host" data-scout-summary-host aria-label="Scout article summary"></section><article class="article-body" data-smart-reader-article>${article.content}</article></main></body>
 </html>`;
 }
 
