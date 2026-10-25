@@ -26,6 +26,7 @@
     "test:ai-assistant-ui": "node scripts/test-ai-assistant-ui.mjs",
     "test:scout-organiser-ui": "node scripts/test-scout-organiser-ui.mjs",
     "test:performance-centre:win": "node scripts/test-performance-centre.mjs",
+    "test:command-centre:win": "node scripts/test-command-centre.mjs",
     "test:smart-reader:win": "node scripts/test-smart-reader.mjs",
     "test:sidebar": "node scripts/test-sidebar.mjs",
     "test:gallery-ui:win": "node scripts/test-gallery-ui.mjs",

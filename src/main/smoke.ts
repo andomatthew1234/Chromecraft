@@ -572,12 +572,12 @@ export async function runSmokeTest(
     if (!remoteSearchSuggestionsWorked || !staleSuggestionsProtected)
       throw new Error("The Omnibox remote privacy/staleness check failed.");
     manager.sendShellShortcut("Escape", []);
-    manager.sendShellShortcut("P", ["control", "shift"]);
+    manager.sendShellShortcut("K", ["control"]);
     await waitForShellPaint(manager);
     await saveCaptureIfAvailable(
-      namedCapturePath(options.shellScreenshotPath, "command-palette"),
+      namedCapturePath(options.shellScreenshotPath, "command-centre"),
       () => manager.captureShell(),
-      "the command-palette screenshot",
+      "the Command Centre screenshot",
     );
     manager.sendShellShortcut("Escape", []);
     manager.setChromeOverlayOpen(true);

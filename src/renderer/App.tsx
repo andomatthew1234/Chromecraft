@@ -76,8 +76,12 @@ import {
   savedArticleSortLabels,
   type SavedArticleSort,
 } from "./saved-articles";
-import { AiAssistantPanel } from "./AiAssistantPanel";
+import {
+  AiAssistantPanel,
+  type AssistantCommandLaunch,
+} from "./AiAssistantPanel";
 import { StaticAssistantAvatar } from "./AssistantAvatar";
+import { CommandCentre } from "./CommandCentre";
 import { OrganiseTabsPanel } from "./OrganiseTabsPanel";
 import { SmartDownloadsPage } from "./SmartDownloadsPage";
 import { ScoutSettings } from "./ScoutSettings";
@@ -6272,6 +6276,8 @@ function Sidebar({
   openScoutSettings,
   readerAttachment,
   onReaderAttachmentConsumed,
+  commandLaunch,
+  onCommandLaunchConsumed,
 }: {
   snapshot: BrowserSnapshot;
   data: BrowserDataSnapshot;
@@ -6290,6 +6296,8 @@ function Sidebar({
   openScoutSettings: () => void;
   readerAttachment: AssistantAttachment | null;
   onReaderAttachmentConsumed: () => void;
+  commandLaunch: AssistantCommandLaunch | null;
+  onCommandLaunchConsumed: () => void;
 }) {
   const [query, setQuery] = useState("");
   const [bookmarkView, setBookmarkView] = useState<"bookmarks" | "saved">(
@@ -6598,6 +6606,8 @@ function Sidebar({
               onOpenSettings={openScoutSettings}
               initialAttachment={readerAttachment}
               onInitialAttachmentConsumed={onReaderAttachmentConsumed}
+              initialCommand={commandLaunch}
+              onInitialCommandConsumed={onCommandLaunchConsumed}
             />
           )}
           {(tool === "history" ||
@@ -8146,98 +8156,6 @@ function NewTabSurface({
   );
 }
 
-function CommandPalette({
-  snapshot,
-  data,
-  close,
-}: {
-  snapshot: BrowserSnapshot;
-  data: BrowserDataSnapshot;
-  close: () => void;
-}) {
-  const [query, setQuery] = useState("");
-  const needle = query.toLowerCase();
-  const items = [
-    ...snapshot.tabs.map((tab) => ({
-      id: `tab-${tab.id}`,
-      label: tabLabel(tab),
-      detail: "Open tab",
-      run: () => window.chromecraft.activateTab(tab.id),
-    })),
-    ...data.bookmarks.map((item) => ({
-      id: `bookmark-${item.id}`,
-      label: item.title,
-      detail: `Bookmark · ${hostLabel(item.url)}`,
-      run: () => window.chromecraft.createTab(item.url),
-    })),
-    ...data.history.slice(0, 50).map((item) => ({
-      id: `history-${item.id}`,
-      label: item.title,
-      detail: `History · ${hostLabel(item.url)}`,
-      run: () => window.chromecraft.createTab(item.url),
-    })),
-    {
-      id: "new",
-      label: "New tab",
-      detail: "Action",
-      run: () => window.chromecraft.createTab(),
-    },
-    {
-      id: "reopen",
-      label: "Reopen closed tab",
-      detail: "Action",
-      run: () => window.chromecraft.reopenClosedTab(),
-    },
-  ]
-    .filter((item) =>
-      `${item.label} ${item.detail}`.toLowerCase().includes(needle),
-    )
-    .slice(0, 12);
-  return (
-    <div className="palette-backdrop" onMouseDown={close}>
-      <section
-        className="command-palette"
-        role="dialog"
-        aria-modal="true"
-        aria-label="Command palette"
-        onMouseDown={(event) => event.stopPropagation()}
-      >
-        <input
-          autoFocus
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Escape") close();
-            if (event.key === "Enter" && items[0]) {
-              void items[0].run();
-              close();
-            }
-          }}
-          placeholder="Search tabs, bookmarks, history and actions…"
-        />
-        <div className="palette-results">
-          {items.map((item) => (
-            <button
-              type="button"
-              key={item.id}
-              onClick={() => {
-                void item.run();
-                close();
-              }}
-            >
-              <strong>{item.label}</strong>
-              <small>{item.detail}</small>
-            </button>
-          ))}
-          {items.length === 0 && (
-            <div className="palette-empty">No matching commands</div>
-          )}
-        </div>
-      </section>
-    </div>
-  );
-}
-
 function SplitViewTabPicker({
   snapshot,
   baseTabId,
@@ -8576,6 +8494,8 @@ export function App() {
   const [readerTryError, setReaderTryError] = useState<string | null>(null);
   const [readerScoutAttachment, setReaderScoutAttachment] =
     useState<AssistantAttachment | null>(null);
+  const [scoutCommandLaunch, setScoutCommandLaunch] =
+    useState<AssistantCommandLaunch | null>(null);
   useEffect(() => {
     const openScout = () => {
       setTool("assistant");
@@ -8708,7 +8628,9 @@ export function App() {
         })();
       }),
       window.chromecraft.onShowFind(() => setFindOpen(true)),
-      window.chromecraft.onOpenCommandPalette(() => setPaletteOpen(true)),
+      window.chromecraft.onOpenCommandPalette(() =>
+        setPaletteOpen((open) => !open),
+      ),
     ];
     return () => {
       mounted = false;
@@ -9414,6 +9336,8 @@ export function App() {
         openScoutSettings={openAiSettings}
         readerAttachment={readerScoutAttachment}
         onReaderAttachmentConsumed={() => setReaderScoutAttachment(null)}
+        commandLaunch={scoutCommandLaunch}
+        onCommandLaunchConsumed={() => setScoutCommandLaunch(null)}
         requestClearHistory={(range) => {
           if (range === "all") {
             setDialog({ kind: "clear-history" });
@@ -9546,10 +9470,22 @@ export function App() {
         />
       )}
       {paletteOpen && (
-        <CommandPalette
+        <CommandCentre
           snapshot={snapshot}
-          data={data}
           close={() => setPaletteOpen(false)}
+          askScout={(prompt) => {
+            setReaderScoutAttachment(null);
+            setScoutCommandLaunch({ id: Date.now(), prompt });
+            setTool("assistant");
+            void window.chromecraft.setSidebarAttached(true);
+            void window.chromecraft.setSidebarOpen(true);
+          }}
+          searchWeb={(query) => {
+            void window.chromecraft.createTab(query);
+          }}
+          activateTab={(tabId) => {
+            void window.chromecraft.activateTab(tabId);
+          }}
         />
       )}
       {splitPickerBaseTabId && (

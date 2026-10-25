@@ -4281,6 +4281,11 @@ export class TabManager {
       } else if (command && input.shift && key === "p") {
         event.preventDefault();
         this.shellView.webContents.send(channels.openCommandPalette);
+      } else if (command && !input.shift && !input.alt && key === "k") {
+        event.preventDefault();
+        if (!input.isAutoRepeat) {
+          this.shellView.webContents.send(channels.openCommandPalette);
+        }
       } else if (
         (command && !input.shift && key === "l") ||
         (input.alt && key === "d") ||

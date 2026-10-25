@@ -34,6 +34,11 @@ import "./ai-assistant.css";
 const HISTORY_STORAGE_KEY = "chromecraft-ai-assistant-history-v1";
 const MAX_HISTORY = 24;
 
+export interface AssistantCommandLaunch {
+  id: number;
+  prompt: string;
+}
+
 type ContextChoices = Record<AssistantAttachmentKind, boolean>;
 type ConversationMessage = {
   id: string;
@@ -240,6 +245,8 @@ export function AiAssistantPanel({
   onOpenSettings,
   initialAttachment,
   onInitialAttachmentConsumed,
+  initialCommand,
+  onInitialCommandConsumed,
 }: {
   activeTab: BrowserTabSnapshot;
   aiTools: AiToolsSnapshot;
@@ -248,6 +255,8 @@ export function AiAssistantPanel({
   onOpenSettings: () => void;
   initialAttachment?: AssistantAttachment | null;
   onInitialAttachmentConsumed?: () => void;
+  initialCommand?: AssistantCommandLaunch | null;
+  onInitialCommandConsumed?: () => void;
 }) {
   const [conversations, setConversations] =
     useState<Conversation[]>(readHistory);
@@ -284,6 +293,7 @@ export function AiAssistantPanel({
   const powerButtonRef = useRef<HTMLButtonElement>(null);
   const powerChangeRef = useRef(0);
   const automaticallyRefreshedProviderRef = useRef<AiProviderId | null>(null);
+  const handledCommandRef = useRef<number | null>(null);
 
   const [providerStatusLabel, providerStatusKind] = statusFor(aiTools);
   const statusLabel = sending ? "Thinking" : providerStatusLabel;
@@ -513,13 +523,26 @@ export function AiAssistantPanel({
       automaticallyRefreshedProviderRef.current === provider ||
       powerBusy ||
       sending ||
+      (providerState.connection === "connected" &&
+        providerState.models.length > 0) ||
       (provider === "gemini" && !aiTools.gemini.apiKeyConfigured)
     ) {
+      if (
+        providerState.connection === "connected" &&
+        providerState.models.length > 0
+      ) {
+        automaticallyRefreshedProviderRef.current = provider;
+      }
       return;
     }
     automaticallyRefreshedProviderRef.current = provider;
     void refreshPowerModels(provider);
-  }, [aiTools.gemini.apiKeyConfigured, aiTools.provider]);
+  }, [
+    aiTools.gemini.apiKeyConfigured,
+    aiTools.provider,
+    providerState.connection,
+    providerState.models.length,
+  ]);
 
   const startCapture = async (kind: "screenshot" | "element") => {
     setOpenPopover(null);
@@ -596,26 +619,33 @@ export function AiAssistantPanel({
     requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
-    const prompt = draft.trim();
+  const sendPrompt = (
+    promptValue: string,
+    targetConversationId = conversationId,
+    promptContext = included,
+    historyMessages = currentConversation?.messages ?? [],
+    allowWhileCancelling = false,
+  ) => {
+    const prompt = promptValue.trim();
     const model = displayedModel;
-    if (!prompt || sending || powerBusy) return;
+    if (!prompt || (sending && !allowWhileCancelling) || powerBusy)
+      return false;
     if (!model) {
+      setDraft(prompt);
       setStatusNote("Choose an available model in Scout Power first.");
       setOpenPopover("power");
       void refreshPowerModels(aiTools.provider);
-      return;
+      return false;
     }
     const request: AssistantMessageRequest = {
-      conversationId,
+      conversationId: targetConversationId,
       messageId: identifier("message"),
       prompt,
       createdAt: Date.now(),
       provider: aiTools.provider,
       model,
-      context: structuredClone(included),
-      history: (currentConversation?.messages ?? [])
+      context: structuredClone(promptContext),
+      history: historyMessages
         .filter((message) => message.status === "complete")
         .map((message) => ({ role: message.role, text: message.text }))
         .slice(-12),
@@ -640,9 +670,9 @@ export function AiAssistantPanel({
     };
     nearBottomRef.current = true;
     setConversations((current) => {
-      const existing = current.find((item) => item.id === conversationId);
+      const existing = current.find((item) => item.id === targetConversationId);
       const conversation: Conversation = {
-        id: conversationId,
+        id: targetConversationId,
         title: existing?.title ?? prompt.slice(0, 56),
         updatedAt: request.createdAt,
         messages: [
@@ -654,7 +684,7 @@ export function AiAssistantPanel({
       };
       return [
         conversation,
-        ...current.filter((item) => item.id !== conversationId),
+        ...current.filter((item) => item.id !== targetConversationId),
       ].slice(0, MAX_HISTORY);
     });
     setDraft("");
@@ -668,7 +698,7 @@ export function AiAssistantPanel({
       .then((response) => {
         setConversations((current) =>
           current.map((conversation) =>
-            conversation.id !== conversationId
+            conversation.id !== targetConversationId
               ? conversation
               : {
                   ...conversation,
@@ -692,7 +722,7 @@ export function AiAssistantPanel({
         const friendly = responseError(error, request.provider);
         setConversations((current) =>
           current.map((conversation) =>
-            conversation.id !== conversationId
+            conversation.id !== targetConversationId
               ? conversation
               : {
                   ...conversation,
@@ -717,7 +747,60 @@ export function AiAssistantPanel({
         requestAnimationFrame(() => textareaRef.current?.focus());
       });
     requestAnimationFrame(() => textareaRef.current?.focus());
+    return true;
   };
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    sendPrompt(draft);
+  };
+
+  useEffect(() => {
+    if (
+      !initialCommand ||
+      handledCommandRef.current === initialCommand.id ||
+      !initialCommand.prompt.trim()
+    ) {
+      return;
+    }
+    handledCommandRef.current = initialCommand.id;
+    const nextConversationId = identifier("chat");
+    const defaults = readDefaults();
+    setConversationId(nextConversationId);
+    setAttachments([]);
+    setChoices(defaults);
+    setOpenPopover(null);
+    setStatusNote(null);
+    setSending(false);
+    setActiveMessageId(null);
+    nearBottomRef.current = true;
+    let cancelled = false;
+    void (async () => {
+      if (activeMessageId) {
+        await window.chromecraft
+          .cancelAssistantMessage(activeMessageId)
+          .catch(() => undefined);
+      }
+      let commandPage = page;
+      if (!commandPage) {
+        commandPage = await window.chromecraft
+          .getAssistantPageContext(activeTab.id)
+          .catch(() => null);
+      }
+      if (cancelled) return;
+      sendPrompt(
+        initialCommand.prompt,
+        nextConversationId,
+        contextAttachments(commandPage, defaults, []),
+        [],
+        true,
+      );
+      onInitialCommandConsumed?.();
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [initialCommand?.id]);
 
   const addSuggestion = (text: string) => {
     setDraft(text);
