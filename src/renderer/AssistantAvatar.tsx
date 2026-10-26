@@ -35,8 +35,12 @@ export function StaticAssistantAvatar({
 
 export function AnimatedAssistantAvatar({
   state,
+  variant = "hero",
+  className = "",
 }: {
   state: AssistantExpression;
+  variant?: "hero" | "inline";
+  className?: string;
 }) {
   const root = useRef<HTMLDivElement>(null);
   const target = useRef({ x: 0, y: 0 });
@@ -45,12 +49,11 @@ export function AnimatedAssistantAvatar({
 
   useEffect(() => {
     const element = root.current;
-    if (
-      !element ||
+    if (!element || state === "thinking") return;
+    const motionPreference = matchMedia("(prefers-reduced-motion: reduce)");
+    const reducedMotion = () =>
       document.documentElement.dataset.scoutReducedMotion === "true" ||
-      matchMedia("(prefers-reduced-motion: reduce)").matches
-    )
-      return;
+      motionPreference.matches;
     const render = () => {
       frame.current = null;
       current.current.x += (target.current.x - current.current.x) * 0.16;
@@ -70,7 +73,23 @@ export function AnimatedAssistantAvatar({
         frame.current = requestAnimationFrame(render);
       }
     };
+    const reset = (immediate = false) => {
+      target.current = { x: 0, y: 0 };
+      if (immediate) {
+        if (frame.current !== null) cancelAnimationFrame(frame.current);
+        frame.current = null;
+        current.current = { x: 0, y: 0 };
+        element.style.setProperty("--ai-eye-x", "0px");
+        element.style.setProperty("--ai-eye-y", "0px");
+        return;
+      }
+      if (frame.current === null) frame.current = requestAnimationFrame(render);
+    };
     const move = (event: globalThis.PointerEvent) => {
+      if (reducedMotion()) {
+        reset(true);
+        return;
+      }
       const bounds = element.getBoundingClientRect();
       target.current = {
         x: Math.max(
@@ -84,31 +103,56 @@ export function AnimatedAssistantAvatar({
       };
       if (frame.current === null) frame.current = requestAnimationFrame(render);
     };
-    const reset = () => {
-      target.current = { x: 0, y: 0 };
-      if (frame.current === null) frame.current = requestAnimationFrame(render);
+    const syncMotionPreference = () => {
+      if (reducedMotion()) reset(true);
     };
+    const handleBlur = () => reset(reducedMotion());
+    const observer = new MutationObserver(syncMotionPreference);
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["data-scout-reduced-motion"],
+    });
     addEventListener("pointermove", move, { passive: true });
-    addEventListener("blur", reset);
+    addEventListener("blur", handleBlur);
+    motionPreference.addEventListener("change", syncMotionPreference);
+    syncMotionPreference();
     return () => {
       removeEventListener("pointermove", move);
-      removeEventListener("blur", reset);
+      removeEventListener("blur", handleBlur);
+      motionPreference.removeEventListener("change", syncMotionPreference);
+      observer.disconnect();
       if (frame.current !== null) cancelAnimationFrame(frame.current);
+      frame.current = null;
+      element.style.setProperty("--ai-eye-x", "0px");
+      element.style.setProperty("--ai-eye-y", "0px");
     };
-  }, []);
+  }, [state]);
 
   return (
     <div
-      className={`ai-character ai-character-${state}`}
-      ref={root}
+      className={`ai-character-stage ai-character-stage-${state} ai-character-stage-${variant} ${className}`.trim()}
       aria-hidden="true"
     >
-      <span className="ai-character-eye">
-        <i />
-      </span>
-      <span className="ai-character-eye">
-        <i />
-      </span>
+      {state === "thinking" && (
+        <>
+          <span className="ai-thinking-bulb material-icon material-symbols-rounded">
+            lightbulb
+          </span>
+          <span className="ai-thinking-page-orbit">
+            <i className="ai-thinking-page" />
+            <i className="ai-thinking-page" />
+            <i className="ai-thinking-page" />
+          </span>
+        </>
+      )}
+      <div className={`ai-character ai-character-${state}`} ref={root}>
+        <span className="ai-character-eye">
+          <i />
+        </span>
+        <span className="ai-character-eye">
+          <i />
+        </span>
+      </div>
     </div>
   );
 }

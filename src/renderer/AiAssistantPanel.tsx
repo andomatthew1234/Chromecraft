@@ -111,6 +111,14 @@ type PendingAssistantPrompt = {
 };
 type OpenPopover = "attachments" | "history" | "more" | "power" | "mode" | null;
 
+export function shouldShowScoutMessageAvatar(
+  role: ConversationMessage["role"],
+  status: ConversationMessage["status"],
+  researchVisible: boolean,
+) {
+  return role === "assistant" && (status !== "thinking" || researchVisible);
+}
+
 function icon(name: string) {
   return (
     <span className="material-icon material-symbols-rounded" aria-hidden="true">
@@ -1305,6 +1313,9 @@ export function AiAssistantPanel({
               {currentConversation.messages.map((message, index) => {
                 const run = runForMessage(message.id);
                 const display = resolveScoutResponse(message, run);
+                const researchVisible = Boolean(
+                  run && runUsedBrowserResearch(run),
+                );
                 return (
                   <article
                     className={`ai-message ai-message-${message.role} ${
@@ -1330,7 +1341,11 @@ export function AiAssistantPanel({
                       } as CSSProperties
                     }
                   >
-                    {message.role === "assistant" && (
+                    {shouldShowScoutMessageAvatar(
+                      message.role,
+                      display.status,
+                      researchVisible,
+                    ) && (
                       <StaticAssistantAvatar
                         className="ai-message-avatar"
                         size={24}

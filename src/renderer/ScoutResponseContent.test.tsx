@@ -74,6 +74,7 @@ describe("ScoutResponseContent", () => {
     expect(markup).toContain("scout-run-card");
     expect(markup).toContain('aria-expanded="true"');
     expect(markup).not.toContain("ai-thinking-indicator");
+    expect(markup).not.toContain("ai-thinking-page-orbit");
   });
 
   it("puts the collapsed completed tile before the Markdown answer", () => {
@@ -124,5 +125,9 @@ describe("ScoutResponseContent", () => {
 
     expect(markup).not.toContain("scout-run-card");
     expect(markup).toContain("ai-thinking-indicator");
+    expect(markup).toContain("ai-character-stage-inline");
+    expect(markup).toContain("ai-thinking-bulb");
+    expect(markup.match(/class="ai-thinking-page"/g)).toHaveLength(3);
+    expect(markup.match(/Scout is thinking/g)).toHaveLength(1);
   });
 });

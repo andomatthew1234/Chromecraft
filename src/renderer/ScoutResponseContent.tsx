@@ -1,4 +1,5 @@
 import type { AgentRunCommand, AgentRunSnapshot } from "../shared/agent";
+import { AnimatedAssistantAvatar } from "./AssistantAvatar";
 import { ScoutAgentTimeline } from "./ScoutAgentTimeline";
 import { ScoutMarkdown } from "./ScoutMarkdown";
 
@@ -54,10 +55,8 @@ export function runUsedBrowserResearch(run: AgentRunSnapshot): boolean {
 function ThinkingIndicator() {
   return (
     <div className="ai-thinking-indicator" role="status">
-      <span />
-      <span />
-      <span />
-      <span className="sr-only">Scout is thinking</span>
+      <AnimatedAssistantAvatar state="thinking" variant="inline" />
+      <span className="visually-hidden">Scout is thinking</span>
     </div>
   );
 }

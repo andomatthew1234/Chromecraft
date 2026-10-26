@@ -9,6 +9,7 @@ import {
   AiAssistantPanel,
   contextAttachments,
   SCOUT_PERMISSION_MODE_PRESENTATION,
+  shouldShowScoutMessageAvatar,
 } from "./AiAssistantPanel";
 
 const activeTab = {
@@ -68,6 +69,19 @@ const context: AssistantPageContext = {
 };
 
 describe("AiAssistantPanel", () => {
+  it("uses the thinking scene without duplicating the static message avatar", () => {
+    expect(shouldShowScoutMessageAvatar("assistant", "thinking", false)).toBe(
+      false,
+    );
+    expect(shouldShowScoutMessageAvatar("assistant", "thinking", true)).toBe(
+      true,
+    );
+    expect(shouldShowScoutMessageAvatar("assistant", "complete", false)).toBe(
+      true,
+    );
+    expect(shouldShowScoutMessageAvatar("user", "thinking", false)).toBe(false);
+  });
+
   it("sanitises contextual URLs before a request snapshot is created", () => {
     const attachments = contextAttachments(
       context,

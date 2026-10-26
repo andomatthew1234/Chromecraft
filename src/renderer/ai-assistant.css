@@ -229,6 +229,17 @@
   animation: ai-welcome-in var(--ai-motion-emphasized) both;
 }
 
+.ai-character-stage {
+  width: 112px;
+  height: 88px;
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  position: relative;
+  overflow: visible;
+  pointer-events: none;
+}
+
 .ai-character {
   width: 76px;
   height: 61px;
@@ -238,6 +249,7 @@
   justify-content: center;
   gap: 13px;
   position: relative;
+  z-index: 2;
   overflow: hidden;
   border-radius: 30px 30px 23px 23px;
   background: #252937;
@@ -245,6 +257,63 @@
     inset 0 1px 0 rgb(255 255 255 / 17%),
     0 10px 24px rgb(35 40 57 / 22%);
   animation: ai-character-breathe 4.8s ease-in-out infinite;
+}
+
+.ai-thinking-bulb {
+  width: 27px;
+  height: 27px;
+  display: grid;
+  place-items: center;
+  position: absolute;
+  z-index: 4;
+  top: 0;
+  left: 3px;
+  border: 1px solid color-mix(in srgb, #f4b400 52%, var(--md-outline-variant));
+  border-radius: 11px;
+  color: #8a5a00;
+  background: color-mix(in srgb, #ffd86a 74%, var(--md-surface-high));
+  box-shadow: 0 4px 10px rgb(138 90 0 / 18%);
+  font-size: 18px;
+  font-variation-settings: "FILL" 1;
+  animation: ai-thinking-bulb-pulse 2.2s ease-in-out infinite;
+}
+
+.ai-thinking-page-orbit {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  animation: ai-thinking-pages-orbit 5.8s linear infinite;
+}
+
+.ai-thinking-page {
+  width: 16px;
+  height: 20px;
+  display: block;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  clip-path: polygon(0 0, 70% 0, 100% 24%, 100% 100%, 0 100%);
+  border: 1px solid color-mix(in srgb, var(--md-primary) 38%, transparent);
+  border-radius: 4px;
+  background:
+    linear-gradient(var(--md-primary), var(--md-primary)) 4px 7px / 7px 1px
+      no-repeat,
+    linear-gradient(var(--md-outline), var(--md-outline)) 4px 11px / 8px 1px
+      no-repeat,
+    var(--md-surface-highest);
+  box-shadow: 0 3px 8px rgb(28 35 52 / 18%);
+}
+
+.ai-thinking-page:nth-child(1) {
+  transform: translate(-50%, -50%) rotate(0deg) translateY(-35px);
+}
+
+.ai-thinking-page:nth-child(2) {
+  transform: translate(-50%, -50%) rotate(120deg) translateY(-35px);
+}
+
+.ai-thinking-page:nth-child(3) {
+  transform: translate(-50%, -50%) rotate(240deg) translateY(-35px);
 }
 
 .ai-character::after {
@@ -289,7 +358,8 @@
 }
 
 .ai-character-thinking .ai-character-eye i {
-  animation: ai-think 1.7s ease-in-out infinite alternate;
+  animation: ai-thinking-eyes-track 5.8s linear infinite;
+  transition: none;
 }
 
 .ai-character-success {
@@ -426,26 +496,21 @@
 }
 
 .ai-thinking-indicator {
-  min-height: 30px;
+  min-height: 96px;
   display: flex;
   align-items: center;
-  gap: 4px;
+  justify-content: center;
+  padding: 4px 8px;
+  border-radius: 20px;
+  background: radial-gradient(
+    circle at 50% 48%,
+    color-mix(in srgb, var(--md-primary-container) 48%, transparent),
+    transparent 68%
+  );
 }
 
-.ai-thinking-indicator > span:not(.sr-only) {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--md-primary);
-  animation: scout-thinking-dot 900ms ease-in-out infinite alternate;
-}
-
-.ai-thinking-indicator > span:nth-child(2) {
-  animation-delay: 140ms;
-}
-
-.ai-thinking-indicator > span:nth-child(3) {
-  animation-delay: 280ms;
+.ai-message-assistant > .ai-thinking-indicator {
+  grid-column: 1 / -1;
 }
 
 .ai-message > p {
@@ -1882,20 +1947,49 @@
   }
 }
 
-@keyframes ai-think {
+@keyframes ai-thinking-pages-orbit {
   to {
-    transform: translate(2px, -1px);
+    transform: rotate(1turn);
   }
 }
 
-@keyframes scout-thinking-dot {
-  from {
-    opacity: 0.35;
-    transform: translateY(1px) scale(0.82);
+@keyframes ai-thinking-eyes-track {
+  0%,
+  100% {
+    transform: translate(0, -2px);
   }
-  to {
+  12.5% {
+    transform: translate(1.9px, -1.4px);
+  }
+  25% {
+    transform: translate(2.7px, 0);
+  }
+  37.5% {
+    transform: translate(1.9px, 1.4px);
+  }
+  50% {
+    transform: translate(0, 2px);
+  }
+  62.5% {
+    transform: translate(-1.9px, 1.4px);
+  }
+  75% {
+    transform: translate(-2.7px, 0);
+  }
+  87.5% {
+    transform: translate(-1.9px, -1.4px);
+  }
+}
+
+@keyframes ai-thinking-bulb-pulse {
+  0%,
+  100% {
+    opacity: 0.88;
+    transform: rotate(-5deg) scale(0.96);
+  }
+  50% {
     opacity: 1;
-    transform: translateY(-2px) scale(1);
+    transform: rotate(3deg) scale(1.06);
   }
 }
 

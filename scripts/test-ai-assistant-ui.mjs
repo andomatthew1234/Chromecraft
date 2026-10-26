@@ -35,6 +35,11 @@ const modeScreenshotPath = path.join(
   ".artifacts",
   "scout-permission-mode-popover.png",
 );
+const thinkingScreenshotPath = path.join(
+  root,
+  ".artifacts",
+  "scout-thinking-scene.png",
+);
 
 async function freePort() {
   const server = net.createServer();
@@ -750,6 +755,90 @@ try {
   );
   await cdp.evaluate(`([...document.querySelectorAll('.ai-history-list button')]
     .find((item) => item.textContent?.includes('Markdown UI check')))?.click()`);
+  await cdp.evaluate(`(() => {
+    window.__mountScoutThinkingFixture = () => {
+      document.querySelector('[data-scout-thinking-fixture]')?.remove();
+      const list = document.querySelector('.ai-message-list');
+      if (!list) return false;
+      const article = document.createElement('article');
+      article.className = 'ai-message ai-message-assistant';
+      article.dataset.scoutThinkingFixture = 'true';
+      article.innerHTML =
+        '<div class="ai-thinking-indicator" role="status">' +
+          '<div class="ai-character-stage ai-character-stage-thinking ai-character-stage-inline" aria-hidden="true">' +
+            '<span class="ai-thinking-bulb material-icon material-symbols-rounded">lightbulb</span>' +
+            '<span class="ai-thinking-page-orbit">' +
+              '<i class="ai-thinking-page"></i><i class="ai-thinking-page"></i><i class="ai-thinking-page"></i>' +
+            '</span>' +
+            '<div class="ai-character ai-character-thinking">' +
+              '<span class="ai-character-eye"><i></i></span>' +
+              '<span class="ai-character-eye"><i></i></span>' +
+            '</div>' +
+          '</div>' +
+          '<span class="visually-hidden">Scout is thinking</span>' +
+        '</div>';
+      list.append(article);
+      article.scrollIntoView({ block: 'nearest' });
+      return true;
+    };
+    return window.__mountScoutThinkingFixture();
+  })()`);
+  const thinkingMotion = await poll(
+    () =>
+      cdp.evaluate(`(() => {
+        const scene = document.querySelector('.ai-character-stage-inline');
+        const face = scene?.querySelector('.ai-character');
+        const bulb = scene?.querySelector('.ai-thinking-bulb');
+        const orbit = scene?.querySelector('.ai-thinking-page-orbit');
+        const eye = scene?.querySelector('.ai-character-eye i');
+        const panel = document.querySelector('.ai-assistant-panel');
+        if (!scene || !face || !bulb || !orbit || !eye || !panel) return null;
+        const sceneRect = scene.getBoundingClientRect();
+        const faceRect = face.getBoundingClientRect();
+        const bulbRect = bulb.getBoundingClientRect();
+        const panelRect = panel.getBoundingClientRect();
+        return {
+          pages: scene.querySelectorAll('.ai-thinking-page').length,
+          orbitAnimation: getComputedStyle(orbit).animationName,
+          eyeAnimation: getComputedStyle(eye).animationName,
+          bulbAnimation: getComputedStyle(bulb).animationName,
+          bulbIsTopLeft:
+            bulbRect.left < faceRect.left && bulbRect.top < faceRect.top,
+          contained:
+            sceneRect.left >= panelRect.left &&
+            sceneRect.right <= panelRect.right &&
+            sceneRect.top >= panelRect.top &&
+            sceneRect.bottom <= panelRect.bottom,
+          duplicateMessageAvatar: Boolean(
+            scene.closest('[data-scout-thinking-fixture]')?.querySelector(
+              '.ai-message-avatar',
+            ),
+          ),
+        };
+      })()`),
+    (value) => Boolean(value?.orbitAnimation === "ai-thinking-pages-orbit"),
+    "Scout's thinking scene",
+  );
+  assert(
+    thinkingMotion.pages === 3 &&
+      thinkingMotion.eyeAnimation === "ai-thinking-eyes-track" &&
+      thinkingMotion.bulbAnimation === "ai-thinking-bulb-pulse" &&
+      thinkingMotion.bulbIsTopLeft &&
+      thinkingMotion.contained &&
+      !thinkingMotion.duplicateMessageAvatar,
+    `Scout thinking scene was incomplete: ${JSON.stringify(thinkingMotion)}`,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 420));
+  const thinkingScreenshot = await cdp.send("Page.captureScreenshot", {
+    format: "png",
+  });
+  await fs.writeFile(
+    thinkingScreenshotPath,
+    Buffer.from(thinkingScreenshot.data, "base64"),
+  );
+  await cdp.evaluate(
+    "document.querySelector('[data-scout-thinking-fixture]')?.remove()",
+  );
   const markdownLayout = await poll(
     () =>
       cdp.evaluate(`(() => {
@@ -789,6 +878,15 @@ try {
   const lightSurfaceToken = await cdp.evaluate(
     "getComputedStyle(document.documentElement).getPropertyValue('--md-surface-container-low').trim()",
   );
+  await cdp.evaluate("window.__mountScoutThinkingFixture?.()");
+  await poll(
+    () =>
+      cdp.evaluate(
+        "Boolean(document.querySelector('.ai-character-stage-inline'))",
+      ),
+    Boolean,
+    "the thinking scene before reduced-motion verification",
+  );
   await cdp.send("Emulation.setEmulatedMedia", {
     features: [
       { name: "prefers-reduced-motion", value: "reduce" },
@@ -797,13 +895,23 @@ try {
   });
   await cdp.evaluate("document.documentElement.dataset.theme = 'dark'");
   await new Promise((resolve) => setTimeout(resolve, 100));
-  const themeAndMotion = await cdp.evaluate(`(() => ({
-    lightSurfaceToken: ${JSON.stringify(lightSurfaceToken)},
-    darkSurfaceToken: getComputedStyle(document.documentElement).getPropertyValue('--md-surface-container-low').trim(),
-    panelAnimation: getComputedStyle(document.querySelector('.ai-assistant-panel')).animationName,
-    messageAnimation: getComputedStyle(document.querySelector('.ai-message')).animationName,
-    scrollBehavior: getComputedStyle(document.querySelector('.ai-assistant-scroll')).scrollBehavior,
-  }))()`);
+  const themeAndMotion = await cdp.evaluate(`(() => {
+    const eyeTransform = new DOMMatrix(
+      getComputedStyle(document.querySelector('.ai-character-eye i')).transform,
+    );
+    return {
+      lightSurfaceToken: ${JSON.stringify(lightSurfaceToken)},
+      darkSurfaceToken: getComputedStyle(document.documentElement).getPropertyValue('--md-surface-container-low').trim(),
+      panelAnimation: getComputedStyle(document.querySelector('.ai-assistant-panel')).animationName,
+      messageAnimation: getComputedStyle(document.querySelector('.ai-message')).animationName,
+      orbitAnimation: getComputedStyle(document.querySelector('.ai-thinking-page-orbit')).animationName,
+      eyeAnimation: getComputedStyle(document.querySelector('.ai-character-eye i')).animationName,
+      bulbAnimation: getComputedStyle(document.querySelector('.ai-thinking-bulb')).animationName,
+      eyeX: eyeTransform.m41,
+      eyeY: eyeTransform.m42,
+      scrollBehavior: getComputedStyle(document.querySelector('.ai-assistant-scroll')).scrollBehavior,
+    };
+  })()`);
   console.log("Theme and motion:", themeAndMotion);
   assert(
     themeAndMotion.darkSurfaceToken !== themeAndMotion.lightSurfaceToken,
@@ -812,6 +920,11 @@ try {
   assert(
     themeAndMotion.panelAnimation === "none" &&
       themeAndMotion.messageAnimation === "none" &&
+      themeAndMotion.orbitAnimation === "none" &&
+      themeAndMotion.eyeAnimation === "none" &&
+      themeAndMotion.bulbAnimation === "none" &&
+      Math.abs(themeAndMotion.eyeX) < 0.01 &&
+      Math.abs(themeAndMotion.eyeY) < 0.01 &&
       themeAndMotion.scrollBehavior === "auto",
     "Reduced-motion mode left assistant animation enabled",
   );
@@ -835,8 +948,10 @@ try {
         contextScreenshotPath,
         darkScreenshotPath,
         modeScreenshotPath,
+        thinkingScreenshotPath,
         modeBounds,
         geminiDisclosure,
+        thinkingMotion,
         markdownLayout,
         shortWindowContainment,
         themeAndMotion,
