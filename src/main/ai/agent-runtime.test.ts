@@ -91,6 +91,25 @@ function runtime(
 }
 
 describe("AgentRuntime", () => {
+  it("answers directly without tools and preserves ordinary bracketed text", async () => {
+    const model = new ScriptedAgentModelAdapter([
+      { reply: "Use option [1] from your own list.", toolCalls: [] },
+    ]);
+    const subject = runtime(model);
+    await subject.initialize();
+    await subject.start(input());
+
+    const run = await until(subject, (status) => status === "completed");
+    expect(run.finalText).toBe("Use option [1] from your own list.");
+    expect(run.sources).toEqual([]);
+    expect(run.events).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "tool-proposed" }),
+      ]),
+    );
+    expect(model.inputs).toHaveLength(1);
+  });
+
   it("continues after a real tool observation and grounds final citations", async () => {
     const model = new ScriptedAgentModelAdapter([
       { reply: null, toolCalls: [{ id: "read_test", input: {} }] },

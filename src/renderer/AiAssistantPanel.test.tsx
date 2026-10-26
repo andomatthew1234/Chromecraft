@@ -5,7 +5,11 @@ import type { AiToolsSnapshot } from "../shared/ai-tools";
 import type { AssistantPageContext } from "../shared/ai-assistant";
 import type { BrowserTabSnapshot } from "../shared/browser";
 import type { ScoutAgentSnapshot } from "../shared/agent";
-import { AiAssistantPanel, contextAttachments } from "./AiAssistantPanel";
+import {
+  AiAssistantPanel,
+  contextAttachments,
+  SCOUT_PERMISSION_MODE_PRESENTATION,
+} from "./AiAssistantPanel";
 
 const activeTab = {
   id: "tab-1",
@@ -146,7 +150,7 @@ describe("AiAssistantPanel", () => {
     expect(markup).not.toContain("Allow this message");
   });
 
-  it("discloses Gemini Ask processing without an extra confirmation", () => {
+  it("discloses Gemini Research processing without an extra confirmation", () => {
     const scoutAgent: ScoutAgentSnapshot = {
       permissionMode: "ask",
       researchCloudConsentGranted: false,
@@ -181,8 +185,16 @@ describe("AiAssistantPanel", () => {
       />,
     );
 
-    expect(markup).toContain("Scout permission mode: ask");
-    expect(markup).toContain("Ask mode is on");
+    expect(markup).toContain("Scout permission mode: Research");
+    expect(markup).toContain("Research mode is on");
+    expect(
+      SCOUT_PERMISSION_MODE_PRESENTATION.find(
+        (choice) => choice.mode === "ask",
+      ),
+    ).toMatchObject({
+      name: "Research",
+      description: "Scout can see your browser tabs and research with you.",
+    });
     expect(markup).toContain("We&#x27;ll send relevant tabs to Gemini.");
     expect(markup).not.toContain("Gemini research");
     expect(markup).not.toContain('type="checkbox"');

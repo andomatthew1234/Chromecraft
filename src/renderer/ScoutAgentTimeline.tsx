@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { type CSSProperties, useState } from "react";
 
 import type { AgentRunCommand, AgentRunSnapshot } from "../shared/agent";
 
@@ -96,7 +96,11 @@ export function ScoutAgentTimeline({
   };
 
   return (
-    <section className="scout-run-card" data-status={run.status}>
+    <section
+      className="scout-run-card"
+      data-status={run.status}
+      data-active={active}
+    >
       <header>
         <span className="scout-run-state-icon">
           {icon(
@@ -130,12 +134,17 @@ export function ScoutAgentTimeline({
                 : "Expand research details"
           }
         >
-          {icon(expanded ? "expand_less" : "expand_more")}
+          {icon("expand_more")}
         </button>
       </header>
 
-      {expanded && (
-        <>
+      <div
+        className="scout-run-details"
+        data-expanded={expanded}
+        aria-hidden={!expanded}
+        inert={!expanded ? true : undefined}
+      >
+        <div className="scout-run-details-inner">
           {progressing && !hasActiveRow && (
             <div
               className="scout-run-current"
@@ -162,12 +171,17 @@ export function ScoutAgentTimeline({
           )}
           {events.length > 0 && (
             <ol className="scout-run-events">
-              {rows.map(({ event, state }) => (
+              {rows.map(({ event, state }, index) => (
                 <li
                   key={event.id}
                   data-status={event.status}
                   data-step-state={state}
                   aria-current={state === "active" ? "step" : undefined}
+                  style={
+                    {
+                      "--scout-step-index": Math.min(index, 5),
+                    } as CSSProperties
+                  }
                 >
                   <span className="scout-run-step-marker">
                     {icon(stepIcon(state))}
@@ -267,44 +281,53 @@ export function ScoutAgentTimeline({
                   {run.sources.length}{" "}
                   {run.sources.length === 1 ? "source" : "sources"}
                 </span>
-                {icon(sourcesOpen ? "expand_less" : "expand_more")}
+                {icon("expand_more")}
               </button>
-              {sourcesOpen && (
-                <ul>
-                  {run.sources.map((source, index) => (
-                    <li key={source.id}>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          void dispatch({
-                            type: "open-source",
-                            runId: run.id,
-                            sourceId: source.id,
-                          })
-                        }
-                      >
-                        {source.faviconDataUrl ? (
-                          <img src={source.faviconDataUrl} alt="" />
-                        ) : (
-                          <span className="scout-source-fallback">
-                            {source.hostname.slice(0, 1).toUpperCase()}
+              <div
+                className="scout-source-list"
+                data-expanded={sourcesOpen}
+                aria-hidden={!sourcesOpen}
+                inert={!sourcesOpen ? true : undefined}
+              >
+                <div>
+                  <ul>
+                    {run.sources.map((source, index) => (
+                      <li key={source.id}>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            void dispatch({
+                              type: "open-source",
+                              runId: run.id,
+                              sourceId: source.id,
+                            })
+                          }
+                        >
+                          {source.faviconDataUrl ? (
+                            <img src={source.faviconDataUrl} alt="" />
+                          ) : (
+                            <span className="scout-source-fallback">
+                              {source.hostname.slice(0, 1).toUpperCase()}
+                            </span>
+                          )}
+                          <span>
+                            <b>
+                              [{index + 1}] {source.title}
+                            </b>
+                            <small>
+                              {source.hostname} ·{" "}
+                              {source.complete
+                                ? "Fully read"
+                                : "Partially read"}
+                            </small>
                           </span>
-                        )}
-                        <span>
-                          <b>
-                            [{index + 1}] {source.title}
-                          </b>
-                          <small>
-                            {source.hostname} ·{" "}
-                            {source.complete ? "Fully read" : "Partially read"}
-                          </small>
-                        </span>
-                        {icon("open_in_new")}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
+                          {icon("open_in_new")}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
             </div>
           )}
           {active && (
@@ -340,8 +363,8 @@ export function ScoutAgentTimeline({
               </button>
             </footer>
           )}
-        </>
-      )}
+        </div>
+      </div>
     </section>
   );
 }

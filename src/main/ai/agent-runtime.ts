@@ -814,7 +814,7 @@ export class AgentRuntime {
       await this.recordToolFailure(
         record,
         call,
-        "Scout does not have permission to use this tool in Ask mode.",
+        "Scout does not have permission to use this tool in Research mode.",
       );
       return;
     }
@@ -1192,9 +1192,10 @@ export class AgentRuntime {
     finalText: string,
   ): Promise<void> {
     this.transition(record, "completed");
-    record.snapshot.finalText = removeInvalidCitations(
-      finalText,
-      record.snapshot.sources.length,
+    record.snapshot.finalText = (
+      record.toolCalls > 0
+        ? removeInvalidCitations(finalText, record.snapshot.sources.length)
+        : finalText
     ).slice(0, 64_000);
     record.snapshot.completedAt = this.now();
     record.snapshot.pendingApproval = null;

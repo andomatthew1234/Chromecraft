@@ -68,7 +68,7 @@ describe("ScoutAgentController", () => {
         history: [],
         cloudConsent: false,
       }),
-    ).rejects.toThrow(/Ask mode/u);
+    ).rejects.toThrow(/Research mode/u);
 
     await subject.command({ type: "set-mode", mode: "ask" });
     await expect(

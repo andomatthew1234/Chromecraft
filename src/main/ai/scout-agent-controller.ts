@@ -106,7 +106,7 @@ export class ScoutAgentController {
   async start(request: AgentRunStartRequest): Promise<AgentRunSnapshot> {
     this.assertAvailable();
     if (this.permissionMode !== "ask") {
-      throw new Error("Select Ask mode before starting browser research.");
+      throw new Error("Select Research mode before starting browser research.");
     }
     if (
       !request.objective.trim() ||

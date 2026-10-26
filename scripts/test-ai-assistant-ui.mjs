@@ -215,6 +215,7 @@ try {
     "the Chromecraft shell target",
     60_000,
   );
+  await cdp.send("Page.bringToFront");
   console.log("Connected to the rendered Chromecraft shell.");
   const markdownHistory = JSON.stringify([
     {
@@ -329,6 +330,7 @@ try {
       const surface = document.querySelector('.ai-composer-surface').getBoundingClientRect();
       const textarea = document.querySelector('.ai-composer textarea').getBoundingClientRect();
       const send = document.querySelector('.ai-send').getBoundingClientRect();
+      const panelStyle = getComputedStyle(document.querySelector('.ai-assistant-panel'));
       return {
         width: ${width},
         panel: { left: panel.left, right: panel.right, top: panel.top, bottom: panel.bottom },
@@ -338,6 +340,12 @@ try {
         send: { left: send.left, right: send.right, top: send.top, bottom: send.bottom },
         scrollWidth: document.querySelector('.ai-assistant-panel').scrollWidth,
         clientWidth: document.querySelector('.ai-assistant-panel').clientWidth,
+        panelAnimation: {
+          name: panelStyle.animationName,
+          duration: panelStyle.animationDuration,
+          playState: panelStyle.animationPlayState,
+          transform: panelStyle.transform,
+        },
       };
     })()`);
     assert(
@@ -362,7 +370,7 @@ try {
     );
     assert(
       Math.abs(result.panel.right - result.panel.left - (width - 54)) < 2,
-      `${width}px assistant panel did not reach its requested width`,
+      `${width}px assistant panel did not reach its requested width (expected ${width - 54}px, got ${result.panel.right - result.panel.left}px; ${JSON.stringify(result.panelAnimation)})`,
     );
     widthResults.push(result);
   }
@@ -657,6 +665,7 @@ try {
     modeBounds.modeCount === 4 && modeBounds.comingSoonCount === 2,
     "Scout permission mode options are incomplete",
   );
+  await new Promise((resolve) => setTimeout(resolve, 420));
   const modeScreenshot = await cdp.send("Page.captureScreenshot", {
     format: "png",
   });
@@ -664,16 +673,17 @@ try {
     modeScreenshotPath,
     Buffer.from(modeScreenshot.data, "base64"),
   );
-  await cdp.evaluate(`([...document.querySelectorAll('[role="menuitemradio"]')]
-    .find((item) => item.textContent?.includes('Let Scout inspect browser tabs')))?.click()`);
+  await cdp.evaluate(
+    `document.querySelector('[role="menuitemradio"][data-mode="ask"]')?.click()`,
+  );
   await poll(
     () =>
       cdp.evaluate(`window.chromecraft.getScoutAgent().then((snapshot) => ({
         mode: snapshot.permissionMode,
         label: document.querySelector('.scout-mode-button')?.textContent?.trim(),
       }))`),
-    (value) => value?.mode === "ask" && value?.label?.includes("Ask"),
-    "Ask mode to become authoritative",
+    (value) => value?.mode === "ask" && value?.label?.includes("Research"),
+    "Research mode to become authoritative",
   );
   await cdp.evaluate("window.chromecraft.setAiProvider('gemini')");
   const geminiDisclosure = await poll(
@@ -687,14 +697,14 @@ try {
       })()`),
     (value) =>
       Boolean(
-        value?.text?.includes("Ask mode is on") &&
+        value?.text?.includes("Research mode is on") &&
         value?.text?.includes("We'll send relevant tabs to Gemini."),
       ),
     "the Gemini research disclosure",
   );
   assert(
     geminiDisclosure.checkboxCount === 0,
-    "Gemini Ask mode still requires a confirmation checkbox",
+    "Gemini Research mode still requires a confirmation checkbox",
   );
   await cdp.evaluate("document.querySelector('.scout-mode-button')?.click()");
   await poll(

@@ -19,9 +19,17 @@ function safeWebUrl(raw: string | undefined): string | null {
   }
 }
 
-export function ScoutMarkdown({ text }: { text: string }) {
+export function ScoutMarkdown({
+  text,
+  afterResearch = false,
+}: {
+  text: string;
+  afterResearch?: boolean;
+}) {
   return (
-    <div className="scout-markdown">
+    <div
+      className={`scout-markdown${afterResearch ? " scout-markdown-after-research" : ""}`}
+    >
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         skipHtml

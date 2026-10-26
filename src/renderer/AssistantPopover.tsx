@@ -11,7 +11,7 @@ import { createPortal } from "react-dom";
 
 type PopoverPosition = Pick<
   CSSProperties,
-  "left" | "top" | "width" | "maxHeight" | "visibility"
+  "left" | "top" | "width" | "maxHeight" | "visibility" | "transformOrigin"
 >;
 
 export function AssistantPopover({
@@ -45,6 +45,7 @@ export function AssistantPopover({
     width: idealWidth,
     maxHeight: 0,
     visibility: "hidden",
+    transformOrigin: placement === "top" ? "bottom left" : "top left",
   });
 
   const restoreFocus = useCallback(() => {
@@ -116,6 +117,7 @@ export function AssistantPopover({
         width: Math.round(width),
         maxHeight: Math.round(maxHeight),
         visibility: "visible",
+        transformOrigin: openAbove ? "bottom left" : "top left",
       });
     };
 

@@ -16,7 +16,10 @@ const placeholder: ScoutResponseMessage = {
   model: "gemini-flash-lite-latest",
 };
 
-function run(status: AgentRunSnapshot["status"]): AgentRunSnapshot {
+function run(
+  status: AgentRunSnapshot["status"],
+  researched = true,
+): AgentRunSnapshot {
   return {
     id: "run",
     conversationId: "conversation",
@@ -30,7 +33,22 @@ function run(status: AgentRunSnapshot["status"]): AgentRunSnapshot {
     createdAt: 1,
     updatedAt: 2,
     completedAt: status === "completed" ? 2 : null,
-    events: [],
+    events: researched
+      ? [
+          {
+            id: "event",
+            runId: "run",
+            sequence: 1,
+            timestamp: 1,
+            type: "tool-proposed",
+            label: "Research step proposed",
+            detail: "Inspect relevant tabs",
+            toolId: "list_tabs",
+            status: "working",
+            metadata: {},
+          },
+        ]
+      : [],
     sources: [],
     pendingApproval: null,
     queuedMessages: [],
@@ -78,5 +96,33 @@ describe("ScoutResponseContent", () => {
     expect(resolveScoutResponse(placeholder, completedRun).text).toContain(
       "Choose the **280**",
     );
+  });
+
+  it("answers normally when Research mode decides browser tools are unnecessary", () => {
+    const markup = renderToStaticMarkup(
+      <ScoutResponseContent
+        message={placeholder}
+        run={run("completed", false)}
+        command={vi.fn()}
+        onError={vi.fn()}
+      />,
+    );
+
+    expect(markup).not.toContain("scout-run-card");
+    expect(markup).toContain("<h2>Recommendation</h2>");
+  });
+
+  it("shows ordinary thinking feedback until Scout chooses a research tool", () => {
+    const markup = renderToStaticMarkup(
+      <ScoutResponseContent
+        message={placeholder}
+        run={run("thinking", false)}
+        command={vi.fn()}
+        onError={vi.fn()}
+      />,
+    );
+
+    expect(markup).not.toContain("scout-run-card");
+    expect(markup).toContain("ai-thinking-indicator");
   });
 });

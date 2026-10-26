@@ -1,4 +1,5 @@
 import {
+  type CSSProperties,
   type FormEvent,
   useCallback,
   useEffect,
@@ -36,6 +37,7 @@ import {
 import { AssistantPopover } from "./AssistantPopover";
 import {
   resolveScoutResponse,
+  runUsedBrowserResearch,
   ScoutResponseContent,
 } from "./ScoutResponseContent";
 import "./ai-assistant.css";
@@ -48,6 +50,37 @@ const EMPTY_SCOUT_AGENT: ScoutAgentSnapshot = {
   researchCloudConsentGranted: false,
   runs: [],
 };
+
+export const SCOUT_PERMISSION_MODE_PRESENTATION = [
+  {
+    mode: "chat",
+    icon: "chat",
+    name: "Chat",
+    description: "Talk with Scout and share context when you choose.",
+    available: true,
+  },
+  {
+    mode: "ask",
+    icon: "travel_explore",
+    name: "Research",
+    description: "Scout can see your browser tabs and research with you.",
+    available: true,
+  },
+  {
+    mode: "smart-approval",
+    icon: "verified_user",
+    name: "Smart approval",
+    description: "Automatically handle safe actions.",
+    available: false,
+  },
+  {
+    mode: "automated",
+    icon: "rocket_launch",
+    name: "Automated",
+    description: "Let Scout carry out authorised tasks.",
+    available: false,
+  },
+] as const;
 
 export interface AssistantCommandLaunch {
   id: number;
@@ -330,7 +363,9 @@ export function AiAssistantPanel({
   const latestRunSequence = latestRun?.events.at(-1)?.sequence ?? -1;
   const agentBusy = Boolean(activeRun);
   const statusLabel = activeRun
-    ? activeRun.statusLabel
+    ? runUsedBrowserResearch(activeRun)
+      ? activeRun.statusLabel
+      : "Thinking"
     : sending
       ? "Thinking"
       : providerStatusLabel;
@@ -369,6 +404,10 @@ export function AiAssistantPanel({
     powerChoices.findIndex((choice) => choice.model === displayedModel),
   );
   const powerChoice = powerChoices[powerIndex] ?? null;
+  const permissionModePresentation =
+    SCOUT_PERMISSION_MODE_PRESENTATION.find(
+      (choice) => choice.mode === scoutAgent.permissionMode,
+    ) ?? SCOUT_PERMISSION_MODE_PRESENTATION[0];
 
   const refreshPage = useCallback(async () => {
     try {
@@ -560,7 +599,7 @@ export function AiAssistantPanel({
     const scroller = scrollRef.current;
     if (!scroller || !currentConversation?.messages.length) return;
     if (nearBottomRef.current) {
-      scroller.scrollTo({ top: scroller.scrollHeight, behavior: "smooth" });
+      scroller.scrollTo({ top: scroller.scrollHeight, behavior: "auto" });
     }
   }, [
     currentConversation?.messages.length,
@@ -698,7 +737,7 @@ export function AiAssistantPanel({
       setOpenPopover(null);
       setStatusNote(
         mode === "ask"
-          ? "Ask mode can inspect relevant eligible tabs for research."
+          ? "Research mode can inspect relevant eligible tabs when Scout decides research is needed."
           : "Chat mode selected. Scout will only use context you choose.",
       );
     } catch (error) {
@@ -1263,7 +1302,7 @@ export function AiAssistantPanel({
             </section>
           ) : (
             <section className="ai-message-list" aria-live="polite">
-              {currentConversation.messages.map((message) => {
+              {currentConversation.messages.map((message, index) => {
                 const run = runForMessage(message.id);
                 const display = resolveScoutResponse(message, run);
                 return (
@@ -1273,6 +1312,23 @@ export function AiAssistantPanel({
                     }`}
                     key={message.id}
                     aria-busy={display.status === "thinking" || undefined}
+                    data-animate={
+                      index >= currentConversation.messages.length - 2
+                        ? true
+                        : undefined
+                    }
+                    style={
+                      {
+                        "--ai-message-order": Math.max(
+                          0,
+                          index -
+                            Math.max(
+                              0,
+                              currentConversation.messages.length - 2,
+                            ),
+                        ),
+                      } as CSSProperties
+                    }
                   >
                     {message.role === "assistant" && (
                       <StaticAssistantAvatar
@@ -1330,7 +1386,7 @@ export function AiAssistantPanel({
               setShowScrollBottom(false);
               scroller?.scrollTo({
                 top: scroller.scrollHeight,
-                behavior: "smooth",
+                behavior: "auto",
               });
             }}
             aria-label="Scroll to latest message"
@@ -1456,7 +1512,7 @@ export function AiAssistantPanel({
                 <div className="scout-research-disclosure" role="note">
                   {icon("cloud_upload")}
                   <span>
-                    <strong>Ask mode is on</strong>
+                    <strong>Research mode is on</strong>
                     <small>We'll send relevant tabs to Gemini.</small>
                   </span>
                 </div>
@@ -1524,18 +1580,14 @@ export function AiAssistantPanel({
               type="button"
               className="scout-mode-button"
               onClick={() => setOnlyPopover("mode")}
-              aria-label={`Scout permission mode: ${scoutAgent.permissionMode}`}
+              aria-label={`Scout permission mode: ${permissionModePresentation.name}`}
               title="Scout permission mode"
               aria-haspopup="menu"
               aria-expanded={openPopover === "mode"}
               data-mode={scoutAgent.permissionMode}
             >
-              {icon(
-                scoutAgent.permissionMode === "ask" ? "travel_explore" : "chat",
-              )}
-              <span>
-                {scoutAgent.permissionMode === "ask" ? "Ask" : "Chat"}
-              </span>
+              {icon(permissionModePresentation.icon)}
+              <span>{permissionModePresentation.name}</span>
             </button>
             <span className="ai-composer-toolbar-spacer" />
             <button
@@ -1728,43 +1780,11 @@ export function AiAssistantPanel({
               </span>
             </header>
             <div className="scout-mode-options">
-              {(
-                [
-                  {
-                    mode: "chat",
-                    icon: "chat",
-                    name: "Chat",
-                    description:
-                      "Talk with Scout and share context when you choose.",
-                    available: true,
-                  },
-                  {
-                    mode: "ask",
-                    icon: "travel_explore",
-                    name: "Ask",
-                    description:
-                      "Let Scout inspect browser tabs and research with you.",
-                    available: true,
-                  },
-                  {
-                    mode: "smart-approval",
-                    icon: "verified_user",
-                    name: "Smart approval",
-                    description: "Automatically handle safe actions.",
-                    available: false,
-                  },
-                  {
-                    mode: "automated",
-                    icon: "rocket_launch",
-                    name: "Automated",
-                    description: "Let Scout carry out authorised tasks.",
-                    available: false,
-                  },
-                ] as const
-              ).map((choice) => (
+              {SCOUT_PERMISSION_MODE_PRESENTATION.map((choice) => (
                 <button
                   type="button"
                   role="menuitemradio"
+                  data-mode={choice.mode}
                   aria-checked={scoutAgent.permissionMode === choice.mode}
                   data-selected={scoutAgent.permissionMode === choice.mode}
                   key={choice.mode}

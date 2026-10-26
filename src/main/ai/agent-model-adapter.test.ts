@@ -66,5 +66,11 @@ describe("StructuredAgentModelAdapter", () => {
     expect(inputProperties.tabRef).toEqual({ type: "string" });
     expect(input.required).toContain("tabRef");
     expect(input.additionalProperties).toBe(false);
+    expect(request!.system).toContain(
+      "Use browser research tools only when the objective requires browser evidence",
+    );
+    expect(request!.system).toContain(
+      "answer directly with an empty toolCalls array",
+    );
   });
 });

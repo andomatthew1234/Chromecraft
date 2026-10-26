@@ -3,6 +3,18 @@ import { ScoutAgentTimeline } from "./ScoutAgentTimeline";
 import { ScoutMarkdown } from "./ScoutMarkdown";
 
 const TERMINAL_STATES = new Set(["completed", "failed", "cancelled"]);
+const RESEARCH_EVENTS = new Set<AgentRunSnapshot["events"][number]["type"]>([
+  "model-requested-information",
+  "tool-proposed",
+  "tab-inspected",
+  "article-read",
+  "screenshot-captured",
+  "source-recorded",
+  "approval-requested",
+  "approval-resolved",
+  "tool-executed",
+  "tool-failed",
+]);
 
 export interface ScoutResponseMessage {
   text: string;
@@ -32,6 +44,13 @@ export function resolveScoutResponse(
   };
 }
 
+export function runUsedBrowserResearch(run: AgentRunSnapshot): boolean {
+  return (
+    run.sources.length > 0 ||
+    run.events.some((event) => RESEARCH_EVENTS.has(event.type))
+  );
+}
+
 function ThinkingIndicator() {
   return (
     <div className="ai-thinking-indicator" role="status">
@@ -55,18 +74,21 @@ export function ScoutResponseContent({
   onError: (message: string) => void;
 }) {
   const resolved = resolveScoutResponse(message, run);
-  const researchActive = Boolean(run && !TERMINAL_STATES.has(run.status));
+  const researchVisible = Boolean(run && runUsedBrowserResearch(run));
+  const researchActive = Boolean(
+    researchVisible && run && !TERMINAL_STATES.has(run.status),
+  );
 
   return (
     <>
-      {run && (
+      {run && researchVisible && (
         <ScoutAgentTimeline run={run} command={command} onError={onError} />
       )}
       {!researchActive &&
         (resolved.status === "thinking" ? (
           <ThinkingIndicator />
         ) : resolved.role === "assistant" ? (
-          <ScoutMarkdown text={resolved.text} />
+          <ScoutMarkdown text={resolved.text} afterResearch={researchVisible} />
         ) : (
           <p>{resolved.text}</p>
         ))}
