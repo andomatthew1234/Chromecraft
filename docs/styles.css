@@ -80,20 +80,61 @@ button {
 }
 
 .wordmark {
+  align-items: center;
   color: inherit;
+  display: inline-flex;
   font-size: 20px;
   font-weight: 700;
+  gap: 8px;
   letter-spacing: 0;
   line-height: 1;
   text-decoration: none;
 }
 
-.wordmark span {
+.wordmark-logo {
+  display: block;
+  height: 30px;
+  object-fit: contain;
+  width: 30px;
+}
+
+.wordmark .wordmark-name {
+  color: inherit;
+  font: inherit;
+  margin: 0;
+}
+
+.wordmark > span:last-child {
   color: #6c0d42;
   font-family: "DM Mono", monospace;
   font-size: 12px;
   font-weight: 500;
-  margin-left: 4px;
+  margin-left: -4px;
+}
+
+.site-nav {
+  align-items: center;
+  display: flex;
+  gap: 22px;
+}
+
+.site-nav > a {
+  color: inherit;
+  font-family: "DM Mono", monospace;
+  font-size: 12px;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 5px;
+}
+
+.site-nav > a:hover {
+  color: #6c0d42;
+}
+
+.site-nav > a:focus-visible,
+.wordmark:focus-visible {
+  border-radius: 4px;
+  outline: 3px solid currentColor;
+  outline-offset: 5px;
 }
 
 .header-mark {

@@ -34,9 +34,23 @@ button {
 }
 
 .download-wordmark {
+  align-items: center;
+  display: inline-flex;
   font-size: 20px;
   font-weight: 700;
+  gap: 8px;
   text-decoration: none;
+}
+
+.download-wordmark img {
+  display: block;
+  height: 30px;
+  object-fit: contain;
+  width: 30px;
+}
+
+.download-wordmark strong {
+  font: inherit;
 }
 
 .download-wordmark span {
@@ -50,6 +64,12 @@ button {
   font-family: "DM Mono", monospace;
   font-size: 11px;
   text-underline-offset: 4px;
+}
+
+.download-header-actions {
+  align-items: center;
+  display: flex;
+  gap: 22px;
 }
 
 .selector-main {
@@ -2098,6 +2118,14 @@ button {
 @media (max-width: 520px) {
   .download-header {
     padding: 24px;
+  }
+
+  .download-header-actions {
+    gap: 12px;
+  }
+
+  .download-wordmark span {
+    display: none;
   }
 
   .selector-main,
