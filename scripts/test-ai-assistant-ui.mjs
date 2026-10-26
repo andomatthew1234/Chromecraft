@@ -804,6 +804,8 @@ try {
           bulbAnimation: getComputedStyle(bulb).animationName,
           bulbIsTopLeft:
             bulbRect.left < faceRect.left && bulbRect.top < faceRect.top,
+          compact:
+            sceneRect.width <= 24.5 && sceneRect.height <= 24.5,
           contained:
             sceneRect.left >= panelRect.left &&
             sceneRect.right <= panelRect.right &&
@@ -821,9 +823,10 @@ try {
   );
   assert(
     thinkingMotion.pages === 3 &&
-      thinkingMotion.eyeAnimation === "ai-thinking-eyes-track" &&
+      thinkingMotion.eyeAnimation === "ai-thinking-eyes-track-inline" &&
       thinkingMotion.bulbAnimation === "ai-thinking-bulb-pulse" &&
       thinkingMotion.bulbIsTopLeft &&
+      thinkingMotion.compact &&
       thinkingMotion.contained &&
       !thinkingMotion.duplicateMessageAvatar,
     `Scout thinking scene was incomplete: ${JSON.stringify(thinkingMotion)}`,
