@@ -289,33 +289,19 @@ try {
   await assertPage(cdp, "Let's setup Gemini powered intelligence.");
   const geminiScreenshot = await screenshot(cdp, "onboarding-gemini-intro.png");
   const geminiSetupChoices = await cdp.evaluate(`(() => ({
-    external: document.querySelector('[data-gemini-setup="external"]')?.textContent?.trim(),
-    embedded: document.querySelector('[data-gemini-setup="embedded"]')?.textContent?.trim(),
+    browser: document.querySelector('[data-gemini-setup="browser"]')?.textContent?.trim(),
+    embedded: Boolean(document.querySelector('[data-gemini-setup="embedded"]')),
   }))()`);
   assert(
-    geminiSetupChoices.external?.includes("Use my signed-in browser"),
-    `The fast Gemini setup route was not presented first: ${JSON.stringify(geminiSetupChoices)}`,
+    geminiSetupChoices.browser?.includes("Open Google AI Studio"),
+    `The supported Gemini browser setup route was not presented: ${JSON.stringify(geminiSetupChoices)}`,
   );
   assert(
-    geminiSetupChoices.embedded?.includes("Set up inside Chromecraft"),
-    `The embedded Gemini setup fallback was missing: ${JSON.stringify(geminiSetupChoices)}`,
+    geminiSetupChoices.embedded === false,
+    `An unsupported embedded Google sign-in route is still present: ${JSON.stringify(geminiSetupChoices)}`,
   );
-  await click(cdp, '[data-gemini-setup="embedded"]');
-  const guideBounds = await poll(
-    () =>
-      cdp.evaluate(`(() => {
-        const frame = document.querySelector('.onboarding-native-frame');
-        if (!frame) return null;
-        const bounds = frame.getBoundingClientRect();
-        return { width: bounds.width, height: bounds.height };
-      })()`),
-    (bounds) => bounds?.width >= 320 && bounds?.height >= 240,
-    "the embedded Gemini setup frame",
-  );
-  assert(guideBounds.width >= 320, "Gemini setup frame is too narrow.");
-  const guideScreenshot = await screenshot(cdp, "onboarding-gemini-guide.png");
 
-  await click(cdp, '[aria-label="Back to AI choices"]');
+  await click(cdp, ".onboarding-footer .onboarding-button.text");
   await assertPage(cdp, "Let's work out AI.");
   let localAiScreenshot;
   if (testLocalAi) {
@@ -374,7 +360,6 @@ try {
           essentialsScreenshot,
           aiScreenshot,
           geminiScreenshot,
-          guideScreenshot,
           ...(localAiScreenshot ? [localAiScreenshot] : []),
           settingsScreenshot,
         ],

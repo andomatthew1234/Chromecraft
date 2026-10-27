@@ -1,11 +1,4 @@
-import {
-  type KeyboardEvent,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { type KeyboardEvent, useEffect, useMemo, useState } from "react";
 
 import bitwardenLogoUrl from "../../docs/assets/extensions/bitwarden.svg";
 import trustpilotLogoUrl from "../../docs/assets/extensions/trustpilot.svg";
@@ -583,7 +576,6 @@ function GeminiSetupPage({
   const [agreed, setAgreed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const frame = useRef<HTMLDivElement>(null);
   const persist = aiTools.gemini.secureStorageAvailable;
 
   useEffect(
@@ -606,28 +598,6 @@ function GeminiSetupPage({
     [],
   );
 
-  useLayoutEffect(() => {
-    if (phase !== "guide" || !frame.current) return;
-    const update = () => {
-      const bounds = frame.current?.getBoundingClientRect();
-      if (!bounds || bounds.width < 320 || bounds.height < 240) return;
-      void window.chromecraft.setOnboardingGeminiViewBounds({
-        x: bounds.x,
-        y: bounds.y,
-        width: bounds.width,
-        height: bounds.height,
-      });
-    };
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(frame.current);
-    addEventListener("resize", update);
-    return () => {
-      observer.disconnect();
-      removeEventListener("resize", update);
-    };
-  }, [phase]);
-
   const startGuide = async () => {
     setError(null);
     setAgreed(false);
@@ -635,6 +605,7 @@ function GeminiSetupPage({
     try {
       setClipboard(await window.chromecraft.startOnboardingGeminiSetup());
     } catch (caught) {
+      setPhase("intro");
       setError(
         caught instanceof Error
           ? caught.message
@@ -643,20 +614,10 @@ function GeminiSetupPage({
     }
   };
 
-  const openManual = async () => {
+  const openManual = () => {
     setError(null);
     setPhase("manual");
     setAgreed(false);
-    try {
-      await window.chromecraft.openOnboardingGeminiSetupExternal();
-    } catch (caught) {
-      setPhase("intro");
-      setError(
-        caught instanceof Error
-          ? caught.message
-          : "Could not open your default browser.",
-      );
-    }
   };
 
   const restartGuide = async () => {
@@ -725,23 +686,15 @@ function GeminiSetupPage({
             <button
               type="button"
               className="onboarding-button filled large"
-              data-gemini-setup="external"
-              onClick={() => void openManual()}
-            >
-              Use my signed-in browser <MaterialIcon name="open_in_new" />
-            </button>
-            <button
-              type="button"
-              className="onboarding-button text large"
-              data-gemini-setup="embedded"
+              data-gemini-setup="browser"
               onClick={() => void startGuide()}
             >
-              Set up inside Chromecraft
+              Open Google AI Studio <MaterialIcon name="open_in_new" />
             </button>
           </div>
           <p className="onboarding-gemini-speed-note">
-            <MaterialIcon name="bolt" /> Usually fastest. Uses any Google
-            sign-in already available in your default browser.
+            <MaterialIcon name="verified_user" /> Opens in your trusted default
+            browser so Google sign-in and verification work normally.
           </p>
           {error && (
             <p className="onboarding-inline-error" role="alert">
@@ -815,22 +768,37 @@ function GeminiSetupPage({
       <section className="onboarding-gemini-stage">
         {phase === "guide" && (
           <>
-            <div className="onboarding-native-frame" ref={frame}>
-              <span>
-                <MaterialIcon name="language" /> Opening Google AI Studio...
+            <div className="onboarding-browser-handoff" role="status">
+              <span className="onboarding-browser-handoff-icon">
+                <MaterialIcon name="open_in_new" />
               </span>
+              <span className="onboarding-eyebrow">Secure browser handoff</span>
+              <h2>Google AI Studio is open in your browser.</h2>
+              <p>
+                Sign in there, create your API key, then copy it. Chromecraft
+                will detect the copied key and bring you to the confirmation
+                step automatically.
+              </p>
+              <button
+                type="button"
+                className="onboarding-button tonal"
+                onClick={() => void startGuide()}
+              >
+                Open Google AI Studio again
+                <MaterialIcon name="open_in_new" />
+              </button>
             </div>
             <button
               type="button"
               className="onboarding-external-setup"
-              onClick={() => void openManual()}
+              onClick={openManual}
             >
-              <MaterialIcon name="open_in_new" />
+              <MaterialIcon name="password" />
               <span>
-                <strong>Taking too long? Continue in your browser</strong>
+                <strong>I already have an API key</strong>
                 <small>
-                  Use any existing Google sign-in and avoid repeating
-                  verification.
+                  Enter it manually while Chromecraft continues watching for a
+                  copied key.
                 </small>
               </span>
             </button>

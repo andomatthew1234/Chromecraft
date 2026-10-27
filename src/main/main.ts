@@ -74,7 +74,6 @@ import type {
   GeminiClipboardDetectionSnapshot,
   OnboardingLocalAiSnapshot,
   OnboardingRecommendedSettings,
-  OnboardingViewBounds,
 } from "../shared/onboarding";
 import { isAllowedWebUrl } from "../shared/navigation";
 import { BrowserDataStore } from "./browser-data";
@@ -1698,27 +1697,9 @@ function registerIpc(): void {
   ipcMain.handle(channels.startOnboardingGeminiSetup, (event) =>
     requireOnboardingGemini(event).start(),
   );
-  ipcMain.handle(
-    channels.setOnboardingGeminiViewBounds,
-    (event, value: unknown) => {
-      if (!value || typeof value !== "object" || Array.isArray(value)) {
-        throw new TypeError("The onboarding browser frame is invalid.");
-      }
-      const bounds = value as Record<string, unknown>;
-      requireOnboardingGemini(event).setBounds({
-        x: requireNumber(bounds.x, "x"),
-        y: requireNumber(bounds.y, "y"),
-        width: requireNumber(bounds.width, "width"),
-        height: requireNumber(bounds.height, "height"),
-      } satisfies OnboardingViewBounds);
-    },
-  );
   ipcMain.handle(channels.stopOnboardingGeminiSetup, (event) => {
     requireOnboardingGemini(event).stop();
   });
-  ipcMain.handle(channels.openOnboardingGeminiSetupExternal, (event) =>
-    requireOnboardingGemini(event).openExternal(),
-  );
   ipcMain.handle(
     channels.commitOnboardingGeminiClipboardKey,
     (event, value: unknown) => {
@@ -3891,17 +3872,13 @@ async function createMainWindow(): Promise<void> {
   });
   onboardingLocalAiController = onboardingLocalAi;
   onboardingGeminiController?.dispose();
-  const onboardingGemini = new OnboardingGeminiController(
-    window,
-    browserSession,
-    {
-      readClipboardText: () => clipboard.readText(),
-      openExternal: (url) => shell.openExternal(url),
-      commitKey: (apiKey, persist) =>
-        aiTools.setGeminiApiKey({ apiKey, persist }),
-      emit: sendOnboardingGeminiClipboard,
-    },
-  );
+  const onboardingGemini = new OnboardingGeminiController({
+    readClipboardText: () => clipboard.readText(),
+    openExternal: (url) => shell.openExternal(url),
+    commitKey: (apiKey, persist) =>
+      aiTools.setGeminiApiKey({ apiKey, persist }),
+    emit: sendOnboardingGeminiClipboard,
+  });
   onboardingGeminiController = onboardingGemini;
   const scoutAgent = new ScoutAgentController({
     settingsFilePath: path.join(

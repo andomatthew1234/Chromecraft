@@ -1,10 +1,3 @@
-export interface OnboardingViewBounds {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-}
-
 export type GeminiClipboardDetectionState =
   | "idle"
   | "listening"
