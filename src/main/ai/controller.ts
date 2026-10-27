@@ -785,22 +785,36 @@ export class AiToolsController {
     ) {
       throw new TypeError("Enter a valid Gemini API key.");
     }
+    // Test the candidate before replacing a working credential. This keeps a
+    // rejected key out of encrypted storage and makes onboarding transactional.
+    const models = await new GeminiClient(apiKey).listModels();
     await this.credentials.set(apiKey, update.persist);
+    const selectedModel =
+      this.geminiState.selectedModel &&
+      models.some((model) => model.name === this.geminiState.selectedModel)
+        ? this.geminiState.selectedModel
+        : (models.find((model) => model.recommended)?.name ??
+          models[0]?.name ??
+          null);
     this.geminiState = {
       ...this.geminiState,
       apiKeyConfigured: true,
       sessionOnly: !update.persist,
-      connection: "unknown",
-      error: null,
+      connection: "connected",
+      models,
+      selectedModel,
+      error: models.length
+        ? null
+        : "No compatible Gemini text models were found.",
     };
+    this.organiserModels.gemini =
+      this.organiserModels.gemini &&
+      models.some((model) => model.name === this.organiserModels.gemini)
+        ? this.organiserModels.gemini
+        : selectedModel;
+    await this.persist();
     this.emit();
-    const snapshot = await this.refreshModels("gemini");
-    if (snapshot.gemini.connection !== "connected") {
-      throw new Error(
-        snapshot.gemini.error ?? "Chromecraft could not connect to Gemini.",
-      );
-    }
-    return snapshot;
+    return this.snapshot;
   }
 
   async sendAssistantMessage(

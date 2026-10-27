@@ -719,6 +719,7 @@ export class TabManager implements BrowserResearchAdapter {
       splitView: this.splitView.snapshot(this.activeTabId),
       ublock: this.ublock.snapshot,
       preferences: {
+        onboardingComplete: this.preferences.snapshot.onboardingComplete,
         restoreSession: this.preferences.snapshot.restoreSession,
         sidebarAttached: this.preferences.snapshot.sidebarAttached,
         sidebarOpen: this.preferences.snapshot.sidebarOpen,

@@ -166,6 +166,74 @@ function readerArticle(): SmartReaderArticle {
 }
 
 describe("AiToolsController", () => {
+  it("does not replace a working Gemini key when validation fails", async () => {
+    const file = await statePath();
+    const credentialStore = credentials("existing-key");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({ error: { message: "API key not valid" } }),
+            {
+              status: 400,
+              headers: { "content-type": "application/json" },
+            },
+          ),
+      ),
+    );
+    const controller = new AiToolsController({
+      stateFilePath: file,
+      ollama: { listModels: vi.fn() } as unknown as OllamaClient,
+      credentials: credentialStore,
+      organiseTabs: organiser(),
+    });
+
+    await expect(
+      controller.setGeminiApiKey({
+        apiKey: `AIza${"x".repeat(35)}`,
+        persist: true,
+      }),
+    ).rejects.toThrow("API key not valid");
+    expect(credentialStore.set).not.toHaveBeenCalled();
+    await expect(credentialStore.get()).resolves.toBe("existing-key");
+  });
+
+  it("stores a Gemini key only after the provider accepts it", async () => {
+    const file = await statePath();
+    const credentialStore = credentials();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response("{}", {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+      ),
+    );
+    const controller = new AiToolsController({
+      stateFilePath: file,
+      ollama: { listModels: vi.fn() } as unknown as OllamaClient,
+      credentials: credentialStore,
+      organiseTabs: organiser(),
+    });
+
+    await expect(
+      controller.setGeminiApiKey({
+        apiKey: `AIza${"x".repeat(35)}`,
+        persist: true,
+      }),
+    ).resolves.toMatchObject({
+      gemini: {
+        apiKeyConfigured: true,
+        connection: "connected",
+        sessionOnly: false,
+      },
+    });
+    expect(credentialStore.set).toHaveBeenCalledOnce();
+  });
+
   it("restores the last provider and independent model choices", async () => {
     const file = await statePath();
     await writeFile(

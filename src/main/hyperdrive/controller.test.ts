@@ -10,6 +10,7 @@ function makePreferences(
   patch: Partial<BrowserPreferences> = {},
 ): PreferencesStore {
   const value: BrowserPreferences = {
+    onboardingComplete: true,
     ublockEnabled: true,
     restoreSession: true,
     sidebarAttached: true,

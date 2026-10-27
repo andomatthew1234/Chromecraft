@@ -69,6 +69,11 @@ import type {
   ScoutAgentSnapshot,
   ScoutPermissionMode,
 } from "../shared/agent";
+import type {
+  CommitOnboardingGeminiKeyRequest,
+  GeminiClipboardDetectionSnapshot,
+  OnboardingViewBounds,
+} from "../shared/onboarding";
 import { isAllowedWebUrl } from "../shared/navigation";
 import { BrowserDataStore } from "./browser-data";
 import { ReadingPositionStore } from "./reading-position-store";
@@ -122,6 +127,7 @@ import { ScoutAgentModelResolver } from "./ai/agent-provider-resolver";
 import { AppMetricsCollector } from "./app-metrics-collector";
 import { chromecraftIcon, chromecraftIconPath } from "./app-icon";
 import { PerformanceCentreController } from "./performance-centre-controller";
+import { OnboardingGeminiController } from "./onboarding-gemini-controller";
 import { isPerformanceAction } from "../shared/performance-centre";
 import {
   canonicalWebOrigin,
@@ -186,6 +192,7 @@ function argumentValue(name: string): string | undefined {
 
 const smokeUserData = argumentValue("chromecraft-user-data");
 if (smokeUserData) app.setPath("userData", path.resolve(smokeUserData));
+const forceOnboarding = process.argv.includes("--chromecraft-show-onboarding");
 
 const smokeFixtureUrl = argumentValue("chromecraft-smoke-url");
 if (smokeFixtureUrl) {
@@ -238,6 +245,7 @@ let deleteAllGalleryItemsInFlight = false;
 let youtubeIndicatorHideTimer: NodeJS.Timeout | null = null;
 let appMetricsCollector: AppMetricsCollector | null = null;
 let performanceCentreController: PerformanceCentreController | null = null;
+let onboardingGeminiController: OnboardingGeminiController | null = null;
 
 async function promptForWebsitePermission(
   request: WebsitePermissionPrompt,
@@ -374,6 +382,16 @@ function sendScoutAgentSnapshot(snapshot: ScoutAgentSnapshot): void {
   shellView.webContents.send(channels.scoutAgentChanged, snapshot);
 }
 
+function sendOnboardingGeminiClipboard(
+  snapshot: GeminiClipboardDetectionSnapshot,
+): void {
+  if (!shellView || shellView.webContents.isDestroyed()) return;
+  shellView.webContents.send(
+    channels.onboardingGeminiClipboardChanged,
+    snapshot,
+  );
+}
+
 function requireUpdateManager(): UpdateManager {
   if (!updateManager) throw new Error("The update service is unavailable.");
   return updateManager;
@@ -383,6 +401,16 @@ function requireAiTools(event: IpcMainInvokeEvent): AiToolsController {
   requireTrusted(event);
   if (!aiToolsController) throw new Error("AI tools are not ready.");
   return aiToolsController;
+}
+
+function requireOnboardingGemini(
+  event: IpcMainInvokeEvent,
+): OnboardingGeminiController {
+  requireTrusted(event);
+  if (!onboardingGeminiController) {
+    throw new Error("Gemini onboarding is not ready.");
+  }
+  return onboardingGeminiController;
 }
 
 function requireScoutAgent(event: IpcMainInvokeEvent): ScoutAgentController {
@@ -877,6 +905,13 @@ async function syncSmartBackgroundPreferences(
 function requireBoolean(value: unknown, name: string): boolean {
   if (typeof value !== "boolean")
     throw new TypeError(`${name} must be a boolean.`);
+  return value;
+}
+
+function requireNumber(value: unknown, name: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new TypeError(`${name} must be a finite number.`);
+  }
   return value;
 }
 
@@ -1635,6 +1670,43 @@ function registerIpc(): void {
   });
   ipcMain.handle(channels.removeGeminiApiKey, (event) =>
     requireAiTools(event).removeGeminiApiKey(),
+  );
+  ipcMain.handle(channels.startOnboardingGeminiSetup, (event) =>
+    requireOnboardingGemini(event).start(),
+  );
+  ipcMain.handle(
+    channels.setOnboardingGeminiViewBounds,
+    (event, value: unknown) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        throw new TypeError("The onboarding browser frame is invalid.");
+      }
+      const bounds = value as Record<string, unknown>;
+      requireOnboardingGemini(event).setBounds({
+        x: requireNumber(bounds.x, "x"),
+        y: requireNumber(bounds.y, "y"),
+        width: requireNumber(bounds.width, "width"),
+        height: requireNumber(bounds.height, "height"),
+      } satisfies OnboardingViewBounds);
+    },
+  );
+  ipcMain.handle(channels.stopOnboardingGeminiSetup, (event) => {
+    requireOnboardingGemini(event).stop();
+  });
+  ipcMain.handle(channels.openOnboardingGeminiSetupExternal, (event) =>
+    requireOnboardingGemini(event).openExternal(),
+  );
+  ipcMain.handle(
+    channels.commitOnboardingGeminiClipboardKey,
+    (event, value: unknown) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        throw new TypeError("The Gemini credential request is invalid.");
+      }
+      const request = value as Record<string, unknown>;
+      return requireOnboardingGemini(event).commit({
+        stageId: requireString(request.stageId, "stageId", 128),
+        persist: requireBoolean(request.persist, "persist"),
+      } satisfies CommitOnboardingGeminiKeyRequest);
+    },
   );
   ipcMain.handle(channels.previewAiTool, (event, request: unknown) =>
     requireAiTools(event).preview(requireOrganiseTabsRequest(request)),
@@ -3258,6 +3330,13 @@ async function createMainWindow(): Promise<void> {
     path.join(app.getPath("userData"), "preferences.json"),
   );
   await preferences.load();
+  if (forceOnboarding) {
+    if (preferences.snapshot.onboardingComplete) {
+      await preferences.setOnboardingComplete(false);
+    }
+  } else if (smokeUserData && !preferences.snapshot.onboardingComplete) {
+    await preferences.setOnboardingComplete(true);
+  }
   const data = new BrowserDataStore(
     path.join(app.getPath("userData"), "browser-data.json"),
     {
@@ -3702,6 +3781,19 @@ async function createMainWindow(): Promise<void> {
   });
   aiToolsController = aiTools;
   await aiTools.initialize();
+  onboardingGeminiController?.dispose();
+  const onboardingGemini = new OnboardingGeminiController(
+    window,
+    browserSession,
+    {
+      readClipboardText: () => clipboard.readText(),
+      openExternal: (url) => shell.openExternal(url),
+      commitKey: (apiKey, persist) =>
+        aiTools.setGeminiApiKey({ apiKey, persist }),
+      emit: sendOnboardingGeminiClipboard,
+    },
+  );
+  onboardingGeminiController = onboardingGemini;
   const scoutAgent = new ScoutAgentController({
     settingsFilePath: path.join(
       app.getPath("userData"),
@@ -3753,6 +3845,7 @@ async function createMainWindow(): Promise<void> {
   let closingApproved = false;
   window.on("close", (event) => {
     if (closingApproved || updateRestartPrepared) {
+      onboardingGemini.dispose();
       performanceCentre.dispose();
       aiTools.dispose();
       void scoutAgent.dispose();
@@ -3790,6 +3883,7 @@ async function createMainWindow(): Promise<void> {
   });
   window.on("closed", () => {
     actionHost.dispose();
+    onboardingGemini.dispose();
     if (extensionWebRequestHost === actionHost) extensionWebRequestHost = null;
     extensions.dispose();
     updateManager?.dispose();
@@ -3817,6 +3911,9 @@ async function createMainWindow(): Promise<void> {
       smartDownloadsService = null;
       aiTools.dispose();
       if (aiToolsController === aiTools) aiToolsController = null;
+      if (onboardingGeminiController === onboardingGemini) {
+        onboardingGeminiController = null;
+      }
       void scoutAgent.dispose();
       if (scoutAgentController === scoutAgent) scoutAgentController = null;
       smartDownloadsTray?.destroy();

@@ -84,6 +84,7 @@ import {
 import { StaticAssistantAvatar } from "./AssistantAvatar";
 import { CommandCentre } from "./CommandCentre";
 import { OrganiseTabsPanel } from "./OrganiseTabsPanel";
+import { OnboardingExperience } from "./OnboardingExperience";
 import { SmartDownloadsPage } from "./SmartDownloadsPage";
 import { ScoutSettings } from "./ScoutSettings";
 import { WebsitePermissionsDashboard } from "./SiteControlsPanel";
@@ -9298,6 +9299,7 @@ export function App() {
       splitPickerBaseTabId ||
       splitDragTab ||
       splitControlsOpen ||
+      snapshot?.preferences.onboardingComplete === false ||
       dialog,
     );
     void window.chromecraft.setChromeOverlayOpen(open);
@@ -9322,11 +9324,15 @@ export function App() {
     splitPickerBaseTabId,
     splitDragTab,
     splitControlsOpen,
+    snapshot?.preferences.onboardingComplete,
     tool,
     updatesOpen,
   ]);
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
+      if (latestSnapshot.current?.preferences.onboardingComplete === false) {
+        return;
+      }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "f") {
         event.preventDefault();
         setFindOpen(true);
@@ -9380,6 +9386,19 @@ export function App() {
         <p>Starting Chromecraft</p>
       </main>
     );
+  if (!snapshot.preferences.onboardingComplete) {
+    return (
+      <div
+        className={`app-shell ${browserThemeClass(snapshot.preferences.newTabTheme)}`}
+      >
+        <OnboardingExperience
+          snapshot={snapshot}
+          extensions={extensions}
+          aiTools={aiTools}
+        />
+      </div>
+    );
+  }
   const bookmarked = data.bookmarks.some((item) => item.url === activeTab.url);
   const askScoutAboutReader = async () => {
     setTool("assistant");

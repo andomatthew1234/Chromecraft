@@ -23,6 +23,7 @@ const snapshot: BrowserSnapshot = {
     error: null,
   },
   preferences: {
+    onboardingComplete: true,
     restoreSession: true,
     sidebarAttached: true,
     sidebarOpen: false,

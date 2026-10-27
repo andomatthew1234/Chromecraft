@@ -31,6 +31,11 @@ import type {
   SmartReaderTabSnapshot,
   SmartReaderViewSnapshot,
 } from "./smart-reader";
+import type {
+  CommitOnboardingGeminiKeyRequest,
+  GeminiClipboardDetectionSnapshot,
+  OnboardingViewBounds,
+} from "./onboarding";
 
 export type TabId = string;
 
@@ -400,6 +405,7 @@ export type HyperdrivePredictionTrigger =
   | "search-suggestion";
 
 export interface BrowserPreferencesSnapshot {
+  onboardingComplete: boolean;
   restoreSession: boolean;
   sidebarAttached: boolean;
   sidebarOpen: boolean;
@@ -997,6 +1003,13 @@ export interface ChromecraftApi {
   ): Promise<AiToolsSnapshot>;
   setGeminiApiKey(update: GeminiApiKeyUpdate): Promise<AiToolsSnapshot>;
   removeGeminiApiKey(): Promise<AiToolsSnapshot>;
+  startOnboardingGeminiSetup(): Promise<GeminiClipboardDetectionSnapshot>;
+  setOnboardingGeminiViewBounds(bounds: OnboardingViewBounds): Promise<void>;
+  stopOnboardingGeminiSetup(): Promise<void>;
+  openOnboardingGeminiSetupExternal(): Promise<void>;
+  commitOnboardingGeminiClipboardKey(
+    request: CommitOnboardingGeminiKeyRequest,
+  ): Promise<AiToolsSnapshot>;
   previewAiTool(request: OrganiseTabsRequest): Promise<OrganiseTabsProposal>;
   applyAiTool(proposal: OrganiseTabsProposal): Promise<AiToolApplyResult>;
   cancelAiTool(): Promise<void>;
@@ -1038,6 +1051,9 @@ export interface ChromecraftApi {
   onExtensions(listener: (snapshot: ExtensionsSnapshot) => void): () => void;
   onUpdateSnapshot(listener: (snapshot: UpdateSnapshot) => void): () => void;
   onAiTools(listener: (snapshot: AiToolsSnapshot) => void): () => void;
+  onOnboardingGeminiClipboard(
+    listener: (snapshot: GeminiClipboardDetectionSnapshot) => void,
+  ): () => void;
   onScoutAgent(listener: (snapshot: ScoutAgentSnapshot) => void): () => void;
   onShowScoutSettings(listener: () => void): () => void;
   onAssistantContextCaptured(

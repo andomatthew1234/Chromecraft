@@ -49,6 +49,11 @@ import type {
   AgentRunStartRequest,
   ScoutAgentSnapshot,
 } from "../shared/agent";
+import type {
+  CommitOnboardingGeminiKeyRequest,
+  GeminiClipboardDetectionSnapshot,
+  OnboardingViewBounds,
+} from "../shared/onboarding";
 
 const api: ChromecraftApi = {
   getSnapshot: () =>
@@ -632,6 +637,26 @@ const api: ChromecraftApi = {
     ) as Promise<AiToolsSnapshot>,
   removeGeminiApiKey: () =>
     ipcRenderer.invoke(channels.removeGeminiApiKey) as Promise<AiToolsSnapshot>,
+  startOnboardingGeminiSetup: () =>
+    ipcRenderer.invoke(
+      channels.startOnboardingGeminiSetup,
+    ) as Promise<GeminiClipboardDetectionSnapshot>,
+  setOnboardingGeminiViewBounds: (bounds) =>
+    ipcRenderer.invoke(
+      channels.setOnboardingGeminiViewBounds,
+      bounds as OnboardingViewBounds,
+    ) as Promise<void>,
+  stopOnboardingGeminiSetup: () =>
+    ipcRenderer.invoke(channels.stopOnboardingGeminiSetup) as Promise<void>,
+  openOnboardingGeminiSetupExternal: () =>
+    ipcRenderer.invoke(
+      channels.openOnboardingGeminiSetupExternal,
+    ) as Promise<void>,
+  commitOnboardingGeminiClipboardKey: (request) =>
+    ipcRenderer.invoke(
+      channels.commitOnboardingGeminiClipboardKey,
+      request as CommitOnboardingGeminiKeyRequest,
+    ) as Promise<AiToolsSnapshot>,
   previewAiTool: (request) =>
     ipcRenderer.invoke(
       channels.previewAiTool,
@@ -809,6 +834,18 @@ const api: ChromecraftApi = {
     ) => listener(snapshot);
     ipcRenderer.on(channels.aiToolsChanged, handler);
     return () => ipcRenderer.removeListener(channels.aiToolsChanged, handler);
+  },
+  onOnboardingGeminiClipboard: (listener) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      snapshot: GeminiClipboardDetectionSnapshot,
+    ) => listener(snapshot);
+    ipcRenderer.on(channels.onboardingGeminiClipboardChanged, handler);
+    return () =>
+      ipcRenderer.removeListener(
+        channels.onboardingGeminiClipboardChanged,
+        handler,
+      );
   },
   onScoutAgent: (listener) => {
     const handler = (

@@ -11,6 +11,7 @@ import type { SmartReaderAppearance } from "../shared/smart-reader";
 import { normalizeSmartReaderAppearance } from "../shared/smart-reader";
 
 export interface BrowserPreferences {
+  onboardingComplete: boolean;
   ublockEnabled: boolean;
   restoreSession: boolean;
   sidebarAttached: boolean;
@@ -37,6 +38,7 @@ export interface BrowserPreferences {
 }
 
 const defaults: BrowserPreferences = {
+  onboardingComplete: false,
   ublockEnabled: true,
   restoreSession: true,
   sidebarAttached: true,
@@ -147,6 +149,12 @@ export class PreferencesStore {
       const raw = await fs.readFile(this.filePath, "utf8");
       const parsed = JSON.parse(raw) as Partial<BrowserPreferences>;
       this.value = {
+        // Profiles created before onboarding shipped have already used
+        // Chromecraft, so do not interrupt them after an update.
+        onboardingComplete:
+          typeof parsed.onboardingComplete === "boolean"
+            ? parsed.onboardingComplete
+            : true,
         ublockEnabled:
           typeof parsed.ublockEnabled === "boolean"
             ? parsed.ublockEnabled
@@ -251,6 +259,10 @@ export class PreferencesStore {
 
   async setUblockEnabled(enabled: boolean): Promise<void> {
     await this.update({ ublockEnabled: enabled });
+  }
+
+  async setOnboardingComplete(complete: boolean): Promise<void> {
+    await this.update({ onboardingComplete: complete });
   }
 
   async setRestoreSession(enabled: boolean): Promise<void> {

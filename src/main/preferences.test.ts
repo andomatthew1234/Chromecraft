@@ -31,6 +31,29 @@ describe("PreferencesStore search suggestions", () => {
     });
   });
 
+  it("shows onboarding for a fresh profile", async () => {
+    const preferences = new PreferencesStore(filePath);
+    await preferences.load();
+
+    expect(preferences.snapshot.onboardingComplete).toBe(false);
+  });
+
+  it("does not interrupt legacy profiles but preserves an unfinished flow", async () => {
+    await fs.writeFile(filePath, JSON.stringify({ sidebarOpen: true }), "utf8");
+    const legacy = new PreferencesStore(filePath);
+    await legacy.load();
+    expect(legacy.snapshot.onboardingComplete).toBe(true);
+
+    await fs.writeFile(
+      filePath,
+      JSON.stringify({ onboardingComplete: false }),
+      "utf8",
+    );
+    const unfinished = new PreferencesStore(filePath);
+    await unfinished.load();
+    expect(unfinished.snapshot.onboardingComplete).toBe(false);
+  });
+
   it("persists the opt-in Smart Reader progress preference", async () => {
     const preferences = new PreferencesStore(filePath);
     await preferences.load();

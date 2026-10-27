@@ -24,6 +24,7 @@
     "test:settings-scroll": "node scripts/test-settings-scroll.mjs",
     "test:full-settings": "node scripts/test-full-settings.mjs",
     "test:ai-assistant-ui": "node scripts/test-ai-assistant-ui.mjs",
+    "test:onboarding-ui:win": "node scripts/test-onboarding-ui.mjs",
     "test:scout-organiser-ui": "node scripts/test-scout-organiser-ui.mjs",
     "test:performance-centre:win": "node scripts/test-performance-centre.mjs",
     "test:command-centre:win": "node scripts/test-command-centre.mjs",
