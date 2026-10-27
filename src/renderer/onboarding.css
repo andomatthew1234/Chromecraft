@@ -17,7 +17,8 @@
   align-items: center;
   gap: 24px;
   min-width: 0;
-  padding: 12px 132px 10px 28px;
+  /* Keep page labels clear of the native Windows caption buttons. */
+  padding: 12px 168px 10px 28px;
   border-bottom: 1px solid var(--md-outline-variant);
   background: color-mix(in srgb, var(--md-surface) 94%, transparent);
   -webkit-app-region: drag;
@@ -1523,7 +1524,7 @@
 @media (max-width: 920px) {
   .onboarding-topbar {
     grid-template-columns: 1fr auto;
-    padding-right: 116px;
+    padding-right: 152px;
   }
 
   .onboarding-progress {

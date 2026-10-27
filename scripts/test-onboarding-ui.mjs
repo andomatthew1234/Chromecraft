@@ -240,6 +240,16 @@ try {
   );
   cdp = await CdpClient.connect(target.webSocketDebuggerUrl);
   await assertPage(cdp, "Get to know us.");
+  const topbarLayout = await cdp.evaluate(`(() => {
+    const label = document.querySelector('.onboarding-step-label');
+    if (!(label instanceof HTMLElement)) return null;
+    const bounds = label.getBoundingClientRect();
+    return { right: bounds.right, viewportWidth: innerWidth };
+  })()`);
+  assert(
+    topbarLayout && topbarLayout.right <= topbarLayout.viewportWidth - 150,
+    `The onboarding step label overlaps the Windows caption area: ${JSON.stringify(topbarLayout)}`,
+  );
   const featureScreenshot = await screenshot(cdp, "onboarding-features.png");
 
   await cdp.send("Emulation.setDeviceMetricsOverride", {
