@@ -289,20 +289,71 @@ try {
   await assertPage(cdp, "Let's setup Gemini powered intelligence.");
   const geminiScreenshot = await screenshot(cdp, "onboarding-gemini-intro.png");
   const geminiSetupChoices = await cdp.evaluate(`(() => ({
-    browser: document.querySelector('[data-gemini-setup="browser"]')?.textContent?.trim(),
-    embedded: Boolean(document.querySelector('[data-gemini-setup="embedded"]')),
+    inApp: document.querySelector('[data-gemini-setup="in-app"]')?.textContent?.trim(),
+    iframe: Boolean(document.querySelector('iframe, webview')),
   }))()`);
   assert(
-    geminiSetupChoices.browser?.includes("Open Google AI Studio"),
-    `The supported Gemini browser setup route was not presented: ${JSON.stringify(geminiSetupChoices)}`,
+    geminiSetupChoices.inApp?.includes("Let's go"),
+    `The in-app Gemini setup route was not presented: ${JSON.stringify(geminiSetupChoices)}`,
   );
   assert(
-    geminiSetupChoices.embedded === false,
-    `An unsupported embedded Google sign-in route is still present: ${JSON.stringify(geminiSetupChoices)}`,
+    geminiSetupChoices.iframe === false,
+    `Gemini setup must not use an iframe or webview: ${JSON.stringify(geminiSetupChoices)}`,
   );
 
-  await click(cdp, ".onboarding-footer .onboarding-button.text");
+  await click(cdp, '[data-gemini-setup="in-app"]');
+  const geminiFrame = await poll(
+    () =>
+      cdp.evaluate(`(() => {
+        const frame = document.querySelector('.onboarding-native-frame');
+        if (!(frame instanceof HTMLElement)) return null;
+        const bounds = frame.getBoundingClientRect();
+        return { width: bounds.width, height: bounds.height };
+      })()`),
+    (bounds) => bounds?.width >= 320 && bounds?.height >= 240,
+    "the measured in-app Gemini frame",
+  );
+  const geminiTarget = await poll(
+    async () => {
+      const response = await fetch(`http://127.0.0.1:${port}/json/list`);
+      return response.json();
+    },
+    (targets) =>
+      targets.some(
+        (entry) =>
+          entry.url.startsWith("https://aistudio.google.com/apikey") ||
+          entry.url.startsWith("https://accounts.google.com/"),
+      ),
+    "Google AI Studio in a real Chromecraft tab",
+  );
+  assert(
+    geminiFrame.width >= 320 && geminiFrame.height >= 240,
+    `The Gemini tab frame is too small: ${JSON.stringify(geminiFrame)}`,
+  );
+  assert(
+    geminiTarget.some(
+      (entry) =>
+        entry.url.startsWith("https://aistudio.google.com/apikey") ||
+        entry.url.startsWith("https://accounts.google.com/"),
+    ),
+    "Google AI Studio was not opened as a real page target.",
+  );
+
+  await click(cdp, ".onboarding-gemini-instructions .onboarding-icon-button");
   await assertPage(cdp, "Let's work out AI.");
+  await poll(
+    async () => {
+      const response = await fetch(`http://127.0.0.1:${port}/json/list`);
+      return response.json();
+    },
+    (targets) =>
+      !targets.some(
+        (entry) =>
+          entry.url.includes("aistudio.google.com") ||
+          entry.url.includes("accounts.google.com"),
+      ),
+    "the temporary Gemini tab to close",
+  );
   let localAiScreenshot;
   if (testLocalAi) {
     await click(cdp, ".onboarding-choice-card.choice-gemini");

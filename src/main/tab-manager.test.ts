@@ -3,11 +3,38 @@ import { describe, expect, it } from "vitest";
 import {
   ExtensionTabLifecycle,
   isWebsiteFullscreenPermissionAllowed,
+  normalizeOnboardingPageBounds,
   shouldBlockOfflineArchiveNavigation,
   TabManager,
   type ExtensionTabTransition,
 } from "./tab-manager";
 import { SplitViewState } from "./split-view-state";
+
+describe("onboarding page bounds", () => {
+  it("keeps a valid renderer frame inside the native window", () => {
+    expect(
+      normalizeOnboardingPageBounds(
+        { x: 900, y: 700, width: 500, height: 400 },
+        { x: 0, y: 0, width: 1_000, height: 800 },
+      ),
+    ).toEqual({ x: 488, y: 388, width: 500, height: 400 });
+  });
+
+  it("rejects undersized and non-finite renderer frames", () => {
+    expect(() =>
+      normalizeOnboardingPageBounds(
+        { x: 0, y: 0, width: 319, height: 240 },
+        { x: 0, y: 0, width: 1_000, height: 800 },
+      ),
+    ).toThrow("invalid");
+    expect(() =>
+      normalizeOnboardingPageBounds(
+        { x: Number.NaN, y: 0, width: 500, height: 400 },
+        { x: 0, y: 0, width: 1_000, height: 800 },
+      ),
+    ).toThrow("invalid");
+  });
+});
 
 describe("website fullscreen permissions", () => {
   it("allows only user-initiated fullscreen on HTTP and HTTPS pages", () => {

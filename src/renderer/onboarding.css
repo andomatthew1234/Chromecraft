@@ -836,56 +836,24 @@
   background: var(--md-background);
 }
 
-.onboarding-browser-handoff {
+.onboarding-native-frame {
+  position: relative;
   display: grid;
-  align-self: center;
-  justify-self: center;
-  width: min(620px, 100%);
-  min-height: 300px;
-  align-content: center;
-  justify-items: start;
-  padding: clamp(28px, 5vw, 56px);
+  min-width: 320px;
+  min-height: 240px;
+  place-items: center;
+  overflow: hidden;
   border: 1px solid var(--md-outline-variant);
   border-radius: 8px;
   color: var(--md-on-surface-variant);
-  background: var(--md-surface-container-low);
+  background: var(--md-surface-container-lowest);
   box-shadow: var(--elevation-2);
 }
 
-.onboarding-browser-handoff-icon {
-  display: grid;
-  width: 58px;
-  height: 58px;
-  margin-bottom: 28px;
-  place-items: center;
-  border-radius: 8px;
-  color: var(--md-on-primary-container);
-  background: var(--md-primary-container);
-}
-
-.onboarding-browser-handoff-icon .material-symbols-rounded {
-  font-size: 30px;
-}
-
-.onboarding-browser-handoff h2,
-.onboarding-browser-handoff p {
-  margin: 0;
-}
-
-.onboarding-browser-handoff h2 {
-  margin-top: 8px;
-  color: var(--md-on-surface);
-  font: var(--type-headline-medium);
-}
-
-.onboarding-browser-handoff p {
-  max-width: 54ch;
-  margin-top: 12px;
-  font: var(--type-body-large);
-}
-
-.onboarding-browser-handoff .onboarding-button {
-  margin-top: 28px;
+.onboarding-native-frame > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .onboarding-external-setup {
@@ -896,20 +864,16 @@
   width: 100%;
   min-height: 68px;
   padding: 10px 16px;
-  border: 1px solid var(--md-primary);
+  border: 1px solid var(--md-outline-variant);
   border-radius: 8px;
   color: var(--md-on-surface);
-  background: var(--md-primary-container);
+  background: var(--md-surface-container-low);
   text-align: left;
   cursor: pointer;
 }
 
 .onboarding-external-setup:hover {
-  background: color-mix(
-    in srgb,
-    var(--md-primary-container) 82%,
-    var(--md-primary) 18%
-  );
+  background: var(--md-surface-container);
 }
 
 .onboarding-external-setup > .material-symbols-rounded {

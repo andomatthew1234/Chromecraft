@@ -35,7 +35,10 @@ import type {
   WebStoreListingSnapshot,
   YouTubeWatchSnapshot,
 } from "../shared/browser";
-import type { OnboardingRecommendedSettings } from "../shared/onboarding";
+import type {
+  OnboardingRecommendedSettings,
+  OnboardingViewBounds,
+} from "../shared/onboarding";
 import type {
   SmartReaderAppearance,
   SmartReaderArticle,
@@ -111,6 +114,9 @@ const ASSISTANT_SCREENSHOT_LIMIT = 1_500_000;
 const SESSION_WRITE_DELAY_MS = 300;
 const SAVED_ARTICLE_READER_DEADLINE_MS = 20_000;
 const EXTENSION_WINDOW_NAME_PREFIX = "__chromecraft_extension_window_";
+const ONBOARDING_VIEW_MARGIN = 12;
+const ONBOARDING_VIEW_MINIMUM_WIDTH = 320;
+const ONBOARDING_VIEW_MINIMUM_HEIGHT = 240;
 const ZOOM_FACTORS = [
   0.25, 0.33, 0.5, 0.67, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4,
   5,
@@ -121,6 +127,47 @@ export function isWebsiteFullscreenPermissionAllowed(
   topLevelUrl: string,
 ): boolean {
   return permission === "fullscreen" && isAllowedWebUrl(topLevelUrl);
+}
+
+export function normalizeOnboardingPageBounds(
+  requested: OnboardingViewBounds,
+  content: Electron.Rectangle,
+): Electron.Rectangle {
+  const values = [requested.x, requested.y, requested.width, requested.height];
+  if (
+    values.some((value) => !Number.isFinite(value) || value > 16_384) ||
+    requested.x < 0 ||
+    requested.y < 0 ||
+    requested.width < ONBOARDING_VIEW_MINIMUM_WIDTH ||
+    requested.height < ONBOARDING_VIEW_MINIMUM_HEIGHT
+  ) {
+    throw new TypeError("The onboarding browser frame is invalid.");
+  }
+  const maximumWidth = Math.max(1, content.width - ONBOARDING_VIEW_MARGIN * 2);
+  const maximumHeight = Math.max(
+    1,
+    content.height - ONBOARDING_VIEW_MARGIN * 2,
+  );
+  const width = Math.min(Math.round(requested.width), maximumWidth);
+  const height = Math.min(Math.round(requested.height), maximumHeight);
+  return {
+    x: Math.min(
+      Math.max(ONBOARDING_VIEW_MARGIN, Math.round(requested.x)),
+      Math.max(
+        ONBOARDING_VIEW_MARGIN,
+        content.width - width - ONBOARDING_VIEW_MARGIN,
+      ),
+    ),
+    y: Math.min(
+      Math.max(ONBOARDING_VIEW_MARGIN, Math.round(requested.y)),
+      Math.max(
+        ONBOARDING_VIEW_MARGIN,
+        content.height - height - ONBOARDING_VIEW_MARGIN,
+      ),
+    ),
+    width,
+    height,
+  };
 }
 
 function cleanAssistantText(value: unknown, maximum: number): string | null {
@@ -555,6 +602,12 @@ export class TabManager implements BrowserResearchAdapter {
   private selectionAnchorId: TabId | null = null;
   private readonly extensionTabs = new ExtensionTabLifecycle();
   private activeTabId = "";
+  private onboardingPortal: {
+    restoreTabId: TabId | null;
+    tabIds: Set<TabId>;
+    bounds: Electron.Rectangle | null;
+  } | null = null;
+  private readonly discardedTabIds = new Set<TabId>();
   private disposed = false;
   private snapshotTimer: ReturnType<typeof setTimeout> | null = null;
   private layoutTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1454,6 +1507,52 @@ export class TabManager implements BrowserResearchAdapter {
     return id;
   }
 
+  openOnboardingTab(url: string): void {
+    if (!isAllowedWebUrl(url)) {
+      throw new TypeError("The onboarding destination is invalid.");
+    }
+    this.closeOnboardingTab();
+    const restoreTabId = this.tabs.has(this.activeTabId)
+      ? this.activeTabId
+      : null;
+    const tabId = this.createTab(url, false);
+    this.onboardingPortal = {
+      restoreTabId,
+      tabIds: new Set([tabId]),
+      bounds: null,
+    };
+    this.activateTab(tabId);
+  }
+
+  setOnboardingTabBounds(bounds: OnboardingViewBounds): void {
+    const normalized = normalizeOnboardingPageBounds(
+      bounds,
+      this.window.getContentBounds(),
+    );
+    if (!this.onboardingPortal) return;
+    this.onboardingPortal.bounds = normalized;
+    this.layoutActiveView();
+  }
+
+  closeOnboardingTab(): void {
+    const portal = this.onboardingPortal;
+    if (!portal) return;
+    this.onboardingPortal = null;
+    const restoreTabId =
+      portal.restoreTabId && this.tabs.has(portal.restoreTabId)
+        ? portal.restoreTabId
+        : this.order.find((tabId) => !portal.tabIds.has(tabId));
+    if (restoreTabId && restoreTabId !== this.activeTabId) {
+      this.activateTab(restoreTabId);
+    }
+    for (const tabId of portal.tabIds) {
+      if (!this.tabs.has(tabId)) continue;
+      this.discardedTabIds.add(tabId);
+      this.closeTab(tabId);
+    }
+    this.layoutActiveView();
+  }
+
   openGallery(entryId?: string, forceNew = false): TabId {
     this.assertTabTopologyMutable();
     const suffix = entryId ? `?video=${encodeURIComponent(entryId)}` : "";
@@ -1652,7 +1751,8 @@ export class TabManager implements BrowserResearchAdapter {
     if (this.selectionAnchorId === tabId) this.selectionAnchorId = null;
     this.extensionTabs.remove(tabId);
     this.destroyView(tab);
-    if (isAllowedWebUrl(tab.url)) {
+    const discardWithoutHistory = this.discardedTabIds.delete(tabId);
+    if (!discardWithoutHistory && isAllowedWebUrl(tab.url)) {
       void this.browserData
         .addRecentlyClosedTab({
           title: tab.title || hostFromUrl(tab.url),
@@ -3684,6 +3784,7 @@ export class TabManager implements BrowserResearchAdapter {
     if (!changedActiveTab) this.scheduleSnapshot();
     this.scheduleSessionSave();
     void view.webContents.loadURL(target).catch((error: unknown) => {
+      if (!this.tabs.has(tab.id) || view.webContents.isDestroyed()) return;
       const message = error instanceof Error ? error.message : String(error);
       if (!message.includes("ERR_ABORTED"))
         console.warn(`Navigation failed for ${target}: ${message}`);
@@ -4283,15 +4384,26 @@ export class TabManager implements BrowserResearchAdapter {
       if (
         isAllowedWebUrl(details.url) &&
         (this.shouldAllowWebsitePopup?.(contents.getURL()) ?? true)
-      )
+      ) {
         queueMicrotask(() =>
-          this.runNativeTabTopologyAction(() =>
+          this.runNativeTabTopologyAction(() => {
+            if (this.onboardingPortal?.tabIds.has(tab.id)) {
+              const popupTabId = this.createTab(details.url, false);
+              this.onboardingPortal.tabIds.add(popupTabId);
+              if (details.disposition !== "background-tab") {
+                this.activateTab(popupTabId);
+              } else {
+                this.layoutActiveView();
+              }
+              return;
+            }
             this.createTab(
               details.url,
               details.disposition !== "background-tab",
-            ),
-          ),
+            );
+          }),
         );
+      }
       return { action: "deny" };
     });
     return view;
@@ -5408,14 +5520,24 @@ export class TabManager implements BrowserResearchAdapter {
     const { width, height } = this.window.getContentBounds();
     this.shellView.setBounds({ x: 0, y: 0, width, height });
     this.shellView.setVisible(this.htmlFullscreenTabId !== this.activeTabId);
-    const presentation = this.splitView.presentation(
-      this.activeTabId,
-      this.currentPageBounds(),
-      this.htmlFullscreenTabId,
-    );
-    const panes = new Map(
-      presentation.panes.map((pane) => [pane.tabId, pane.bounds] as const),
-    );
+    const onboardingActive =
+      this.onboardingPortal?.tabIds.has(this.activeTabId) ?? false;
+    const onboardingBounds = onboardingActive
+      ? (this.onboardingPortal?.bounds ?? null)
+      : null;
+    const panes = onboardingActive
+      ? onboardingBounds
+        ? new Map([[this.activeTabId, onboardingBounds]])
+        : new Map<TabId, Electron.Rectangle>()
+      : new Map(
+          this.splitView
+            .presentation(
+              this.activeTabId,
+              this.currentPageBounds(),
+              this.htmlFullscreenTabId,
+            )
+            .panes.map((pane) => [pane.tabId, pane.bounds] as const),
+        );
     for (const tab of this.tabs.values()) {
       const view = tab.view;
       const bounds = panes.get(tab.id);
@@ -5424,6 +5546,9 @@ export class TabManager implements BrowserResearchAdapter {
       );
       if (view && !view.webContents.isDestroyed()) {
         if (showPage && !tab.reader.active) {
+          if (onboardingBounds && tab.id === this.activeTabId) {
+            this.window.contentView.addChildView(view);
+          }
           view.setBounds(bounds!);
           view.setVisible(true);
         } else {
@@ -5862,6 +5987,7 @@ export class TabManager implements BrowserResearchAdapter {
   private serializableTabs(): SessionTabInput[] {
     return this.order
       .map((id): SessionTabInput | null => {
+        if (this.onboardingPortal?.tabIds.has(id)) return null;
         const tab = this.requireTab(id);
         if (
           !tab.isNewTab &&

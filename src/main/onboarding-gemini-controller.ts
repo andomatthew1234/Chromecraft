@@ -4,6 +4,7 @@ import type { AiToolsSnapshot } from "../shared/ai-tools";
 import type {
   CommitOnboardingGeminiKeyRequest,
   GeminiClipboardDetectionSnapshot,
+  OnboardingViewBounds,
 } from "../shared/onboarding";
 
 export const GEMINI_API_KEY_SETUP_URL = "https://aistudio.google.com/apikey";
@@ -13,6 +14,9 @@ const SETUP_TIMEOUT_MS = 10 * 60 * 1_000;
 
 export interface OnboardingGeminiControllerOptions {
   readClipboardText: () => Promise<string>;
+  openInApp: (url: string) => Promise<void> | void;
+  closeInApp: () => void;
+  setInAppBounds: (bounds: OnboardingViewBounds) => void;
   openExternal: (url: string) => Promise<void>;
   commitKey: (apiKey: string, persist: boolean) => Promise<AiToolsSnapshot>;
   emit: (snapshot: GeminiClipboardDetectionSnapshot) => void;
@@ -27,6 +31,7 @@ export function isGeminiApiKeyCandidate(value: unknown): value is string {
 }
 
 export class OnboardingGeminiController {
+  private requestedBounds: OnboardingViewBounds | null = null;
   private interval: NodeJS.Timeout | null = null;
   private startedAt = 0;
   private stagedKey: { id: string; value: string } | null = null;
@@ -42,14 +47,29 @@ export class OnboardingGeminiController {
 
   async start(): Promise<GeminiClipboardDetectionSnapshot> {
     if (this.disposed) throw new Error("Gemini onboarding is unavailable.");
-    return this.openInBrowser();
+    return this.openInApp();
   }
 
-  private async openInBrowser(): Promise<GeminiClipboardDetectionSnapshot> {
+  setBounds(bounds: OnboardingViewBounds): void {
+    this.requestedBounds = { ...bounds };
+    if (this.state.state === "listening") this.options.setInAppBounds(bounds);
+  }
+
+  async openExternal(): Promise<void> {
+    if (this.disposed) throw new Error("Gemini onboarding is unavailable.");
+    if (this.state.state !== "listening") this.beginClipboardDetection();
+    this.options.closeInApp();
+    await this.options.openExternal(GEMINI_API_KEY_SETUP_URL);
+  }
+
+  private async openInApp(): Promise<GeminiClipboardDetectionSnapshot> {
     const startedHere = this.state.state !== "listening";
     if (startedHere) this.beginClipboardDetection();
     try {
-      await this.options.openExternal(GEMINI_API_KEY_SETUP_URL);
+      await this.options.openInApp(GEMINI_API_KEY_SETUP_URL);
+      if (this.requestedBounds) {
+        this.options.setInAppBounds(this.requestedBounds);
+      }
       return this.snapshot;
     } catch (error) {
       if (startedHere) this.stop();
@@ -72,6 +92,7 @@ export class OnboardingGeminiController {
       request.persist,
     );
     this.clearClipboardTimer();
+    this.options.closeInApp();
     this.stagedKey = null;
     this.state = { state: "idle", stageId: null, maskedKey: null };
     this.options.emit(this.snapshot);
@@ -80,6 +101,7 @@ export class OnboardingGeminiController {
 
   stop(): void {
     this.clearClipboardTimer();
+    this.options.closeInApp();
     this.stagedKey = null;
     this.state = { state: "idle", stageId: null, maskedKey: null };
     this.options.emit(this.snapshot);
@@ -134,6 +156,7 @@ export class OnboardingGeminiController {
       maskedKey: `AIza••••••${candidate.slice(-4)}`,
     };
     this.clearClipboardTimer();
+    this.options.closeInApp();
     this.options.emit(this.snapshot);
   }
 

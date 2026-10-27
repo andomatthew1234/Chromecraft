@@ -37,6 +37,7 @@ import type {
   OnboardingLocalAiSnapshot,
   OnboardingOllamaModel,
   OnboardingRecommendedSettings,
+  OnboardingViewBounds,
 } from "./onboarding";
 
 export type TabId = string;
@@ -1008,7 +1009,9 @@ export interface ChromecraftApi {
   setGeminiApiKey(update: GeminiApiKeyUpdate): Promise<AiToolsSnapshot>;
   removeGeminiApiKey(): Promise<AiToolsSnapshot>;
   startOnboardingGeminiSetup(): Promise<GeminiClipboardDetectionSnapshot>;
+  setOnboardingGeminiViewBounds(bounds: OnboardingViewBounds): Promise<void>;
   stopOnboardingGeminiSetup(): Promise<void>;
+  openOnboardingGeminiSetupExternal(): Promise<void>;
   commitOnboardingGeminiClipboardKey(
     request: CommitOnboardingGeminiKeyRequest,
   ): Promise<AiToolsSnapshot>;

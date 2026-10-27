@@ -55,6 +55,7 @@ import type {
   OnboardingLocalAiSnapshot,
   OnboardingOllamaModel,
   OnboardingRecommendedSettings,
+  OnboardingViewBounds,
 } from "../shared/onboarding";
 
 const api: ChromecraftApi = {
@@ -643,8 +644,17 @@ const api: ChromecraftApi = {
     ipcRenderer.invoke(
       channels.startOnboardingGeminiSetup,
     ) as Promise<GeminiClipboardDetectionSnapshot>,
+  setOnboardingGeminiViewBounds: (bounds) =>
+    ipcRenderer.invoke(
+      channels.setOnboardingGeminiViewBounds,
+      bounds as OnboardingViewBounds,
+    ) as Promise<void>,
   stopOnboardingGeminiSetup: () =>
     ipcRenderer.invoke(channels.stopOnboardingGeminiSetup) as Promise<void>,
+  openOnboardingGeminiSetupExternal: () =>
+    ipcRenderer.invoke(
+      channels.openOnboardingGeminiSetupExternal,
+    ) as Promise<void>,
   commitOnboardingGeminiClipboardKey: (request) =>
     ipcRenderer.invoke(
       channels.commitOnboardingGeminiClipboardKey,
