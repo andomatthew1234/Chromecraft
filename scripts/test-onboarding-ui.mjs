@@ -263,6 +263,29 @@ try {
 
   await click(cdp, ".onboarding-footer .onboarding-button.filled");
   await assertPage(cdp, "Choose some essentials.");
+  const onboardingBranding = await cdp.evaluate(`(async () => {
+    const waitForImage = (image) => new Promise((resolve) => {
+      if (image.complete) return resolve(image.naturalWidth > 0);
+      image.addEventListener("load", () => resolve(image.naturalWidth > 0), { once: true });
+      image.addEventListener("error", () => resolve(false), { once: true });
+    });
+    const wordmark = document.querySelector('.onboarding-wordmark-mark img');
+    const extensionLogos = [...document.querySelectorAll('.onboarding-extension-logo img')];
+    return {
+      wordmarkLoaded: wordmark instanceof HTMLImageElement && await waitForImage(wordmark),
+      extensionLogoCount: extensionLogos.length,
+      extensionLogosLoaded: await Promise.all(extensionLogos.map(waitForImage)),
+    };
+  })()`);
+  assert(
+    onboardingBranding.wordmarkLoaded,
+    `The Chromecraft onboarding logo did not load: ${JSON.stringify(onboardingBranding)}`,
+  );
+  assert(
+    onboardingBranding.extensionLogoCount === 3 &&
+      onboardingBranding.extensionLogosLoaded.every(Boolean),
+    `One or more onboarding extension logos did not load: ${JSON.stringify(onboardingBranding)}`,
+  );
   const essentialsScreenshot = await screenshot(
     cdp,
     "onboarding-essentials.png",

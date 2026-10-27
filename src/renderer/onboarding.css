@@ -41,13 +41,16 @@
   width: 34px;
   height: 34px;
   place-items: center;
-  border-radius: 8px;
-  color: var(--md-on-primary);
-  background: var(--md-primary);
-  font:
-    700 17px/1 "Google Sans",
-    "Segoe UI",
-    sans-serif;
+  overflow: hidden;
+}
+
+.onboarding-wordmark-mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  pointer-events: none;
+  user-select: none;
 }
 
 .onboarding-progress {

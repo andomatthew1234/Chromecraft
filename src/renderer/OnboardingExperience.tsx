@@ -25,6 +25,7 @@ import {
   type OnboardingRecommendedSettings,
 } from "../shared/onboarding";
 import type { UpdateSnapshot } from "../shared/updates";
+import chromecraftLogoUrl from "./assets/chromecraft-logo.png";
 import { GeminiLogo, OllamaLogo } from "./ScoutProviderLogo";
 
 type OnboardingPage =
@@ -137,7 +138,9 @@ function StepHeader({ page }: { page: OnboardingPage }) {
   return (
     <header className="onboarding-topbar">
       <span className="onboarding-wordmark">
-        <span className="onboarding-wordmark-mark">C</span>
+        <span className="onboarding-wordmark-mark" aria-hidden="true">
+          <img src={chromecraftLogoUrl} alt="" draggable={false} />
+        </span>
         Chromecraft
       </span>
       <span className="onboarding-progress" aria-label={`Step ${current} of 5`}>
@@ -256,10 +259,19 @@ function FeaturesPage({ next }: { next: () => void }) {
 }
 
 function ExtensionLogo({ item }: { item: RecommendedExtension }) {
-  return item.logoUrl ? (
-    <img src={item.logoUrl} alt="" draggable={false} />
-  ) : (
-    <MaterialIcon name={item.icon} />
+  const [failed, setFailed] = useState(false);
+
+  if (!item.logoUrl || failed) {
+    return <MaterialIcon name={item.icon} />;
+  }
+
+  return (
+    <img
+      src={item.logoUrl}
+      alt=""
+      draggable={false}
+      onError={() => setFailed(true)}
+    />
   );
 }
 
