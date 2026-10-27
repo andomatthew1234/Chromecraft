@@ -36,6 +36,14 @@ Each release contains:
   Node, V8, yt-dlp, and Deno versions;
 - `signature-report.json`, `SHA256SUMS`, and release notes.
 
+The Squirrel setup keeps the update-compatible one-click install path while
+using the Chromecraft Vanilla animation at
+`resources/installer/chromecraft-vanilla-installing.gif`. Regenerate it from
+the repository root with `python scripts/generate-installer-artwork.py` when
+the install artwork changes. The committed GIF is exactly 268 by 167 pixels,
+which is Squirrel's native viewport; packaging rejects artwork with any other
+dimensions rather than shipping a cropped installer.
+
 ## Required repository setup
 
 Complete these settings before enabling unattended maintenance releases:
@@ -102,6 +110,11 @@ unverified binary or rewrite a checksum merely to make a failing build pass.
    with the prerelease toggle before any signing secret is materialized.
 3. Watch the signed build and release validation. A failure leaves no public
    release; an upload failure leaves only a draft for inspection.
+4. After the first stable release is public, enable the Vanilla Windows card at
+   `docs/download/vanilla/index.html` and point it to
+   `https://github.com/andomatthew1234/Chromecraft/releases/latest/download/ChromecraftSetup.exe`.
+   Do not expose the stable card before that URL resolves to the verified,
+   signed installer.
 
 Linux packages continue to use the distribution package manager. The built-in
 Electron updater supports installed Squirrel.Windows builds, not development or

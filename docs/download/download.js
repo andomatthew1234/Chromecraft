@@ -30,7 +30,7 @@ platformButtons.forEach((button) => {
         if (badge) {
           const isAvailableCandidate = Boolean(candidate.dataset.downloadUrl);
           badge.innerHTML = isAvailableCandidate
-            ? '<i aria-hidden="true">download</i>Download now'
+            ? `<i aria-hidden="true">download</i>${candidate.dataset.downloadLabel || "Download now"}`
             : isSelected
               ? "Platform selected"
               : "Coming soon";
@@ -66,19 +66,19 @@ platformButtons.forEach((button) => {
 
       selectionPanel?.classList.add("has-selection");
       if (selectionName) {
-        selectionName.textContent = isAvailableDownload
-          ? "Vanilla for Windows"
-          : `Vanilla for ${button.dataset.platform}`;
+        selectionName.textContent =
+          button.dataset.selectionName ||
+          `Vanilla for ${button.dataset.platform}`;
       }
       if (selectionCopy) {
-        selectionCopy.textContent = isAvailableDownload
-          ? "Beta build 0.10 is available now."
-          : `${button.dataset.platform} support is in the works.`;
+        selectionCopy.textContent =
+          button.dataset.selectionCopy ||
+          `${button.dataset.platform} support is in the works.`;
       }
       if (selectionStatus) {
-        selectionStatus.textContent = isAvailableDownload
-          ? "Download now"
-          : "Coming soon";
+        selectionStatus.textContent =
+          button.dataset.selectionStatus ||
+          (isAvailableDownload ? "Download now" : "Coming soon");
       }
     }
 
@@ -97,9 +97,11 @@ platformButtons.forEach((button) => {
     }
 
     if (statusRegion) {
-      statusRegion.textContent = isAvailableDownload
-        ? "Starting the Chromecraft Vanilla Windows Beta 0.10 download."
-        : `${editionName} for ${button.dataset.platform} is coming soon.`;
+      statusRegion.textContent =
+        button.dataset.downloadStatus ||
+        (isAvailableDownload
+          ? `Starting the ${editionName} download.`
+          : `${editionName} for ${button.dataset.platform} is coming soon.`);
       statusRegion.classList.add("visible");
     }
   });

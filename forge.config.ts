@@ -6,10 +6,14 @@ import { FusesPlugin } from "@electron-forge/plugin-fuses";
 import { VitePlugin } from "@electron-forge/plugin-vite";
 import { FuseV1Options, FuseVersion } from "@electron/fuses";
 import { execFile } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
+const installerLoadingGif = path.resolve(
+  "resources/installer/chromecraft-vanilla-installing.gif",
+);
 const signingCertificateFile = process.env.WINDOWS_CERTIFICATE_FILE?.trim();
 const signingCertificatePassword = process.env.WINDOWS_CERTIFICATE_PASSWORD;
 
@@ -28,6 +32,23 @@ const windowsSigning =
       }
     : undefined;
 
+async function verifyInstallerArtwork(): Promise<void> {
+  const artwork = await readFile(installerLoadingGif);
+  const signature = artwork.subarray(0, 6).toString("ascii");
+  const width = artwork.readUInt16LE(6);
+  const height = artwork.readUInt16LE(8);
+
+  if (
+    (signature !== "GIF87a" && signature !== "GIF89a") ||
+    width !== 268 ||
+    height !== 167
+  ) {
+    throw new Error(
+      "The Squirrel loading animation must be a 268x167 GIF so Windows does not crop it.",
+    );
+  }
+}
+
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
@@ -45,6 +66,9 @@ const config: ForgeConfig = {
   },
   hooks: {
     generateAssets: async (_forgeConfig, platform, arch) => {
+      if (platform === "win32") {
+        await verifyInstallerArtwork();
+      }
       await execFileAsync(process.execPath, [
         path.resolve("scripts/prepare-media-tools.mjs"),
         platform,
@@ -61,6 +85,7 @@ const config: ForgeConfig = {
           "A dependable, local-first Electron browser for Windows and Linux.",
         setupExe: "ChromecraftSetup.exe",
         setupIcon: path.resolve("resources/icons/chromecraft.ico"),
+        loadingGif: installerLoadingGif,
         noMsi: true,
         ...(windowsSigning
           ? {
