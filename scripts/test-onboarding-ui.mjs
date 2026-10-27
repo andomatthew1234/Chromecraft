@@ -183,13 +183,14 @@ async function stop(child) {
 }
 
 async function removeProfile() {
-  for (let attempt = 0; attempt < 8; attempt += 1) {
+  const retryableCodes = new Set(["EBUSY", "ENOTEMPTY", "EPERM"]);
+  for (let attempt = 0; attempt < 60; attempt += 1) {
     try {
       await fs.rm(profile, { recursive: true, force: true });
       return;
     } catch (error) {
-      if (error?.code !== "EBUSY" || attempt === 7) throw error;
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      if (!retryableCodes.has(error?.code) || attempt === 59) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 500));
     }
   }
 }
@@ -287,7 +288,19 @@ try {
   await click(cdp, ".onboarding-footer .onboarding-button.filled");
   await assertPage(cdp, "Let's setup Gemini powered intelligence.");
   const geminiScreenshot = await screenshot(cdp, "onboarding-gemini-intro.png");
-  await click(cdp, ".onboarding-gemini-hero .onboarding-button");
+  const geminiSetupChoices = await cdp.evaluate(`(() => ({
+    external: document.querySelector('[data-gemini-setup="external"]')?.textContent?.trim(),
+    embedded: document.querySelector('[data-gemini-setup="embedded"]')?.textContent?.trim(),
+  }))()`);
+  assert(
+    geminiSetupChoices.external?.includes("Use my signed-in browser"),
+    `The fast Gemini setup route was not presented first: ${JSON.stringify(geminiSetupChoices)}`,
+  );
+  assert(
+    geminiSetupChoices.embedded?.includes("Set up inside Chromecraft"),
+    `The embedded Gemini setup fallback was missing: ${JSON.stringify(geminiSetupChoices)}`,
+  );
+  await click(cdp, '[data-gemini-setup="embedded"]');
   const guideBounds = await poll(
     () =>
       cdp.evaluate(`(() => {

@@ -215,9 +215,7 @@ function FeaturesPage({ next }: { next: () => void }) {
             className="onboarding-custom-icon icon-speed"
             aria-hidden="true"
           >
-            <MaterialIcon name="web_traffic" />
-            <span className="speed-line speed-line-one" />
-            <span className="speed-line speed-line-two" />
+            <MaterialIcon name="speed" />
           </span>
           <span className="onboarding-card-index">01</span>
           <h2>A browser that gets you.</h2>
@@ -228,9 +226,7 @@ function FeaturesPage({ next }: { next: () => void }) {
         </article>
         <article className="onboarding-feature-card feature-ai">
           <span className="onboarding-custom-icon icon-ai" aria-hidden="true">
-            <span className="ai-orbit" />
             <MaterialIcon name="auto_awesome" />
-            <span className="ai-off-stroke" />
           </span>
           <span className="onboarding-card-index">02</span>
           <h2>AI powered. Or not.</h2>
@@ -244,8 +240,7 @@ function FeaturesPage({ next }: { next: () => void }) {
             className="onboarding-custom-icon icon-privacy"
             aria-hidden="true"
           >
-            <MaterialIcon name="verified_user" />
-            <span className="privacy-pulse" />
+            <MaterialIcon name="shield_lock" />
           </span>
           <span className="onboarding-card-index">03</span>
           <h2>Privacy, security, and ease of mind out the box.</h2>
@@ -650,11 +645,12 @@ function GeminiSetupPage({
 
   const openManual = async () => {
     setError(null);
+    setPhase("manual");
+    setAgreed(false);
     try {
       await window.chromecraft.openOnboardingGeminiSetupExternal();
-      setPhase("manual");
-      setAgreed(false);
     } catch (caught) {
+      setPhase("intro");
       setError(
         caught instanceof Error
           ? caught.message
@@ -725,13 +721,28 @@ function GeminiSetupPage({
           <span className="onboarding-eyebrow">Gemini intelligence</span>
           <h1>Let&apos;s setup Gemini powered intelligence.</h1>
           <p>Use Gemini in your browser AI features.</p>
-          <button
-            type="button"
-            className="onboarding-button filled large"
-            onClick={() => void startGuide()}
-          >
-            Let&apos;s go <MaterialIcon name="arrow_forward" />
-          </button>
+          <div className="onboarding-gemini-start-actions">
+            <button
+              type="button"
+              className="onboarding-button filled large"
+              data-gemini-setup="external"
+              onClick={() => void openManual()}
+            >
+              Use my signed-in browser <MaterialIcon name="open_in_new" />
+            </button>
+            <button
+              type="button"
+              className="onboarding-button text large"
+              data-gemini-setup="embedded"
+              onClick={() => void startGuide()}
+            >
+              Set up inside Chromecraft
+            </button>
+          </div>
+          <p className="onboarding-gemini-speed-note">
+            <MaterialIcon name="bolt" /> Usually fastest. Uses any Google
+            sign-in already available in your default browser.
+          </p>
           {error && (
             <p className="onboarding-inline-error" role="alert">
               {error}
@@ -816,10 +827,10 @@ function GeminiSetupPage({
             >
               <MaterialIcon name="open_in_new" />
               <span>
-                <strong>I know what I&apos;m doing, setup in browser</strong>
+                <strong>Taking too long? Continue in your browser</strong>
                 <small>
-                  Open Google AI Studio in your default browser and enter the
-                  key manually.
+                  Use any existing Google sign-in and avoid repeating
+                  verification.
                 </small>
               </span>
             </button>
@@ -869,8 +880,11 @@ function GeminiSetupPage({
               <MaterialIcon name="password" />
             </span>
             <span className="onboarding-eyebrow">Manual setup</span>
-            <h2>Paste your Gemini API key.</h2>
-            <p>It will be tested before Chromecraft stores it.</p>
+            <h2>Copy or paste your Gemini API key.</h2>
+            <p>
+              Chromecraft will detect a copied key automatically, or you can
+              paste it below. It is tested before being stored.
+            </p>
             <label className="onboarding-key-field">
               <span>Gemini API key</span>
               <span>

@@ -1,9 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
+  OnboardingGeminiController,
   isAllowedGeminiSetupUrl,
   isGeminiApiKeyCandidate,
   normalizeOnboardingViewBounds,
+  persistGeminiSetupSession,
+  prepareGeminiSetupSession,
 } from "./onboarding-gemini-controller";
 
 describe("Gemini onboarding boundaries", () => {
@@ -51,5 +54,74 @@ describe("Gemini onboarding boundaries", () => {
         { x: 0, y: 0, width: 1_200, height: 800 },
       ),
     ).toThrow("invalid");
+  });
+
+  it("preconnects only after Gemini setup is explicitly started", () => {
+    const preconnect = vi.fn();
+
+    prepareGeminiSetupSession({ preconnect });
+
+    expect(preconnect).toHaveBeenCalledTimes(2);
+    expect(preconnect).toHaveBeenNthCalledWith(1, {
+      url: "https://aistudio.google.com/apikey",
+      numSockets: 2,
+    });
+    expect(preconnect).toHaveBeenNthCalledWith(2, {
+      url: "https://accounts.google.com/",
+      numSockets: 1,
+    });
+  });
+
+  it("flushes the persistent browser session after closing embedded setup", () => {
+    const flushStorageData = vi.fn();
+
+    persistGeminiSetupSession({ flushStorageData });
+
+    expect(flushStorageData).toHaveBeenCalledOnce();
+  });
+
+  it("detects a copied key while setup continues in the default browser", async () => {
+    vi.useFakeTimers();
+    const copiedKey = `AIza${"a".repeat(35)}`;
+    const emit = vi.fn();
+    const openExternal = vi.fn().mockResolvedValue(undefined);
+    const controller = new OnboardingGeminiController(
+      {
+        on: vi.fn(),
+        removeListener: vi.fn(),
+      } as never,
+      {
+        flushStorageData: vi.fn(),
+      } as never,
+      {
+        readClipboardText: vi.fn().mockResolvedValue(copiedKey),
+        openExternal,
+        commitKey: vi.fn(),
+        emit,
+      },
+    );
+
+    try {
+      await controller.openExternal();
+      expect(openExternal).toHaveBeenCalledWith(
+        "https://aistudio.google.com/apikey",
+      );
+      expect(emit).toHaveBeenLastCalledWith({
+        state: "listening",
+        stageId: null,
+        maskedKey: null,
+      });
+
+      await vi.advanceTimersByTimeAsync(650);
+
+      expect(emit).toHaveBeenLastCalledWith({
+        state: "detected",
+        stageId: expect.any(String),
+        maskedKey: "AIza••••••aaaa",
+      });
+    } finally {
+      controller.dispose();
+      vi.useRealTimers();
+    }
   });
 });

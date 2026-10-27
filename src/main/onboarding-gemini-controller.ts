@@ -10,6 +10,7 @@ import type {
 } from "../shared/onboarding";
 
 export const GEMINI_API_KEY_SETUP_URL = "https://aistudio.google.com/apikey";
+const GEMINI_ACCOUNT_URL = "https://accounts.google.com/";
 
 const CLIPBOARD_POLL_MS = 650;
 const SETUP_TIMEOUT_MS = 10 * 60 * 1_000;
@@ -81,6 +82,30 @@ export function normalizeOnboardingViewBounds(
   };
 }
 
+export function prepareGeminiSetupSession(
+  browserSession: Pick<Session, "preconnect">,
+): void {
+  try {
+    browserSession.preconnect({
+      url: GEMINI_API_KEY_SETUP_URL,
+      numSockets: 2,
+    });
+    browserSession.preconnect({ url: GEMINI_ACCOUNT_URL, numSockets: 1 });
+  } catch {
+    // Preconnection is only an optimisation; setup can continue without it.
+  }
+}
+
+export function persistGeminiSetupSession(
+  browserSession: Pick<Session, "flushStorageData">,
+): void {
+  try {
+    browserSession.flushStorageData();
+  } catch {
+    // Electron also persists this partition normally; flushing is best effort.
+  }
+}
+
 export class OnboardingGeminiController {
   private view: WebContentsView | null = null;
   private requestedBounds: OnboardingViewBounds | null = null;
@@ -124,15 +149,8 @@ export class OnboardingGeminiController {
 
   start(): GeminiClipboardDetectionSnapshot {
     if (this.disposed) throw new Error("Gemini onboarding is unavailable.");
-    this.clearClipboardTimer();
-    this.stagedKey = null;
-    this.startedAt = Date.now();
-    this.state = { state: "listening", stageId: null, maskedKey: null };
-    this.options.emit(this.snapshot);
-    this.interval = setInterval(
-      () => void this.inspectClipboard(),
-      CLIPBOARD_POLL_MS,
-    );
+    this.beginClipboardDetection();
+    prepareGeminiSetupSession(this.browserSession);
     void this.openView();
     return this.snapshot;
   }
@@ -145,8 +163,15 @@ export class OnboardingGeminiController {
 
   async openExternal(): Promise<void> {
     if (this.disposed) throw new Error("Gemini onboarding is unavailable.");
-    this.closeView();
-    await this.options.openExternal(GEMINI_API_KEY_SETUP_URL);
+    const startedHere = this.state.state !== "listening";
+    if (startedHere) this.beginClipboardDetection();
+    try {
+      await this.options.openExternal(GEMINI_API_KEY_SETUP_URL);
+      this.closeView();
+    } catch (error) {
+      if (startedHere) this.stop();
+      throw error;
+    }
   }
 
   async commit(
@@ -190,6 +215,18 @@ export class OnboardingGeminiController {
 
   private get snapshot(): GeminiClipboardDetectionSnapshot {
     return { ...this.state };
+  }
+
+  private beginClipboardDetection(): void {
+    this.clearClipboardTimer();
+    this.stagedKey = null;
+    this.startedAt = Date.now();
+    this.state = { state: "listening", stageId: null, maskedKey: null };
+    this.options.emit(this.snapshot);
+    this.interval = setInterval(
+      () => void this.inspectClipboard(),
+      CLIPBOARD_POLL_MS,
+    );
   }
 
   private async inspectClipboard(): Promise<void> {
@@ -290,6 +327,7 @@ export class OnboardingGeminiController {
       // The native window may already be closing.
     }
     if (!view.webContents.isDestroyed()) view.webContents.close();
+    persistGeminiSetupSession(this.browserSession);
   };
 
   private clearClipboardTimer(): void {
