@@ -1,9 +1,23 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  fetchGitHubReleaseMetadata,
   parseReleaseCategory,
   releaseSnapshot,
 } from "./electron-update-adapter";
+
+describe("fetchGitHubReleaseMetadata", () => {
+  it("treats a missing stable GitHub release as an empty channel", async () => {
+    const fetch = async () => new Response("Not Found", { status: 404 });
+
+    await expect(
+      fetchGitHubReleaseMetadata(
+        fetch,
+        "https://api.github.com/repos/andomatthew1234/Chromecraft/releases/latest",
+      ),
+    ).resolves.toEqual({ state: "none" });
+  });
+});
 
 describe("parseReleaseCategory", () => {
   it("reads each supported release category from the bounded metadata comment", () => {

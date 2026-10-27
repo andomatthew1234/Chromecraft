@@ -44,6 +44,30 @@ afterEach(async () => {
 });
 
 describe("ChromeWebStoreExtensionService", () => {
+  it("uses the process fetch implementation when no transport is injected", async () => {
+    const fixture = createCrxFixture();
+    const runtime = createSessionDouble(fixture.id);
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(trustedResponse(new Uint8Array(fixture.crx)));
+    const service = new ChromeWebStoreExtensionService(runtime.session, {
+      storagePath: await makeTemporaryDirectory(),
+      chromiumVersion: "152.0.0.0",
+    });
+    await service.initialize();
+
+    try {
+      await expect(
+        service.installFromWebStoreUrl(
+          `https://chromewebstore.google.com/detail/${fixture.id}`,
+        ),
+      ).resolves.toEqual(expect.objectContaining({ id: fixture.id }));
+      expect(fetchSpy).toHaveBeenCalledOnce();
+    } finally {
+      fetchSpy.mockRestore();
+    }
+  });
+
   it("compares Chrome extension versions numerically", () => {
     expect(compareExtensionVersions("1.10", "1.2.9")).toBe(1);
     expect(compareExtensionVersions("2", "2.0.0.0")).toBe(0);

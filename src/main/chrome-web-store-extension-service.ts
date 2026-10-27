@@ -137,7 +137,7 @@ interface PreparedExtension {
 
 export interface ChromeWebStoreExtensionServiceOptions {
   storagePath: string;
-  fetch: (
+  fetch?: (
     input: string | URL | Request,
     init?: RequestInit,
   ) => Promise<Response>;
@@ -208,6 +208,7 @@ interface ExtensionManifest {
 }
 
 export class ChromeWebStoreExtensionService {
+  private readonly fetch: typeof globalThis.fetch;
   private readonly storagePath: string;
   private readonly registryPath: string;
   private readonly maximumCrxBytes: number;
@@ -274,6 +275,7 @@ export class ChromeWebStoreExtensionService {
     private readonly browserSession: Session,
     private readonly options: ChromeWebStoreExtensionServiceOptions,
   ) {
+    this.fetch = options.fetch ?? globalThis.fetch;
     this.storagePath = path.resolve(options.storagePath);
     this.registryPath = path.join(this.storagePath, REGISTRY_FILENAME);
     this.maximumCrxBytes = Math.min(
@@ -892,7 +894,7 @@ export class ChromeWebStoreExtensionService {
           "The Chrome Web Store redirected the package to an untrusted origin.",
         );
       }
-      const response = await this.options.fetch(requestUrl, {
+      const response = await this.fetch(requestUrl, {
         method: "GET",
         redirect: "manual",
         credentials: "omit",

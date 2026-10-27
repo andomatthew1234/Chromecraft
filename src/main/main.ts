@@ -3156,11 +3156,6 @@ async function createMainWindow(): Promise<void> {
 
   const extensions = new ChromeWebStoreExtensionService(browserSession, {
     storagePath: path.join(app.getPath("userData"), "extensions"),
-    fetch: (input, init) =>
-      browserSession.fetch(
-        input instanceof URL ? input.toString() : input,
-        init,
-      ),
     chromiumVersion: process.versions.chrome,
     onChanged: () => void sendExtensionsSnapshot(),
   });

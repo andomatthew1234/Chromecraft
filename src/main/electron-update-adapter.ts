@@ -29,6 +29,66 @@ export interface GitHubReleaseMetadata {
   downloadSizeBytes: number | null;
 }
 
+export type GitHubReleaseMetadataLookup =
+  | { state: "available"; metadata: GitHubReleaseMetadata }
+  | { state: "none" };
+
+export async function fetchGitHubReleaseMetadata(
+  fetch: typeof globalThis.fetch,
+  releaseApiUrl: string,
+): Promise<GitHubReleaseMetadataLookup> {
+  const url = new URL(releaseApiUrl);
+  if (url.protocol !== "https:" || url.hostname !== "api.github.com") {
+    throw new Error("Release metadata must come from the GitHub HTTPS API.");
+  }
+  const response = await fetch(url, {
+    method: "GET",
+    redirect: "error",
+    credentials: "omit",
+    cache: "no-store",
+    headers: {
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+    },
+  });
+  if (response.status === 404) return { state: "none" };
+  if (!response.ok) {
+    throw new Error(
+      `Release metadata request failed with HTTP ${response.status}.`,
+    );
+  }
+  const value = (await response.json()) as Record<string, unknown>;
+  if (value.draft === true || value.prerelease === true) {
+    return { state: "none" };
+  }
+  const tag = boundedString(value.tag_name, 80);
+  if (!tag) throw new Error("The latest release has no valid tag.");
+  const body = boundedString(value.body, 100_000);
+  const assets = Array.isArray(value.assets) ? value.assets : [];
+  const updateAssetBytes = assets.reduce((total, asset) => {
+    if (!asset || typeof asset !== "object") return total;
+    const entry = asset as Record<string, unknown>;
+    const name = boundedString(entry.name, 200);
+    const size = entry.size;
+    return name?.endsWith("-full.nupkg") &&
+      typeof size === "number" &&
+      Number.isFinite(size) &&
+      size > 0
+      ? total + size
+      : total;
+  }, 0);
+  return {
+    state: "available",
+    metadata: {
+      version: cleanVersion(tag),
+      category: parseReleaseCategory(body),
+      releaseNotes: stripMetadataComment(body),
+      publishedAt: boundedString(value.published_at, 100),
+      downloadSizeBytes: updateAssetBytes > 0 ? updateAssetBytes : null,
+    },
+  };
+}
+
 /** Bridges Electron's aggregate, signed whole-app updater into UpdateManager. */
 export class ElectronUpdateAdapter implements UpdateAdapter {
   private readonly unavailableReason: string | null;
@@ -41,20 +101,35 @@ export class ElectronUpdateAdapter implements UpdateAdapter {
     this.timeoutMs = Math.max(10_000, options.timeoutMs ?? 120_000);
   }
 
-  checkForUpdates(
+  async checkForUpdates(
     report: (progress: ApplicationUpdateProgress) => void,
   ): Promise<ApplicationUpdateResult> {
     if (this.unavailableReason) {
-      return Promise.resolve({
+      return {
         state: "unavailable",
         detail: this.unavailableReason,
-      });
+      };
     }
 
-    const metadataPromise = this.readReleaseMetadata().catch((error) => {
-      console.warn("Could not read Chromecraft release metadata.", error);
-      return null;
-    });
+    let metadata: GitHubReleaseMetadata | null = null;
+    if (this.options.releaseApiUrl) {
+      try {
+        const lookup = await fetchGitHubReleaseMetadata(
+          this.fetch,
+          this.options.releaseApiUrl,
+        );
+        if (lookup.state === "none") {
+          report({
+            stage: "checking",
+            label: "Checking the Chromecraft application",
+          });
+          return { state: "up-to-date" };
+        }
+        metadata = lookup.metadata;
+      } catch (error) {
+        console.warn("Could not read Chromecraft release metadata.", error);
+      }
+    }
 
     return new Promise((resolve, reject) => {
       let settled = false;
@@ -99,7 +174,6 @@ export class ElectronUpdateAdapter implements UpdateAdapter {
         releaseName: string,
         releaseDate: Date,
       ) => {
-        const metadata = await metadataPromise;
         finish({
           state: "ready",
           release: releaseSnapshot(
@@ -130,54 +204,6 @@ export class ElectronUpdateAdapter implements UpdateAdapter {
 
   restartAndInstall(): void {
     autoUpdater.quitAndInstall();
-  }
-
-  private async readReleaseMetadata(): Promise<GitHubReleaseMetadata | null> {
-    if (!this.options.releaseApiUrl) return null;
-    const url = new URL(this.options.releaseApiUrl);
-    if (url.protocol !== "https:" || url.hostname !== "api.github.com") {
-      throw new Error("Release metadata must come from the GitHub HTTPS API.");
-    }
-    const response = await this.fetch(url, {
-      method: "GET",
-      redirect: "error",
-      credentials: "omit",
-      cache: "no-store",
-      headers: {
-        Accept: "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-      },
-    });
-    if (!response.ok) {
-      throw new Error(
-        `Release metadata request failed with HTTP ${response.status}.`,
-      );
-    }
-    const value = (await response.json()) as Record<string, unknown>;
-    if (value.draft === true || value.prerelease === true) return null;
-    const tag = boundedString(value.tag_name, 80);
-    if (!tag) return null;
-    const body = boundedString(value.body, 100_000);
-    const assets = Array.isArray(value.assets) ? value.assets : [];
-    const updateAssetBytes = assets.reduce((total, asset) => {
-      if (!asset || typeof asset !== "object") return total;
-      const entry = asset as Record<string, unknown>;
-      const name = boundedString(entry.name, 200);
-      const size = entry.size;
-      return name?.endsWith("-full.nupkg") &&
-        typeof size === "number" &&
-        Number.isFinite(size) &&
-        size > 0
-        ? total + size
-        : total;
-    }, 0);
-    return {
-      version: cleanVersion(tag),
-      category: parseReleaseCategory(body),
-      releaseNotes: stripMetadataComment(body),
-      publishedAt: boundedString(value.published_at, 100),
-      downloadSizeBytes: updateAssetBytes > 0 ? updateAssetBytes : null,
-    };
   }
 }
 
