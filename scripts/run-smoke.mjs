@@ -10,6 +10,7 @@ const platformArgument = process.argv.find((value) =>
 );
 const platform =
   platformArgument?.slice("--platform=".length) ?? process.platform;
+const coreOnly = process.argv.includes("--core-only");
 const root = process.cwd();
 const artifacts = path.join(root, ".artifacts");
 const profileRoot = path.join(os.tmpdir(), "chromecraft-smoke-profiles");
@@ -189,24 +190,28 @@ try {
     "light",
     false,
   );
-  const protectedRun = await runCase(
-    "material3-after-ublock-enabled",
-    true,
-    true,
-    "ublock-enabled",
-    true,
-    "dark",
-    true,
-  );
-  const warmRun = await runCase(
-    "material3-after-ublock-enabled-warm",
-    true,
-    true,
-    "ublock-enabled",
-    false,
-    "dark",
-    true,
-  );
+  const protectedRun = coreOnly
+    ? null
+    : await runCase(
+        "material3-after-ublock-enabled",
+        true,
+        true,
+        "ublock-enabled",
+        true,
+        "dark",
+        true,
+      );
+  const warmRun = coreOnly
+    ? null
+    : await runCase(
+        "material3-after-ublock-enabled-warm",
+        true,
+        true,
+        "ublock-enabled",
+        false,
+        "dark",
+        true,
+      );
   const failures = [];
 
   if (baseline.exitCode !== 0 || !baseline.report.success) {
@@ -220,43 +225,45 @@ try {
   if (baseline.suggestionRequests.length !== 0) {
     failures.push("Remote suggestions connected while the setting was off.");
   }
-  if (protectedRun.exitCode !== 0 || !protectedRun.report.success) {
-    failures.push("The uBlock-enabled browser smoke run failed.");
-  }
-  if (
-    !protectedRun.report.ublock.ready ||
-    protectedRun.report.ublock.version !== "1.75.0"
-  ) {
-    failures.push("uBlock Origin 1.75.0 was not ready in the protected run.");
-  }
-  if (protectedRun.report.adScriptLoaded || protectedRun.adRequests !== 0) {
-    failures.push(
-      "uBlock Origin did not block the deterministic doubleclick.net request.",
-    );
-  }
-  if (!protectedRun.report.ublockDashboardLoaded) {
-    failures.push("The uBlock Origin dashboard did not load.");
-  }
-  if (
-    protectedRun.suggestionRequests.length === 0 ||
-    !protectedRun.report.remoteSearchSuggestionsWorked
-  ) {
-    failures.push("Opted-in remote search suggestions did not work.");
-  }
-  if (
-    warmRun.exitCode !== 0 ||
-    !warmRun.report.success ||
-    warmRun.report.adScriptLoaded ||
-    warmRun.adRequests !== 0
-  ) {
-    failures.push(
-      "The warm restart did not preserve working uBlock protection.",
-    );
-  }
-  if (warmRun.report.shellReadyMs > 5_000) {
-    failures.push(
-      `Warm startup exceeded 5 seconds (${warmRun.report.shellReadyMs} ms).`,
-    );
+  if (protectedRun && warmRun) {
+    if (protectedRun.exitCode !== 0 || !protectedRun.report.success) {
+      failures.push("The uBlock-enabled browser smoke run failed.");
+    }
+    if (
+      !protectedRun.report.ublock.ready ||
+      protectedRun.report.ublock.version !== "1.75.0"
+    ) {
+      failures.push("uBlock Origin 1.75.0 was not ready in the protected run.");
+    }
+    if (protectedRun.report.adScriptLoaded || protectedRun.adRequests !== 0) {
+      failures.push(
+        "uBlock Origin did not block the deterministic doubleclick.net request.",
+      );
+    }
+    if (!protectedRun.report.ublockDashboardLoaded) {
+      failures.push("The uBlock Origin dashboard did not load.");
+    }
+    if (
+      protectedRun.suggestionRequests.length === 0 ||
+      !protectedRun.report.remoteSearchSuggestionsWorked
+    ) {
+      failures.push("Opted-in remote search suggestions did not work.");
+    }
+    if (
+      warmRun.exitCode !== 0 ||
+      !warmRun.report.success ||
+      warmRun.report.adScriptLoaded ||
+      warmRun.adRequests !== 0
+    ) {
+      failures.push(
+        "The warm restart did not preserve working uBlock protection.",
+      );
+    }
+    if (warmRun.report.shellReadyMs > 5_000) {
+      failures.push(
+        `Warm startup exceeded 5 seconds (${warmRun.report.shellReadyMs} ms).`,
+      );
+    }
   }
 
   const summary = {

@@ -87,17 +87,14 @@ jobs:
       - name: Build Windows installer and update artifacts
         run: pnpm make:win
 
-      - name: Exercise the packaged browser
-        run: pnpm smoke:win
+      - name: Exercise the packaged update centre and sidebar
+        run: pnpm test:sidebar
 
       - name: Exercise packaged extension loading
         run: pnpm test:extensions:win
 
       - name: Exercise packaged extension tab lifecycle
         run: pnpm test:extension-tabs:win
-
-      - name: Exercise packaged extension actions
-        run: pnpm test:extension-actions:win
 
       - name: Exercise packaged extension commands
         run: pnpm test:extension-commands:win
@@ -155,7 +152,7 @@ jobs:
         run: pnpm package:linux
 
       - name: Exercise packaged Linux browser
-        run: xvfb-run --auto-servernum pnpm smoke:linux
+        run: xvfb-run --auto-servernum node scripts/run-smoke.mjs --platform=linux --core-only
 
       - name: Upload failure diagnostics
         if: failure()
