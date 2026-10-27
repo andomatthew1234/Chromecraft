@@ -130,6 +130,7 @@ async function runCase(
     `--chromecraft-smoke-theme=${theme}`,
     `--chromecraft-smoke-suggestions-url=http://127.0.0.1:${address.port}/suggest`,
   ];
+  if (platform === "linux" && process.env.CI) args.push("--no-sandbox");
   if (includeLivePage) args.push("--chromecraft-live-url=https://example.com/");
 
   const child = spawn(executable, args, {

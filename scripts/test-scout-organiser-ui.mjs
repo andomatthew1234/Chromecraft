@@ -218,17 +218,22 @@ try {
   await cdp.send("Emulation.setEmulatedMedia", {
     features: [{ name: "prefers-reduced-motion", value: "reduce" }],
   });
-  const compact = await cdp.evaluate(`(() => {
-    const panel = document.querySelector('.ai-tools-panel');
-    const bounds = panel.getBoundingClientRect();
-    return {
-      right: bounds.right,
-      bottom: bounds.bottom,
-      overflow: panel.scrollWidth - panel.clientWidth,
-      animation: getComputedStyle(panel).animationName,
-      footerVisible: Boolean(document.querySelector('.ai-tools-footer')),
-    };
-  })()`);
+  const compactExpression = `(() => {
+      const panel = document.querySelector('.ai-tools-panel');
+      const bounds = panel.getBoundingClientRect();
+      return {
+        right: bounds.right,
+        bottom: bounds.bottom,
+        overflow: panel.scrollWidth - panel.clientWidth,
+        animation: getComputedStyle(panel).animationName,
+        footerVisible: Boolean(document.querySelector('.ai-tools-footer')),
+      };
+    })()`;
+  const compact = await poll(
+    () => cdp.evaluate(compactExpression),
+    (value) => value.right <= 720 && value.bottom <= 560,
+    "compact organiser relayout",
+  );
   assert(compact.right <= 720, "Compact organiser escaped the viewport width.");
   assert(
     compact.bottom <= 560,
