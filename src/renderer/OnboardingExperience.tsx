@@ -525,8 +525,10 @@ function AiChoicePage({
           onClick={() => choose("skip")}
         >
           <span className="onboarding-provider-logo skip-logo">
-            <MaterialIcon name="smart_toy" />
-            <span />
+            <MaterialIcon name="auto_awesome" />
+            <span className="onboarding-skip-badge">
+              <MaterialIcon name="block" />
+            </span>
           </span>
           <ChoiceMark selected={choices.has("skip")} />
           <span className="onboarding-choice-copy">
