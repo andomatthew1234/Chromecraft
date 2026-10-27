@@ -107,6 +107,22 @@ describe("UpdateManager", () => {
     });
   });
 
+  it("checks the first-run application channel without touching extensions", async () => {
+    const adapter = new FakeAdapter();
+    const extensions: ExtensionUpdateProvider = {
+      checkAndInstallUpdates: vi.fn(async () => []),
+    };
+    const { manager } = setup(adapter, extensions);
+
+    await expect(manager.checkApplication()).resolves.toMatchObject({
+      status: "up-to-date",
+      canRestart: false,
+    });
+
+    expect(adapter.checks).toBe(1);
+    expect(extensions.checkAndInstallUpdates).not.toHaveBeenCalled();
+  });
+
   it("updates one selected extension without checking the app channel", async () => {
     const extensions: ExtensionUpdateProvider = {
       checkAndInstallUpdates: vi.fn(async (_report, ids) => [

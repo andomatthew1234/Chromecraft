@@ -35,6 +35,7 @@ import type {
   WebStoreListingSnapshot,
   YouTubeWatchSnapshot,
 } from "../shared/browser";
+import type { OnboardingRecommendedSettings } from "../shared/onboarding";
 import type {
   SmartReaderAppearance,
   SmartReaderArticle,
@@ -720,6 +721,10 @@ export class TabManager implements BrowserResearchAdapter {
       ublock: this.ublock.snapshot,
       preferences: {
         onboardingComplete: this.preferences.snapshot.onboardingComplete,
+        anonymousReportsEnabled:
+          this.preferences.snapshot.anonymousReportsEnabled,
+        enhancedAnonymousReportsEnabled:
+          this.preferences.snapshot.enhancedAnonymousReportsEnabled,
         restoreSession: this.preferences.snapshot.restoreSession,
         sidebarAttached: this.preferences.snapshot.sidebarAttached,
         sidebarOpen: this.preferences.snapshot.sidebarOpen,
@@ -3290,6 +3295,22 @@ export class TabManager implements BrowserResearchAdapter {
 
   async setRemoteSearchSuggestionsEnabled(enabled: boolean): Promise<void> {
     await this.preferences.setRemoteSearchSuggestionsEnabled(enabled);
+    this.emitSnapshot();
+  }
+
+  async completeOnboarding(
+    settings: OnboardingRecommendedSettings,
+  ): Promise<void> {
+    await this.preferences.completeOnboarding(settings);
+    await this.hyperdrive.setMode(
+      settings.hyperdriveEnabled ? "balanced" : "off",
+    );
+    await this.hyperdrive.setCrossSiteEnabled(settings.hyperdriveEnabled);
+    await this.hyperdrive.setSearchPreloadingEnabled(
+      settings.hyperdriveEnabled,
+    );
+    await this.ublock.setEnabled(settings.ublockEnabled);
+    this.hyperdrive.refreshPreparationReadiness();
     this.emitSnapshot();
   }
 

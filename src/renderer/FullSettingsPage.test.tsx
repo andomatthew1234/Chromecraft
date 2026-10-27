@@ -32,6 +32,8 @@ const snapshot: BrowserSnapshot = {
   },
   preferences: {
     onboardingComplete: true,
+    anonymousReportsEnabled: false,
+    enhancedAnonymousReportsEnabled: false,
     restoreSession: true,
     sidebarAttached: true,
     sidebarOpen: false,

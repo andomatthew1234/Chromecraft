@@ -9395,6 +9395,7 @@ export function App() {
           snapshot={snapshot}
           extensions={extensions}
           aiTools={aiTools}
+          updates={updates}
         />
       </div>
     );

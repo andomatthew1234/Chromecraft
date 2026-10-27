@@ -36,6 +36,34 @@ describe("PreferencesStore search suggestions", () => {
     await preferences.load();
 
     expect(preferences.snapshot.onboardingComplete).toBe(false);
+    expect(preferences.snapshot.anonymousReportsEnabled).toBe(false);
+    expect(preferences.snapshot.enhancedAnonymousReportsEnabled).toBe(false);
+  });
+
+  it("commits recommended onboarding settings in one durable snapshot", async () => {
+    const preferences = new PreferencesStore(filePath);
+    await preferences.load();
+
+    await preferences.completeOnboarding({
+      hyperdriveEnabled: true,
+      ublockEnabled: false,
+      liveSearchSuggestionsEnabled: true,
+      anonymousReportsEnabled: true,
+      enhancedAnonymousReportsEnabled: false,
+    });
+
+    const reloaded = new PreferencesStore(filePath);
+    await reloaded.load();
+    expect(reloaded.snapshot).toMatchObject({
+      onboardingComplete: true,
+      hyperdriveMode: "balanced",
+      hyperdriveCrossSitePreloadingEnabled: true,
+      hyperdriveSearchPreloadingEnabled: true,
+      ublockEnabled: false,
+      remoteSearchSuggestionsEnabled: true,
+      anonymousReportsEnabled: true,
+      enhancedAnonymousReportsEnabled: false,
+    });
   });
 
   it("does not interrupt legacy profiles but preserves an unfinished flow", async () => {

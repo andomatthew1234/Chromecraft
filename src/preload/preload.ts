@@ -52,6 +52,9 @@ import type {
 import type {
   CommitOnboardingGeminiKeyRequest,
   GeminiClipboardDetectionSnapshot,
+  OnboardingLocalAiSnapshot,
+  OnboardingOllamaModel,
+  OnboardingRecommendedSettings,
   OnboardingViewBounds,
 } from "../shared/onboarding";
 
@@ -657,6 +660,28 @@ const api: ChromecraftApi = {
       channels.commitOnboardingGeminiClipboardKey,
       request as CommitOnboardingGeminiKeyRequest,
     ) as Promise<AiToolsSnapshot>,
+  startOnboardingLocalAi: () =>
+    ipcRenderer.invoke(
+      channels.startOnboardingLocalAi,
+    ) as Promise<OnboardingLocalAiSnapshot>,
+  installOnboardingOllama: () =>
+    ipcRenderer.invoke(
+      channels.installOnboardingOllama,
+    ) as Promise<OnboardingLocalAiSnapshot>,
+  installOnboardingOllamaModel: (model) =>
+    ipcRenderer.invoke(
+      channels.installOnboardingOllamaModel,
+      model as OnboardingOllamaModel,
+    ) as Promise<OnboardingLocalAiSnapshot>,
+  completeOnboarding: (settings) =>
+    ipcRenderer.invoke(
+      channels.completeOnboarding,
+      settings as OnboardingRecommendedSettings,
+    ) as Promise<void>,
+  checkOnboardingUpdate: () =>
+    ipcRenderer.invoke(
+      channels.checkOnboardingUpdate,
+    ) as Promise<UpdateSnapshot>,
   previewAiTool: (request) =>
     ipcRenderer.invoke(
       channels.previewAiTool,
@@ -846,6 +871,15 @@ const api: ChromecraftApi = {
         channels.onboardingGeminiClipboardChanged,
         handler,
       );
+  },
+  onOnboardingLocalAi: (listener) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      snapshot: OnboardingLocalAiSnapshot,
+    ) => listener(snapshot);
+    ipcRenderer.on(channels.onboardingLocalAiChanged, handler);
+    return () =>
+      ipcRenderer.removeListener(channels.onboardingLocalAiChanged, handler);
   },
   onScoutAgent: (listener) => {
     const handler = (

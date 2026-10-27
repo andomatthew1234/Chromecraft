@@ -9,7 +9,8 @@ const MODEL_LIST_LIMIT = 2 * 1024 ** 2;
 const CHAT_RESPONSE_LIMIT = 1024 ** 2;
 const MODEL_LIST_TIMEOUT_MS = 4_000;
 const CHAT_TIMEOUT_MS = 120_000;
-const MODEL_INSTALL_TIMEOUT_MS = 15 * 60_000;
+const MODEL_INSTALL_TIMEOUT_MS = 6 * 60 * 60_000;
+const MODEL_PROGRESS_LINE_LIMIT = 64 * 1024;
 
 type FetchLike = typeof fetch;
 
@@ -153,6 +154,18 @@ export class OllamaClient implements StructuredModelProvider {
   }
 
   async installModel(modelName: string, signal: AbortSignal): Promise<void> {
+    return this.installModelWithProgress(modelName, signal, () => undefined);
+  }
+
+  async installModelWithProgress(
+    modelName: string,
+    signal: AbortSignal,
+    report: (progress: {
+      status: string;
+      completed: number | null;
+      total: number | null;
+    }) => void,
+  ): Promise<void> {
     const model = cleanText(modelName, 256);
     if (!model) throw new TypeError("A valid Ollama model is required.");
     const scoped = requestSignal(signal, MODEL_INSTALL_TIMEOUT_MS);
@@ -160,21 +173,84 @@ export class OllamaClient implements StructuredModelProvider {
       const response = await this.request(`${OLLAMA_ORIGIN}/api/pull`, {
         method: "POST",
         headers: {
-          accept: "application/json",
+          accept: "application/x-ndjson, application/json",
           "content-type": "application/json",
         },
         redirect: "error",
         signal: scoped.signal,
-        body: JSON.stringify({ model, stream: false }),
+        body: JSON.stringify({ model, stream: true }),
       });
-      const value = await parseJsonResponse(response, CHAT_RESPONSE_LIMIT);
-      if (
-        !value ||
-        typeof value !== "object" ||
-        (value as { status?: unknown }).status !== "success"
-      ) {
-        throw new Error("Ollama did not confirm the model installation.");
+      if (!response.ok) {
+        await parseJsonResponse(response, CHAT_RESPONSE_LIMIT);
       }
+      if (!response.body) throw new Error("Ollama returned an empty response.");
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffered = "";
+      let confirmed = false;
+      const handleLine = (line: string) => {
+        if (!line.trim()) return;
+        if (line.length > MODEL_PROGRESS_LINE_LIMIT) {
+          throw new Error(
+            "Ollama returned more data than Chromecraft accepts.",
+          );
+        }
+        let value: unknown;
+        try {
+          value = JSON.parse(line) as unknown;
+        } catch {
+          throw new Error("Ollama returned malformed progress data.");
+        }
+        if (!value || typeof value !== "object") return;
+        const item = value as Record<string, unknown>;
+        const detail = cleanText(item.error, 500);
+        if (detail)
+          throw new Error(`Ollama could not install the model: ${detail}`);
+        const status = cleanText(item.status, 256) ?? "Downloading model";
+        const completed =
+          typeof item.completed === "number" &&
+          Number.isSafeInteger(item.completed) &&
+          item.completed >= 0
+            ? item.completed
+            : null;
+        const total =
+          typeof item.total === "number" &&
+          Number.isSafeInteger(item.total) &&
+          item.total >= 0
+            ? item.total
+            : null;
+        report({
+          status,
+          completed:
+            completed !== null && total !== null
+              ? Math.min(completed, total)
+              : completed,
+          total,
+        });
+        if (status === "success") confirmed = true;
+      };
+      try {
+        while (true) {
+          const next = await reader.read();
+          if (next.done) break;
+          buffered += decoder.decode(next.value, { stream: true });
+          if (buffered.length > MODEL_PROGRESS_LINE_LIMIT) {
+            await reader.cancel();
+            throw new Error(
+              "Ollama returned more data than Chromecraft accepts.",
+            );
+          }
+          const lines = buffered.split(/\r?\n/u);
+          buffered = lines.pop() ?? "";
+          lines.forEach(handleLine);
+        }
+        buffered += decoder.decode();
+        handleLine(buffered);
+      } finally {
+        reader.releaseLock();
+      }
+      if (!confirmed)
+        throw new Error("Ollama did not confirm the model installation.");
     } catch (error) {
       if (scoped.signal.aborted) {
         if (signal.aborted) throw new DOMException("Cancelled", "AbortError");

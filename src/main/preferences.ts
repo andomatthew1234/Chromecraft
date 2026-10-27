@@ -9,9 +9,12 @@ import type {
 } from "../shared/browser";
 import type { SmartReaderAppearance } from "../shared/smart-reader";
 import { normalizeSmartReaderAppearance } from "../shared/smart-reader";
+import type { OnboardingRecommendedSettings } from "../shared/onboarding";
 
 export interface BrowserPreferences {
   onboardingComplete: boolean;
+  anonymousReportsEnabled: boolean;
+  enhancedAnonymousReportsEnabled: boolean;
   ublockEnabled: boolean;
   restoreSession: boolean;
   sidebarAttached: boolean;
@@ -39,6 +42,8 @@ export interface BrowserPreferences {
 
 const defaults: BrowserPreferences = {
   onboardingComplete: false,
+  anonymousReportsEnabled: false,
+  enhancedAnonymousReportsEnabled: false,
   ublockEnabled: true,
   restoreSession: true,
   sidebarAttached: true,
@@ -155,6 +160,14 @@ export class PreferencesStore {
           typeof parsed.onboardingComplete === "boolean"
             ? parsed.onboardingComplete
             : true,
+        anonymousReportsEnabled:
+          typeof parsed.anonymousReportsEnabled === "boolean"
+            ? parsed.anonymousReportsEnabled
+            : defaults.anonymousReportsEnabled,
+        enhancedAnonymousReportsEnabled:
+          typeof parsed.enhancedAnonymousReportsEnabled === "boolean"
+            ? parsed.enhancedAnonymousReportsEnabled
+            : defaults.enhancedAnonymousReportsEnabled,
         ublockEnabled:
           typeof parsed.ublockEnabled === "boolean"
             ? parsed.ublockEnabled
@@ -263,6 +276,21 @@ export class PreferencesStore {
 
   async setOnboardingComplete(complete: boolean): Promise<void> {
     await this.update({ onboardingComplete: complete });
+  }
+
+  async completeOnboarding(
+    settings: OnboardingRecommendedSettings,
+  ): Promise<void> {
+    await this.update({
+      onboardingComplete: true,
+      hyperdriveMode: settings.hyperdriveEnabled ? "balanced" : "off",
+      hyperdriveCrossSitePreloadingEnabled: settings.hyperdriveEnabled,
+      hyperdriveSearchPreloadingEnabled: settings.hyperdriveEnabled,
+      ublockEnabled: settings.ublockEnabled,
+      remoteSearchSuggestionsEnabled: settings.liveSearchSuggestionsEnabled,
+      anonymousReportsEnabled: settings.anonymousReportsEnabled,
+      enhancedAnonymousReportsEnabled: settings.enhancedAnonymousReportsEnabled,
+    });
   }
 
   async setRestoreSession(enabled: boolean): Promise<void> {

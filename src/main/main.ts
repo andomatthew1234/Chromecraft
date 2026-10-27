@@ -72,6 +72,8 @@ import type {
 import type {
   CommitOnboardingGeminiKeyRequest,
   GeminiClipboardDetectionSnapshot,
+  OnboardingLocalAiSnapshot,
+  OnboardingRecommendedSettings,
   OnboardingViewBounds,
 } from "../shared/onboarding";
 import { isAllowedWebUrl } from "../shared/navigation";
@@ -128,6 +130,10 @@ import { AppMetricsCollector } from "./app-metrics-collector";
 import { chromecraftIcon, chromecraftIconPath } from "./app-icon";
 import { PerformanceCentreController } from "./performance-centre-controller";
 import { OnboardingGeminiController } from "./onboarding-gemini-controller";
+import {
+  isOnboardingOllamaModel,
+  OnboardingLocalAiController,
+} from "./onboarding-local-ai-controller";
 import { isPerformanceAction } from "../shared/performance-centre";
 import {
   canonicalWebOrigin,
@@ -193,6 +199,7 @@ function argumentValue(name: string): string | undefined {
 const smokeUserData = argumentValue("chromecraft-user-data");
 if (smokeUserData) app.setPath("userData", path.resolve(smokeUserData));
 const forceOnboarding = process.argv.includes("--chromecraft-show-onboarding");
+const squirrelFirstRun = process.argv.includes("--squirrel-firstrun");
 
 const smokeFixtureUrl = argumentValue("chromecraft-smoke-url");
 if (smokeFixtureUrl) {
@@ -230,6 +237,7 @@ let updateRestartPrepared = false;
 let updateShutdownPromise: Promise<void> | null = null;
 let ipcRegistered = false;
 let updateManager: UpdateManager | null = null;
+let onboardingUpdateCheckTimer: NodeJS.Timeout | null = null;
 let websitePermissionController: WebsitePermissionController | null = null;
 let websiteControls: WebsiteControlsService | null = null;
 let youtubeDownloadService: YouTubeDownloadService | null = null;
@@ -246,6 +254,7 @@ let youtubeIndicatorHideTimer: NodeJS.Timeout | null = null;
 let appMetricsCollector: AppMetricsCollector | null = null;
 let performanceCentreController: PerformanceCentreController | null = null;
 let onboardingGeminiController: OnboardingGeminiController | null = null;
+let onboardingLocalAiController: OnboardingLocalAiController | null = null;
 
 async function promptForWebsitePermission(
   request: WebsitePermissionPrompt,
@@ -392,6 +401,11 @@ function sendOnboardingGeminiClipboard(
   );
 }
 
+function sendOnboardingLocalAi(snapshot: OnboardingLocalAiSnapshot): void {
+  if (!shellView || shellView.webContents.isDestroyed()) return;
+  shellView.webContents.send(channels.onboardingLocalAiChanged, snapshot);
+}
+
 function requireUpdateManager(): UpdateManager {
   if (!updateManager) throw new Error("The update service is unavailable.");
   return updateManager;
@@ -411,6 +425,16 @@ function requireOnboardingGemini(
     throw new Error("Gemini onboarding is not ready.");
   }
   return onboardingGeminiController;
+}
+
+function requireOnboardingLocalAi(
+  event: IpcMainInvokeEvent,
+): OnboardingLocalAiController {
+  requireTrusted(event);
+  if (!onboardingLocalAiController) {
+    throw new Error("Local AI onboarding is not ready.");
+  }
+  return onboardingLocalAiController;
 }
 
 function requireScoutAgent(event: IpcMainInvokeEvent): ScoutAgentController {
@@ -1708,6 +1732,54 @@ function registerIpc(): void {
       } satisfies CommitOnboardingGeminiKeyRequest);
     },
   );
+  ipcMain.handle(channels.startOnboardingLocalAi, (event) =>
+    requireOnboardingLocalAi(event).start(),
+  );
+  ipcMain.handle(channels.installOnboardingOllama, (event) =>
+    requireOnboardingLocalAi(event).installService(),
+  );
+  ipcMain.handle(
+    channels.installOnboardingOllamaModel,
+    (event, model: unknown) => {
+      if (!isOnboardingOllamaModel(model)) {
+        throw new TypeError("Choose a supported local AI model.");
+      }
+      return requireOnboardingLocalAi(event).installModel(model);
+    },
+  );
+  ipcMain.handle(channels.completeOnboarding, async (event, value: unknown) => {
+    requireTrusted(event);
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new TypeError("Onboarding settings must be an object.");
+    }
+    const input = value as Record<string, unknown>;
+    const allowed = [
+      "hyperdriveEnabled",
+      "ublockEnabled",
+      "liveSearchSuggestionsEnabled",
+      "anonymousReportsEnabled",
+      "enhancedAnonymousReportsEnabled",
+    ] as const;
+    if (
+      Object.keys(input).length !== allowed.length ||
+      allowed.some((key) => typeof input[key] !== "boolean")
+    ) {
+      throw new TypeError("Onboarding settings are incomplete.");
+    }
+    await requireManager(event).completeOnboarding({
+      hyperdriveEnabled: input.hyperdriveEnabled as boolean,
+      ublockEnabled: input.ublockEnabled as boolean,
+      liveSearchSuggestionsEnabled:
+        input.liveSearchSuggestionsEnabled as boolean,
+      anonymousReportsEnabled: input.anonymousReportsEnabled as boolean,
+      enhancedAnonymousReportsEnabled:
+        input.enhancedAnonymousReportsEnabled as boolean,
+    } satisfies OnboardingRecommendedSettings);
+  });
+  ipcMain.handle(channels.checkOnboardingUpdate, (event) => {
+    requireTrusted(event);
+    return requireUpdateManager().snapshot;
+  });
   ipcMain.handle(channels.previewAiTool, (event, request: unknown) =>
     requireAiTools(event).preview(requireOrganiseTabsRequest(request)),
   );
@@ -3324,8 +3396,6 @@ async function createMainWindow(): Promise<void> {
       }).show();
     },
   });
-  updateManager.startAutomaticChecks();
-
   const preferences = new PreferencesStore(
     path.join(app.getPath("userData"), "preferences.json"),
   );
@@ -3336,6 +3406,39 @@ async function createMainWindow(): Promise<void> {
     }
   } else if (smokeUserData && !preferences.snapshot.onboardingComplete) {
     await preferences.setOnboardingComplete(true);
+  }
+  if (
+    !preferences.snapshot.onboardingComplete &&
+    app.isPackaged &&
+    !smokeUserData
+  ) {
+    const onboardingUpdateManager = updateManager;
+    const beginOnboardingUpdateCheck = () => {
+      onboardingUpdateCheckTimer = null;
+      if (updateManager !== onboardingUpdateManager) return;
+      void onboardingUpdateManager
+        .checkApplication()
+        .catch((error) =>
+          console.warn("First-run application update check failed.", error),
+        )
+        .finally(() => {
+          if (updateManager === onboardingUpdateManager) {
+            onboardingUpdateManager.startAutomaticChecks();
+          }
+        });
+    };
+    if (squirrelFirstRun) {
+      // Squirrel retains its package lock briefly while launching a newly
+      // installed app. Waiting avoids a guaranteed first-run update failure.
+      onboardingUpdateCheckTimer = setTimeout(
+        beginOnboardingUpdateCheck,
+        10_000,
+      );
+    } else {
+      beginOnboardingUpdateCheck();
+    }
+  } else {
+    updateManager.startAutomaticChecks();
   }
   const data = new BrowserDataStore(
     path.join(app.getPath("userData"), "browser-data.json"),
@@ -3781,6 +3884,12 @@ async function createMainWindow(): Promise<void> {
   });
   aiToolsController = aiTools;
   await aiTools.initialize();
+  onboardingLocalAiController?.dispose();
+  const onboardingLocalAi = new OnboardingLocalAiController({
+    ollama,
+    onChange: sendOnboardingLocalAi,
+  });
+  onboardingLocalAiController = onboardingLocalAi;
   onboardingGeminiController?.dispose();
   const onboardingGemini = new OnboardingGeminiController(
     window,
@@ -3846,6 +3955,7 @@ async function createMainWindow(): Promise<void> {
   window.on("close", (event) => {
     if (closingApproved || updateRestartPrepared) {
       onboardingGemini.dispose();
+      onboardingLocalAi.dispose();
       performanceCentre.dispose();
       aiTools.dispose();
       void scoutAgent.dispose();
@@ -3882,8 +3992,13 @@ async function createMainWindow(): Promise<void> {
     });
   });
   window.on("closed", () => {
+    if (onboardingUpdateCheckTimer) {
+      clearTimeout(onboardingUpdateCheckTimer);
+      onboardingUpdateCheckTimer = null;
+    }
     actionHost.dispose();
     onboardingGemini.dispose();
+    onboardingLocalAi.dispose();
     if (extensionWebRequestHost === actionHost) extensionWebRequestHost = null;
     extensions.dispose();
     updateManager?.dispose();
@@ -3913,6 +4028,9 @@ async function createMainWindow(): Promise<void> {
       if (aiToolsController === aiTools) aiToolsController = null;
       if (onboardingGeminiController === onboardingGemini) {
         onboardingGeminiController = null;
+      }
+      if (onboardingLocalAiController === onboardingLocalAi) {
+        onboardingLocalAiController = null;
       }
       void scoutAgent.dispose();
       if (scoutAgentController === scoutAgent) scoutAgentController = null;

@@ -85,8 +85,63 @@ describe("OllamaClient", () => {
     expect(request.mock.calls[0][0]).toBe("http://127.0.0.1:11434/api/pull");
     expect(JSON.parse(String(options?.body))).toEqual({
       model: "qwen3:1.7b",
-      stream: false,
+      stream: true,
     });
+  });
+
+  it("reports bounded NDJSON model-download progress", async () => {
+    const request = vi.fn(
+      async () =>
+        new Response(
+          [
+            JSON.stringify({
+              status: "pulling layer",
+              completed: 25,
+              total: 100,
+            }),
+            JSON.stringify({ status: "success", completed: 100, total: 100 }),
+          ].join("\n"),
+          { headers: { "content-type": "application/x-ndjson" } },
+        ),
+    );
+    const progress = vi.fn();
+    const client = new OllamaClient(request as unknown as typeof fetch);
+
+    await client.installModelWithProgress(
+      "qwen3.5:0.8b",
+      new AbortController().signal,
+      progress,
+    );
+
+    expect(progress).toHaveBeenNthCalledWith(1, {
+      status: "pulling layer",
+      completed: 25,
+      total: 100,
+    });
+    expect(progress).toHaveBeenLastCalledWith({
+      status: "success",
+      completed: 100,
+      total: 100,
+    });
+  });
+
+  it("surfaces an Ollama streaming error without accepting its text as progress", async () => {
+    const client = new OllamaClient(
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: "model is unavailable" }), {
+            headers: { "content-type": "application/x-ndjson" },
+          }),
+      ) as unknown as typeof fetch,
+    );
+
+    await expect(
+      client.installModelWithProgress(
+        "qwen3.5:0.8b",
+        new AbortController().signal,
+        vi.fn(),
+      ),
+    ).rejects.toThrow("model is unavailable");
   });
 
   it("rejects non-JSON services running on Ollama's port", async () => {

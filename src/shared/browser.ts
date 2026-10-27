@@ -35,6 +35,9 @@ import type {
   CommitOnboardingGeminiKeyRequest,
   GeminiClipboardDetectionSnapshot,
   OnboardingViewBounds,
+  OnboardingLocalAiSnapshot,
+  OnboardingOllamaModel,
+  OnboardingRecommendedSettings,
 } from "./onboarding";
 
 export type TabId = string;
@@ -406,6 +409,8 @@ export type HyperdrivePredictionTrigger =
 
 export interface BrowserPreferencesSnapshot {
   onboardingComplete: boolean;
+  anonymousReportsEnabled: boolean;
+  enhancedAnonymousReportsEnabled: boolean;
   restoreSession: boolean;
   sidebarAttached: boolean;
   sidebarOpen: boolean;
@@ -1010,6 +1015,13 @@ export interface ChromecraftApi {
   commitOnboardingGeminiClipboardKey(
     request: CommitOnboardingGeminiKeyRequest,
   ): Promise<AiToolsSnapshot>;
+  startOnboardingLocalAi(): Promise<OnboardingLocalAiSnapshot>;
+  installOnboardingOllama(): Promise<OnboardingLocalAiSnapshot>;
+  installOnboardingOllamaModel(
+    model: OnboardingOllamaModel,
+  ): Promise<OnboardingLocalAiSnapshot>;
+  completeOnboarding(settings: OnboardingRecommendedSettings): Promise<void>;
+  checkOnboardingUpdate(): Promise<UpdateSnapshot>;
   previewAiTool(request: OrganiseTabsRequest): Promise<OrganiseTabsProposal>;
   applyAiTool(proposal: OrganiseTabsProposal): Promise<AiToolApplyResult>;
   cancelAiTool(): Promise<void>;
@@ -1053,6 +1065,9 @@ export interface ChromecraftApi {
   onAiTools(listener: (snapshot: AiToolsSnapshot) => void): () => void;
   onOnboardingGeminiClipboard(
     listener: (snapshot: GeminiClipboardDetectionSnapshot) => void,
+  ): () => void;
+  onOnboardingLocalAi(
+    listener: (snapshot: OnboardingLocalAiSnapshot) => void,
   ): () => void;
   onScoutAgent(listener: (snapshot: ScoutAgentSnapshot) => void): () => void;
   onShowScoutSettings(listener: () => void): () => void;

@@ -160,6 +160,14 @@ export class UpdateManager {
     });
   }
 
+  checkApplication(): Promise<UpdateSnapshot> {
+    return this.runScopedCheck({
+      application: true,
+      extensionIds: false,
+      automatic: false,
+    });
+  }
+
   updateExtension(extensionId: string): Promise<UpdateSnapshot> {
     if (!extensionIdPattern.test(extensionId)) {
       return Promise.reject(new Error("Invalid extension identifier."));

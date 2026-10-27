@@ -16,10 +16,25 @@ import type {
   ExtensionsSnapshot,
 } from "../shared/browser";
 import type { AiToolsSnapshot } from "../shared/ai-tools";
-import type { GeminiClipboardDetectionSnapshot } from "../shared/onboarding";
+import {
+  ONBOARDING_OLLAMA_MODELS,
+  REQUIRED_ONBOARDING_OLLAMA_MODEL,
+  type GeminiClipboardDetectionSnapshot,
+  type OnboardingLocalAiSnapshot,
+  type OnboardingOllamaModel,
+  type OnboardingRecommendedSettings,
+} from "../shared/onboarding";
+import type { UpdateSnapshot } from "../shared/updates";
 import { GeminiLogo, OllamaLogo } from "./ScoutProviderLogo";
 
-type OnboardingPage = "features" | "essentials" | "ai" | "gemini";
+type OnboardingPage =
+  | "features"
+  | "essentials"
+  | "ai"
+  | "gemini"
+  | "local-ai"
+  | "settings"
+  | "updates";
 type GeminiPhase = "intro" | "guide" | "confirm" | "manual" | "ready";
 export type AiSetupChoice = "gemini" | "ollama" | "skip";
 
@@ -109,15 +124,24 @@ function MaterialIcon({ name }: { name: string }) {
 }
 
 function StepHeader({ page }: { page: OnboardingPage }) {
-  const current = page === "features" ? 1 : page === "essentials" ? 2 : 3;
+  const current =
+    page === "features"
+      ? 1
+      : page === "essentials"
+        ? 2
+        : page === "ai" || page === "gemini" || page === "local-ai"
+          ? 3
+          : page === "settings"
+            ? 4
+            : 5;
   return (
     <header className="onboarding-topbar">
       <span className="onboarding-wordmark">
         <span className="onboarding-wordmark-mark">C</span>
         Chromecraft
       </span>
-      <span className="onboarding-progress" aria-label={`Step ${current} of 3`}>
-        {[1, 2, 3].map((step) => (
+      <span className="onboarding-progress" aria-label={`Step ${current} of 5`}>
+        {[1, 2, 3, 4, 5].map((step) => (
           <span
             key={step}
             className={step <= current ? "is-complete" : undefined}
@@ -125,7 +149,9 @@ function StepHeader({ page }: { page: OnboardingPage }) {
         ))}
       </span>
       <span className="onboarding-step-label">
-        {page === "gemini" ? "AI setup" : `Step ${current} of 3`}
+        {page === "gemini" || page === "local-ai"
+          ? "AI setup"
+          : `Step ${current} of 5`}
       </span>
     </header>
   );
@@ -427,14 +453,13 @@ function AiChoicePage({
   choices,
   choose,
   back,
-  continueToGemini,
+  next,
 }: {
   choices: ReadonlySet<AiSetupChoice>;
   choose: (choice: AiSetupChoice) => void;
   back: () => void;
-  continueToGemini: () => void;
+  next: () => void;
 }) {
-  const hasGemini = choices.has("gemini");
   const hasAny = choices.size > 0;
   return (
     <div className="onboarding-page onboarding-page-ai">
@@ -507,18 +532,10 @@ function AiChoicePage({
       </div>
       <FooterActions
         back={back}
-        next={continueToGemini}
-        nextLabel={hasGemini ? "Set up Gemini" : "More setup coming soon"}
-        nextDisabled={!hasGemini}
-        helper={
-          hasGemini
-            ? choices.has("ollama")
-              ? "Gemini is first. Local AI setup will follow in the next update."
-              : "Your Gemini key stays outside website content."
-            : hasAny
-              ? "The next selected setup page has not been added yet."
-              : "Choose at least one option to continue."
-        }
+        next={next}
+        nextLabel={choices.has("skip") ? "Continue without AI" : "Start setup"}
+        nextDisabled={!hasAny}
+        helper="You can change providers and models later in Settings."
       />
     </div>
   );
@@ -554,9 +571,11 @@ function GeminiSteps({ active }: { active: number }) {
 function GeminiSetupPage({
   aiTools,
   back,
+  next,
 }: {
   aiTools: AiToolsSnapshot;
   back: () => void;
+  next: () => void;
 }) {
   const [phase, setPhase] = useState<GeminiPhase>("intro");
   const [clipboard, setClipboard] = useState<GeminiClipboardDetectionSnapshot>({
@@ -736,13 +755,13 @@ function GeminiSetupPage({
           Your API key passed Chromecraft&apos;s connection test and is stored
           {persist ? " with operating-system encryption" : " for this session"}.
         </p>
-        <div className="onboarding-terminal-note">
-          <MaterialIcon name="construction" />
-          <span>
-            <strong>That&apos;s as far as this build goes.</strong> More
-            onboarding pages are ready to be added next.
-          </span>
-        </div>
+        <button
+          type="button"
+          className="onboarding-button filled large"
+          onClick={next}
+        >
+          Continue <MaterialIcon name="arrow_forward" />
+        </button>
       </div>
     );
   }
@@ -938,17 +957,563 @@ function Agreement({
   );
 }
 
+function formatBytes(value: number | null): string {
+  if (value === null) return "";
+  const units = ["B", "KB", "MB", "GB"];
+  let amount = value;
+  let index = 0;
+  while (amount >= 1024 && index < units.length - 1) {
+    amount /= 1024;
+    index += 1;
+  }
+  return `${amount.toFixed(index > 1 ? 1 : 0)} ${units[index]}`;
+}
+
+function modelInstalled(models: readonly string[], model: string): boolean {
+  return models.some(
+    (installed) =>
+      installed === model ||
+      (!model.includes(":") && installed === `${model}:latest`),
+  );
+}
+
+function LocalAiSetupPage({
+  back,
+  next,
+}: {
+  back: () => void;
+  next: () => void;
+}) {
+  const [snapshot, setSnapshot] = useState<OnboardingLocalAiSnapshot>({
+    service: "checking",
+    installedModels: [],
+    operation: null,
+    error: null,
+  });
+  const [expanded, setExpanded] = useState<
+    "service" | "models" | "default" | null
+  >(null);
+  const [useByDefault, setUseByDefault] = useState(true);
+
+  useEffect(() => window.chromecraft.onOnboardingLocalAi(setSnapshot), []);
+  useEffect(() => {
+    void window.chromecraft
+      .startOnboardingLocalAi()
+      .then(setSnapshot)
+      .catch((error) => {
+        setSnapshot((current) => ({
+          ...current,
+          service: "failed",
+          error:
+            error instanceof Error ? error.message : "Could not check Ollama.",
+        }));
+      });
+  }, []);
+
+  const requiredReady = modelInstalled(
+    snapshot.installedModels,
+    REQUIRED_ONBOARDING_OLLAMA_MODEL,
+  );
+  const serviceReady = snapshot.service === "ready";
+  const busy = Boolean(snapshot.operation);
+
+  const installService = () => {
+    setExpanded("service");
+    void window.chromecraft.installOnboardingOllama().catch(() => undefined);
+  };
+  const installModel = (model: OnboardingOllamaModel) => {
+    setExpanded("models");
+    void window.chromecraft
+      .installOnboardingOllamaModel(model)
+      .catch(() => undefined);
+  };
+  const continueWithLocalAi = async () => {
+    if (!requiredReady) return;
+    if (useByDefault) {
+      await window.chromecraft.refreshAiModels("ollama");
+      await window.chromecraft.setAiModel(
+        "ollama",
+        REQUIRED_ONBOARDING_OLLAMA_MODEL,
+      );
+      await window.chromecraft.setAiOrganiserModel(
+        "ollama",
+        REQUIRED_ONBOARDING_OLLAMA_MODEL,
+      );
+      await window.chromecraft.setAiProvider("ollama");
+      await window.chromecraft.setAiOrganiserProvider("ollama");
+    }
+    next();
+  };
+
+  return (
+    <div className="onboarding-page onboarding-local-ai-page">
+      <section className="onboarding-heading-block compact local-ai-heading">
+        <span className="onboarding-provider-logo local-ai-logo">
+          <OllamaLogo />
+        </span>
+        <div>
+          <span className="onboarding-eyebrow">
+            Private, on-device intelligence
+          </span>
+          <h1>Let&apos;s setup Local AI powered by Ollama on your device.</h1>
+          <p>
+            Install the local service, choose a model, and keep every prompt on
+            this computer.
+          </p>
+        </div>
+      </section>
+
+      {snapshot.service === "checking" ? (
+        <div className="onboarding-local-check" role="status">
+          <span className="onboarding-spinner" />
+          <div>
+            <strong>Checking what you have installed...</strong>
+            <span>Looking for Ollama and local models.</span>
+          </div>
+        </div>
+      ) : (
+        <div className="onboarding-local-grid">
+          <article
+            className={`onboarding-setup-tile ${serviceReady ? "is-complete" : ""} ${expanded === "service" ? "is-expanded" : ""}`}
+          >
+            <button
+              type="button"
+              className="onboarding-setup-tile-heading"
+              onClick={() =>
+                setExpanded(expanded === "service" ? null : "service")
+              }
+            >
+              <span className="setup-tile-icon">
+                <MaterialIcon name={serviceReady ? "check" : "download"} />
+              </span>
+              <span>
+                <strong>
+                  {serviceReady
+                    ? "Congrats, Ollama is installed!"
+                    : "Download Ollama"}
+                </strong>
+                <small>
+                  {serviceReady
+                    ? "Ollama was detected as installed on your system."
+                    : "Install the local AI service."}
+                </small>
+              </span>
+              <MaterialIcon
+                name={expanded === "service" ? "expand_less" : "expand_more"}
+              />
+            </button>
+            {expanded === "service" && (
+              <div className="onboarding-setup-tile-body">
+                <h2>Install the Ollama service to get started with AI.</h2>
+                <p>
+                  Chromecraft uses Ollama&apos;s official installer for this
+                  operating system.
+                </p>
+                {!serviceReady && (
+                  <button
+                    type="button"
+                    className="onboarding-button filled"
+                    disabled={busy}
+                    onClick={installService}
+                  >
+                    {snapshot.operation?.kind === "service"
+                      ? "Installing..."
+                      : "Download now"}
+                  </button>
+                )}
+              </div>
+            )}
+          </article>
+
+          <article
+            className={`onboarding-setup-tile ${requiredReady ? "is-complete" : ""} ${expanded === "models" ? "is-expanded wide" : ""}`}
+          >
+            <button
+              type="button"
+              className="onboarding-setup-tile-heading"
+              disabled={!serviceReady}
+              onClick={() =>
+                setExpanded(expanded === "models" ? null : "models")
+              }
+            >
+              <span className="setup-tile-icon">
+                <MaterialIcon
+                  name={requiredReady ? "check" : "deployed_code"}
+                />
+              </span>
+              <span>
+                <strong>
+                  {requiredReady
+                    ? "Congrats, you've got some local AI models!"
+                    : "Download local AI models"}
+                </strong>
+                <small>
+                  {snapshot.installedModels.length
+                    ? `${snapshot.installedModels.length} installed`
+                    : "One lightweight model is required."}
+                </small>
+              </span>
+              <MaterialIcon
+                name={expanded === "models" ? "expand_less" : "expand_more"}
+              />
+            </button>
+            {expanded === "models" && (
+              <div className="onboarding-setup-tile-body model-body">
+                <div className="onboarding-model-list">
+                  {ONBOARDING_OLLAMA_MODELS.map((model) => {
+                    const installed = modelInstalled(
+                      snapshot.installedModels,
+                      model,
+                    );
+                    const active =
+                      snapshot.operation?.kind === "model" &&
+                      snapshot.operation.model === model;
+                    return (
+                      <div className="onboarding-model-row" key={model}>
+                        <span>
+                          <strong>{model}</strong>
+                          <small>
+                            {model === REQUIRED_ONBOARDING_OLLAMA_MODEL
+                              ? "Required starter model"
+                              : "Optional model"}
+                          </small>
+                        </span>
+                        <button
+                          type="button"
+                          className={
+                            installed
+                              ? "model-installed"
+                              : "onboarding-button tonal"
+                          }
+                          disabled={busy || installed}
+                          onClick={() => installModel(model)}
+                        >
+                          <MaterialIcon
+                            name={installed ? "check" : "download"}
+                          />{" "}
+                          {installed
+                            ? "Installed"
+                            : active
+                              ? "Downloading"
+                              : "Download"}
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+                <button
+                  type="button"
+                  className="onboarding-button text"
+                  disabled={!requiredReady}
+                  onClick={() => setExpanded(null)}
+                >
+                  Finished
+                </button>
+              </div>
+            )}
+          </article>
+
+          <article
+            className={`onboarding-setup-tile ${useByDefault ? "is-selected" : ""} ${expanded === "default" ? "is-expanded" : ""}`}
+          >
+            <button
+              type="button"
+              className="onboarding-setup-tile-heading"
+              onClick={() =>
+                setExpanded(expanded === "default" ? null : "default")
+              }
+            >
+              <span className="setup-tile-icon">
+                <MaterialIcon name="offline_bolt" />
+              </span>
+              <span>
+                <strong>Make local AI the default</strong>
+                <small>Scout stays private and works without internet.</small>
+              </span>
+              <MaterialIcon
+                name={expanded === "default" ? "expand_less" : "expand_more"}
+              />
+            </button>
+            {expanded === "default" && (
+              <div className="onboarding-setup-tile-body">
+                <SwitchRow
+                  label="Use Ollama by default"
+                  description="You can still switch providers for each task."
+                  checked={useByDefault}
+                  setChecked={setUseByDefault}
+                />
+              </div>
+            )}
+          </article>
+        </div>
+      )}
+
+      {snapshot.operation && (
+        <div className="onboarding-live-progress" role="status">
+          <span>
+            <strong>{snapshot.operation.label}</strong>
+            <small>
+              {snapshot.operation.totalBytes === null
+                ? "Live status"
+                : `${formatBytes(snapshot.operation.completedBytes)} of ${formatBytes(snapshot.operation.totalBytes)}`}
+            </small>
+          </span>
+          <progress value={snapshot.operation.percent ?? undefined} max={100} />
+        </div>
+      )}
+      {snapshot.error && (
+        <p className="onboarding-inline-error" role="alert">
+          <MaterialIcon name="error" /> {snapshot.error}
+        </p>
+      )}
+      <FooterActions
+        back={back}
+        next={() => void continueWithLocalAi()}
+        nextDisabled={!requiredReady || busy}
+        helper={
+          requiredReady
+            ? "Local AI is ready."
+            : "qwen3.5:0.8b is required to continue with Local AI."
+        }
+      />
+    </div>
+  );
+}
+
+function SwitchRow({
+  label,
+  description,
+  checked,
+  setChecked,
+}: {
+  label: string;
+  description: string;
+  checked: boolean;
+  setChecked: (checked: boolean) => void;
+}) {
+  return (
+    <label className="onboarding-setting-row">
+      <span>
+        <strong>{label}</strong>
+        <small>{description}</small>
+      </span>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => setChecked(event.target.checked)}
+      />
+      <span className="onboarding-switch" aria-hidden="true">
+        <span />
+      </span>
+    </label>
+  );
+}
+
+function RecommendedSettingsPage({
+  settings,
+  setSettings,
+  back,
+  next,
+  busy,
+  error,
+}: {
+  settings: OnboardingRecommendedSettings;
+  setSettings: (settings: OnboardingRecommendedSettings) => void;
+  back: () => void;
+  next: () => void;
+  busy: boolean;
+  error: string | null;
+}) {
+  const update = (key: keyof OnboardingRecommendedSettings, value: boolean) =>
+    setSettings({ ...settings, [key]: value });
+  return (
+    <div className="onboarding-page onboarding-settings-page">
+      <section className="onboarding-heading-block compact">
+        <span className="onboarding-eyebrow">A thoughtful starting point</span>
+        <h1>Use recommended settings or change them.</h1>
+        <p>
+          Everything here can be changed later. Reporting choices are saved
+          locally and do not send anything in this version.
+        </p>
+      </section>
+      <div className="onboarding-settings-grid">
+        <section className="onboarding-settings-group hero-setting">
+          <span className="settings-group-icon">
+            <MaterialIcon name="bolt" />
+          </span>
+          <div>
+            <h2>Hyperdrive</h2>
+            <p>
+              Balanced performance, with cross-site and search preparation
+              enabled.
+            </p>
+          </div>
+          <SwitchRow
+            label="Hyperdrive · Balanced"
+            description="Preload likely destinations while keeping resource use measured."
+            checked={settings.hyperdriveEnabled}
+            setChecked={(value) => update("hyperdriveEnabled", value)}
+          />
+        </section>
+        <section className="onboarding-settings-group">
+          <SwitchRow
+            label="uBlock Origin"
+            description="Block ads, trackers, and unwanted page requests."
+            checked={settings.ublockEnabled}
+            setChecked={(value) => update("ublockEnabled", value)}
+          />
+          <SwitchRow
+            label="Live search suggestions"
+            description="Show suggestions while you type in the address bar."
+            checked={settings.liveSearchSuggestionsEnabled}
+            setChecked={(value) =>
+              update("liveSearchSuggestionsEnabled", value)
+            }
+          />
+        </section>
+        <section className="onboarding-settings-group privacy-setting">
+          <SwitchRow
+            label="Help make Chromecraft better"
+            description="Share anonymous reports with us. Always optional."
+            checked={settings.anonymousReportsEnabled}
+            setChecked={(value) => update("anonymousReportsEnabled", value)}
+          />
+          <SwitchRow
+            label="Help make Chromecraft EVEN better"
+            description="Share a little more data. Never used for tracking, personalization, or ads."
+            checked={settings.enhancedAnonymousReportsEnabled}
+            setChecked={(value) =>
+              update("enhancedAnonymousReportsEnabled", value)
+            }
+          />
+        </section>
+      </div>
+      {error && (
+        <p className="onboarding-inline-error" role="alert">
+          <MaterialIcon name="error" /> {error}
+        </p>
+      )}
+      <FooterActions
+        back={back}
+        next={next}
+        nextLabel={busy ? "Saving..." : "Use these settings"}
+        nextDisabled={busy}
+      />
+    </div>
+  );
+}
+
+export function hasDownloadedOnboardingUpdate(
+  updates: UpdateSnapshot,
+): boolean {
+  return (
+    updates.canRestart &&
+    updates.results.some(
+      (result) =>
+        result.kind === "application" &&
+        result.state === "ready" &&
+        result.requiresRestart,
+    )
+  );
+}
+
+function OnboardingUpdatePage({
+  updates,
+  skip,
+  restart,
+  busy,
+  error,
+}: {
+  updates: UpdateSnapshot;
+  skip: () => void;
+  restart: () => void;
+  busy: boolean;
+  error: string | null;
+}) {
+  return (
+    <div className="onboarding-page onboarding-update-page">
+      <div className="onboarding-update-card">
+        <span className="onboarding-update-icon">
+          <MaterialIcon name="system_update_alt" />
+        </span>
+        <span className="onboarding-eyebrow">Ready to restart</span>
+        <h1>Get Chromecraft up to date.</h1>
+        <p>
+          Some dependencies and Chromecraft features were out of date, and
+          we&apos;ve downloaded the latest version for you. Simply restart your
+          browser to apply them.
+        </p>
+        {updates.applicationRelease && (
+          <span className="onboarding-update-version">
+            Version {updates.applicationRelease.version} is ready
+          </span>
+        )}
+        {error && (
+          <p className="onboarding-inline-error" role="alert">
+            <MaterialIcon name="error" /> {error}
+          </p>
+        )}
+        <div className="onboarding-update-actions">
+          <button
+            type="button"
+            className="onboarding-button text"
+            disabled={busy}
+            onClick={skip}
+          >
+            Skip, I&apos;ll update later
+          </button>
+          <button
+            type="button"
+            className="onboarding-button filled large"
+            disabled={busy}
+            onClick={restart}
+          >
+            <MaterialIcon name="restart_alt" />{" "}
+            {busy ? "Preparing..." : "Restart browser"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function OnboardingExperience({
   snapshot,
   extensions,
   aiTools,
+  updates,
 }: {
   snapshot: BrowserSnapshot;
   extensions: ExtensionsSnapshot;
   aiTools: AiToolsSnapshot;
+  updates: UpdateSnapshot;
 }) {
   const [page, setPage] = useState<OnboardingPage>("features");
   const [choices, setChoices] = useState<Set<AiSetupChoice>>(new Set());
+  const [settings, setSettings] = useState<OnboardingRecommendedSettings>({
+    hyperdriveEnabled: true,
+    ublockEnabled: true,
+    liveSearchSuggestionsEnabled: true,
+    anonymousReportsEnabled: true,
+    enhancedAnonymousReportsEnabled: false,
+  });
+  const [finishing, setFinishing] = useState(false);
+  const [finishError, setFinishError] = useState<string | null>(null);
+
+  const afterAiSetup = () => setPage("settings");
+  const complete = async (restart: boolean) => {
+    setFinishing(true);
+    setFinishError(null);
+    try {
+      await window.chromecraft.completeOnboarding(settings);
+      if (restart) await window.chromecraft.restartToUpdate();
+    } catch (error) {
+      setFinishError(
+        error instanceof Error ? error.message : "Could not finish setup.",
+      );
+      setFinishing(false);
+    }
+  };
 
   return (
     <main className={`onboarding-shell onboarding-page-${page}`}>
@@ -970,11 +1535,60 @@ export function OnboardingExperience({
             setChoices((current) => updateAiSetupChoices(current, choice))
           }
           back={() => setPage("essentials")}
-          continueToGemini={() => setPage("gemini")}
+          next={() =>
+            setPage(
+              choices.has("skip")
+                ? "settings"
+                : choices.has("gemini")
+                  ? "gemini"
+                  : "local-ai",
+            )
+          }
         />
       )}
       {page === "gemini" && (
-        <GeminiSetupPage aiTools={aiTools} back={() => setPage("ai")} />
+        <GeminiSetupPage
+          aiTools={aiTools}
+          back={() => setPage("ai")}
+          next={() => setPage(choices.has("ollama") ? "local-ai" : "settings")}
+        />
+      )}
+      {page === "local-ai" && (
+        <LocalAiSetupPage
+          back={() => setPage(choices.has("gemini") ? "gemini" : "ai")}
+          next={afterAiSetup}
+        />
+      )}
+      {page === "settings" && (
+        <RecommendedSettingsPage
+          settings={settings}
+          setSettings={setSettings}
+          back={() =>
+            setPage(
+              choices.has("ollama")
+                ? "local-ai"
+                : choices.has("gemini")
+                  ? "gemini"
+                  : "ai",
+            )
+          }
+          next={() =>
+            hasDownloadedOnboardingUpdate(updates)
+              ? setPage("updates")
+              : void complete(false)
+          }
+          busy={finishing}
+          error={finishError}
+        />
+      )}
+      {page === "updates" && (
+        <OnboardingUpdatePage
+          updates={updates}
+          skip={() => void complete(false)}
+          restart={() => void complete(true)}
+          busy={finishing}
+          error={finishError}
+        />
       )}
       <span className="onboarding-a11y-status" aria-live="polite">
         {extensions.operation === "idle"

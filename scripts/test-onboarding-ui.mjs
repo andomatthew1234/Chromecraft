@@ -15,6 +15,7 @@ const profile = await fs.mkdtemp(
   path.join(os.tmpdir(), "chromecraft-onboarding-test-"),
 );
 const artifactDirectory = path.join(root, ".artifacts");
+const testLocalAi = process.env.CHROMECRAFT_TEST_ONBOARDING_LOCAL_AI === "1";
 
 async function freePort() {
   const server = net.createServer();
@@ -301,6 +302,55 @@ try {
   assert(guideBounds.width >= 320, "Gemini setup frame is too narrow.");
   const guideScreenshot = await screenshot(cdp, "onboarding-gemini-guide.png");
 
+  await click(cdp, '[aria-label="Back to AI choices"]');
+  await assertPage(cdp, "Let's work out AI.");
+  let localAiScreenshot;
+  if (testLocalAi) {
+    await click(cdp, ".onboarding-choice-card.choice-gemini");
+    await click(cdp, ".onboarding-choice-card.choice-ollama");
+    await click(cdp, ".onboarding-footer .onboarding-button.filled");
+    await assertPage(
+      cdp,
+      "Let's setup Local AI powered by Ollama on your device.",
+    );
+    await poll(
+      () =>
+        cdp.evaluate(
+          `document.querySelectorAll('.onboarding-setup-tile').length`,
+        ),
+      (tileCount) => tileCount === 3,
+      "the Local AI setup tiles",
+    );
+    localAiScreenshot = await screenshot(cdp, "onboarding-local-ai.png");
+    await click(cdp, ".onboarding-footer .onboarding-button.text");
+    await assertPage(cdp, "Let's work out AI.");
+  }
+  await click(cdp, ".onboarding-choice-card.choice-skip");
+  const skipState = await cdp.evaluate(`(() => ({
+    skipPressed: document.querySelector('.choice-skip')?.getAttribute('aria-pressed'),
+    geminiPressed: document.querySelector('.choice-gemini')?.getAttribute('aria-pressed'),
+  }))()`);
+  assert(skipState.skipPressed === "true", "Skip AI did not become selected.");
+  assert(
+    skipState.geminiPressed === "false",
+    "Selecting Skip AI did not clear the Gemini selection.",
+  );
+  await click(cdp, ".onboarding-footer .onboarding-button.filled");
+  await assertPage(cdp, "Use recommended settings or change them.");
+  const settingsDefaults = await cdp.evaluate(`(() => ({
+    switches: [...document.querySelectorAll('.onboarding-setting-row input')]
+      .map((input) => ({ checked: input.checked, label: input.getAttribute('aria-label') })),
+  }))()`);
+  assert(
+    JSON.stringify(settingsDefaults.switches.map((input) => input.checked)) ===
+      JSON.stringify([true, true, true, true, false]),
+    `Recommended settings defaults were unexpected: ${JSON.stringify(settingsDefaults)}`,
+  );
+  const settingsScreenshot = await screenshot(
+    cdp,
+    "onboarding-recommended-settings.png",
+  );
+
   console.log(
     JSON.stringify(
       {
@@ -312,6 +362,8 @@ try {
           aiScreenshot,
           geminiScreenshot,
           guideScreenshot,
+          ...(localAiScreenshot ? [localAiScreenshot] : []),
+          settingsScreenshot,
         ],
       },
       null,

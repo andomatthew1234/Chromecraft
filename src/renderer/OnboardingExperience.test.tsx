@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   recommendedExtensions,
+  hasDownloadedOnboardingUpdate,
   updateAiSetupChoices,
 } from "./OnboardingExperience";
 
@@ -23,6 +24,33 @@ describe("Chromecraft onboarding", () => {
         `https://chromewebstore.google.com/detail/${extension.id}`,
       );
     }
+  });
+
+  it("shows the restart page only for a downloaded application update", () => {
+    const base = {
+      status: "ready",
+      canRestart: true,
+      results: [
+        {
+          kind: "application",
+          state: "ready",
+          requiresRestart: true,
+        },
+      ],
+    };
+    expect(hasDownloadedOnboardingUpdate(base as never)).toBe(true);
+    expect(
+      hasDownloadedOnboardingUpdate({
+        ...base,
+        canRestart: false,
+      } as never),
+    ).toBe(false);
+    expect(
+      hasDownloadedOnboardingUpdate({
+        ...base,
+        results: [{ kind: "extension", state: "installed" }],
+      } as never),
+    ).toBe(false);
   });
 
   it("allows both AI providers while keeping skip exclusive", () => {

@@ -11,6 +11,8 @@ function makePreferences(
 ): PreferencesStore {
   const value: BrowserPreferences = {
     onboardingComplete: true,
+    anonymousReportsEnabled: false,
+    enhancedAnonymousReportsEnabled: false,
     ublockEnabled: true,
     restoreSession: true,
     sidebarAttached: true,
