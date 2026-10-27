@@ -1,0 +1,167 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: 22.13.0
+  PNPM_VERSION: 11.25.0
+
+jobs:
+  quality:
+    name: Quality and unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type-check and verify formatting
+        run: pnpm lint
+
+      - name: Run unit tests
+        run: pnpm test
+
+  windows-package:
+    name: Windows package and browser smoke tests
+    needs: quality
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Cache verified media tools
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .artifacts/media-tools-cache
+          key: media-tools-win32-x64-${{ hashFiles('resources/media-tools/manifest.json') }}
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Configure the production update feed
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          "CHROMECRAFT_UPDATE_FEED_URL=https://update.electronjs.org/andomatthew1234/Chromecraft/win32-x64/$version" >> $env:GITHUB_ENV
+
+      - name: Build Windows installer and update artifacts
+        run: pnpm make:win
+
+      - name: Exercise the packaged browser
+        run: pnpm smoke:win
+
+      - name: Exercise packaged extension loading
+        run: pnpm test:extensions:win
+
+      - name: Exercise packaged extension tab lifecycle
+        run: pnpm test:extension-tabs:win
+
+      - name: Exercise packaged extension actions
+        run: pnpm test:extension-actions:win
+
+      - name: Exercise packaged extension commands
+        run: pnpm test:extension-commands:win
+
+      - name: Exercise Scout assistant UI
+        run: pnpm test:ai-assistant-ui
+
+      - name: Exercise Scout tab organiser
+        run: pnpm test:scout-organiser-ui
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-ci-diagnostics-${{ github.run_id }}
+          path: .artifacts/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  linux-package:
+    name: Linux package and browser smoke test
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Cache verified media tools
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .artifacts/media-tools-cache
+          key: media-tools-linux-x64-${{ hashFiles('resources/media-tools/manifest.json') }}
+
+      - name: Install Linux runtime libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libasound2t64 libgbm1 libgtk-3-0 libnss3 xvfb
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Package Linux application
+        run: pnpm package:linux
+
+      - name: Exercise packaged Linux browser
+        run: xvfb-run --auto-servernum pnpm smoke:linux
+
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: linux-ci-diagnostics-${{ github.run_id }}
+          path: .artifacts/
+          if-no-files-found: ignore
+          retention-days: 7

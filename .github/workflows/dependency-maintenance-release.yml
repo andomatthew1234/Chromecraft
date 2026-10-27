@@ -1,0 +1,240 @@
+name: Dependency Maintenance Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      dependency_commit:
+        description: Merged Dependabot commit to release
+        required: true
+        type: string
+      source_pr:
+        description: Merged Dependabot pull request number
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-maintenance-release
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: 22.13.0
+  PNPM_VERSION: 11.25.0
+
+jobs:
+  prepare:
+    name: Prepare and validate maintenance version
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+    outputs:
+      merge_commit: ${{ steps.merge.outputs.commit }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Check out merged dependency commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.dependency_commit }}
+          fetch-depth: 0
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Validate trusted Dependabot source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPENDENCY_COMMIT: ${{ inputs.dependency_commit }}
+          SOURCE_PR: ${{ inputs.source_pr }}
+        run: |
+          set -euo pipefail
+          [[ "$DEPENDENCY_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$SOURCE_PR" =~ ^[1-9][0-9]*$ ]]
+          git fetch origin main
+          git merge-base --is-ancestor "$DEPENDENCY_COMMIT" origin/main
+          [[ "$(git rev-parse origin/main)" == "$DEPENDENCY_COMMIT" ]]
+          readarray -t source < <(gh api "repos/$GITHUB_REPOSITORY/pulls/$SOURCE_PR" \
+            --jq '[.user.login, .user.type, (.user.id|tostring), (.merged|tostring), (.merge_commit_sha // "")] | .[]')
+          [[ "${source[0]}" == "dependabot[bot]" ]]
+          [[ "${source[1]}" == "Bot" ]]
+          [[ "${source[2]}" == "49699333" ]]
+          [[ "${source[3]}" == "true" ]]
+          [[ "${source[4]}" == "$DEPENDENCY_COMMIT" ]]
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Allocate unique patch version
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="$(node scripts/release/next-patch-version.mjs)"
+          tag="v$version"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "Release tag $tag already exists." >&2
+            exit 1
+          fi
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $tag already exists." >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Create maintenance release pull request
+        id: pull-request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          SOURCE_PR: ${{ inputs.source_pr }}
+        run: |
+          set -euo pipefail
+          branch="automation/dependency-release-v$VERSION"
+          git switch -c "$branch"
+          pnpm version "$VERSION" --no-git-tag-version
+          pnpm install --lockfile-only
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json pnpm-lock.yaml
+          git commit -m "chore(release): v$VERSION dependency maintenance"
+          head_sha="$(git rev-parse HEAD)"
+          git push --set-upstream origin "$branch"
+          pr_url="$(gh pr create \
+            --repo "$GITHUB_REPOSITORY" \
+            --base main \
+            --head "$branch" \
+            --title "chore(release): v$VERSION dependency maintenance" \
+            --body "Automated patch release for tested dependency update #$SOURCE_PR. This PR changes only release version metadata; the dependency commit already passed CI.")"
+          pr_number="${pr_url##*/}"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          echo "head_sha=$head_sha" >> "$GITHUB_OUTPUT"
+          echo "number=$pr_number" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch CI for the release commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.pull-request.outputs.branch }}
+        run: gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref "$BRANCH"
+
+      - name: Wait for dispatched CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ steps.pull-request.outputs.branch }}
+          HEAD_SHA: ${{ steps.pull-request.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          run_id=""
+          for attempt in {1..40}; do
+            run_id="$(gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow CI \
+              --branch "$BRANCH" \
+              --event workflow_dispatch \
+              --limit 20 \
+              --json databaseId,headSha \
+              --jq ".[] | select(.headSha == \"$HEAD_SHA\") | .databaseId" \
+              | head -n 1)"
+            [[ -n "$run_id" ]] && break
+            sleep 5
+          done
+          [[ -n "$run_id" ]]
+          gh run watch "$run_id" --repo "$GITHUB_REPOSITORY" --exit-status
+
+      - name: Merge the exact tested release commit
+        id: merge
+        env:
+          DEPENDENCY_COMMIT: ${{ inputs.dependency_commit }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.pull-request.outputs.number }}
+          HEAD_SHA: ${{ steps.pull-request.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          [[ "$(git rev-parse origin/main)" == "$DEPENDENCY_COMMIT" ]]
+          for attempt in {1..12}; do
+            readarray -t fields < <(gh pr view "$PR_NUMBER" \
+              --repo "$GITHUB_REPOSITORY" \
+              --json baseRefOid,headRefOid,isDraft,mergeable,mergeStateStatus \
+              --jq '[.headRefOid, .baseRefOid, (.isDraft|tostring), .mergeable, .mergeStateStatus] | .[]')
+            if [[ "${fields[3]}" != "UNKNOWN" && "${fields[4]}" != "UNKNOWN" ]]; then
+              break
+            fi
+            sleep 5
+          done
+          [[ "${fields[0]}" == "$HEAD_SHA" ]]
+          [[ "${fields[1]}" == "$DEPENDENCY_COMMIT" ]]
+          [[ "${fields[2]}" == "false" ]]
+          [[ "${fields[3]}" == "MERGEABLE" ]]
+          [[ "${fields[4]}" == "CLEAN" ]]
+          current_main="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          [[ "$current_main" == "$DEPENDENCY_COMMIT" ]]
+          gh pr merge "$PR_NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+            --squash \
+            --delete-branch \
+            --match-head-commit "$HEAD_SHA"
+          for attempt in {1..20}; do
+            merge_commit="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json mergeCommit --jq '.mergeCommit.oid // empty')"
+            if [[ "$merge_commit" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "commit=$merge_commit" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "The release merge commit was not available in time." >&2
+          exit 1
+
+      - name: Dispatch CI for the exact release merge commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run ci.yml --repo "$GITHUB_REPOSITORY" --ref main
+
+      - name: Wait for release merge CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MERGE_COMMIT: ${{ steps.merge.outputs.commit }}
+        run: |
+          set -euo pipefail
+          run_id=""
+          for attempt in {1..40}; do
+            run_id="$(gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow CI \
+              --branch main \
+              --event workflow_dispatch \
+              --limit 20 \
+              --json databaseId,headSha \
+              --jq ".[] | select(.headSha == \"$MERGE_COMMIT\") | .databaseId" \
+              | head -n 1)"
+            [[ -n "$run_id" ]] && break
+            sleep 5
+          done
+          [[ -n "$run_id" ]]
+          gh run watch "$run_id" --repo "$GITHUB_REPOSITORY" --exit-status
+
+  release:
+    name: Publish signed dependency maintenance release
+    needs: prepare
+    permissions:
+      actions: read
+      contents: write
+    uses: ./.github/workflows/feature-release.yml
+    with:
+      version: ${{ needs.prepare.outputs.version }}
+      category: dependencies
+      ref: ${{ needs.prepare.outputs.merge_commit }}
+      prerelease: false
+      release_notes: Automated, tested dependency maintenance release.

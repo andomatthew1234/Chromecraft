@@ -20,6 +20,18 @@ import {
 
 const temporaryDirectories: string[] = [];
 
+function trustedResponse(
+  body?: BodyInit | null,
+  init?: ResponseInit,
+): Response {
+  const response = new Response(body, init);
+  Object.defineProperty(response, "url", {
+    configurable: true,
+    value: "https://clients2.googleusercontent.com/crx/fixture",
+  });
+  return response;
+}
+
 afterEach(async () => {
   await Promise.all(
     temporaryDirectories.splice(0).map((directory) =>
@@ -43,7 +55,7 @@ describe("ChromeWebStoreExtensionService", () => {
     const runtime = createSessionDouble(fixture.id);
     const service = new ChromeWebStoreExtensionService(runtime.session, {
       storagePath: await makeTemporaryDirectory(),
-      fetch: async () => new Response(new Uint8Array(fixture.crx)),
+      fetch: async () => trustedResponse(new Uint8Array(fixture.crx)),
       chromiumVersion: "152.0.0.0",
     });
     await service.initialize();
@@ -90,7 +102,7 @@ describe("ChromeWebStoreExtensionService", () => {
       expect.objectContaining({
         id: fixture.id,
         state: "unavailable",
-        detail: expect.stringContaining("source folder"),
+        detail: expect.stringMatching(/manual update|required|re-import/i),
       }),
     ]);
   });
@@ -109,7 +121,7 @@ describe("ChromeWebStoreExtensionService", () => {
     let response = initial.crx;
     const service = new ChromeWebStoreExtensionService(runtime.session, {
       storagePath: await makeTemporaryDirectory(),
-      fetch: async () => new Response(new Uint8Array(response)),
+      fetch: async () => trustedResponse(new Uint8Array(response)),
       chromiumVersion: "152.0.0.0",
     });
     await service.initialize();
@@ -163,7 +175,7 @@ describe("ChromeWebStoreExtensionService", () => {
     let response = initial.crx;
     const service = new ChromeWebStoreExtensionService(runtime.session, {
       storagePath: await makeTemporaryDirectory(),
-      fetch: async () => new Response(new Uint8Array(response)),
+      fetch: async () => trustedResponse(new Uint8Array(response)),
       chromiumVersion: "152.0.0.0",
     });
     await service.initialize();
@@ -188,6 +200,192 @@ describe("ChromeWebStoreExtensionService", () => {
     expect(runtime.loadExtension).not.toHaveBeenCalled();
   });
 
+  it("restores the previous live runtime when registry persistence fails", async () => {
+    const signingKeys = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const initial = createCrxFixture({
+      signingKeys,
+      manifest: { version: "1.0.0" },
+    });
+    const update = createCrxFixture({
+      signingKeys,
+      manifest: { version: "2.0.0" },
+    });
+    const storagePath = await makeTemporaryDirectory();
+    const registryPath = path.join(storagePath, "installed-extensions.json");
+    const runtime = createSessionDouble(initial.id);
+    let response = initial.crx;
+    const service = new ChromeWebStoreExtensionService(runtime.session, {
+      storagePath,
+      fetch: async () => trustedResponse(new Uint8Array(response)),
+      chromiumVersion: "152.0.0.0",
+    });
+    await service.initialize();
+    await service.installFromWebStoreUrl(
+      `https://chromewebstore.google.com/detail/${initial.id}`,
+    );
+    response = update.crx;
+    const preview = await service.prepareFromWebStoreUrl(
+      `https://chromewebstore.google.com/detail/${initial.id}`,
+    );
+    const rename = fs.rename.bind(fs);
+    const renameSpy = vi
+      .spyOn(fs, "rename")
+      .mockImplementation(async (source, destination) => {
+        if (path.resolve(String(destination)) === path.resolve(registryPath)) {
+          throw new Error("registry persistence failed");
+        }
+        await rename(source, destination);
+      });
+
+    await expect(
+      service.commitPreparedExtension(preview.token),
+    ).rejects.toThrow(/registry persistence failed/i);
+    renameSpy.mockRestore();
+
+    await expect(service.listInstalled()).resolves.toEqual([
+      expect.objectContaining({ version: "1.0.0", ready: true }),
+    ]);
+    expect(runtime.loadExtension).toHaveBeenCalledTimes(3);
+    expect(runtime.session.extensions.getAllExtensions()).toEqual([
+      expect.objectContaining({ version: "1.0.0" }),
+    ]);
+    await expect(
+      fs.access(path.join(storagePath, initial.id, "2.0.0")),
+    ).rejects.toThrow();
+  });
+
+  it("replaces a pre-existing version directory with verified package bytes", async () => {
+    const signingKeys = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const initial = createCrxFixture({
+      signingKeys,
+      manifest: { version: "1.0.0" },
+    });
+    const update = createCrxFixture({
+      signingKeys,
+      manifest: { version: "2.0.0" },
+      extraFiles: { "payload.txt": "verified package\n" },
+    });
+    const storagePath = await makeTemporaryDirectory();
+    const runtime = createSessionDouble(initial.id);
+    let response = initial.crx;
+    const service = new ChromeWebStoreExtensionService(runtime.session, {
+      storagePath,
+      fetch: async () => trustedResponse(new Uint8Array(response)),
+      chromiumVersion: "152.0.0.0",
+    });
+    await service.initialize();
+    await service.installFromWebStoreUrl(
+      `https://chromewebstore.google.com/detail/${initial.id}`,
+    );
+    const staleDestination = path.join(storagePath, initial.id, "2.0.0");
+    await fs.mkdir(staleDestination, { recursive: true });
+    await fs.writeFile(path.join(staleDestination, "payload.txt"), "stale\n");
+    await fs.writeFile(
+      path.join(staleDestination, "stale-only.txt"),
+      "stale\n",
+    );
+    response = update.crx;
+
+    await expect(service.checkAndInstallUpdates()).resolves.toEqual([
+      expect.objectContaining({ state: "installed", toVersion: "2.0.0" }),
+    ]);
+    await expect(
+      fs.readFile(path.join(staleDestination, "payload.txt"), "utf8"),
+    ).resolves.toBe("verified package\n");
+    await expect(
+      fs.access(path.join(staleDestination, "stale-only.txt")),
+    ).rejects.toThrow();
+  });
+
+  it("rejects a Web Store downgrade before replacing package bytes", async () => {
+    const signingKeys = generateKeyPairSync("rsa", { modulusLength: 2048 });
+    const current = createCrxFixture({
+      signingKeys,
+      manifest: { version: "2.0.0" },
+    });
+    const downgrade = createCrxFixture({
+      signingKeys,
+      manifest: { version: "1.0.0" },
+    });
+    const storagePath = await makeTemporaryDirectory();
+    let response = current.crx;
+    const service = new ChromeWebStoreExtensionService(
+      createSessionDouble(current.id).session,
+      {
+        storagePath,
+        fetch: async () => trustedResponse(new Uint8Array(response)),
+        chromiumVersion: "152.0.0.0",
+      },
+    );
+    await service.initialize();
+    await service.installFromWebStoreUrl(
+      `https://chromewebstore.google.com/detail/${current.id}`,
+    );
+    response = downgrade.crx;
+    const preview = await service.prepareFromWebStoreUrl(
+      `https://chromewebstore.google.com/detail/${current.id}`,
+    );
+
+    await expect(
+      service.commitPreparedExtension(preview.token),
+    ).rejects.toThrow(/cannot be downgraded/i);
+    await expect(service.listInstalled()).resolves.toEqual([
+      expect.objectContaining({ version: "2.0.0", ready: true }),
+    ]);
+    await expect(
+      fs.access(path.join(storagePath, current.id, "1.0.0")),
+    ).rejects.toThrow();
+  });
+
+  it("rejects an untrusted redirect before requesting its destination", async () => {
+    const fixture = createCrxFixture();
+    const fetchExtension = vi.fn(
+      async (_input: string | URL | Request, _init?: RequestInit) =>
+        trustedResponse(null, {
+          status: 302,
+          headers: { location: "https://downloads.example/crx" },
+        }),
+    );
+    const service = new ChromeWebStoreExtensionService(
+      createSessionDouble(fixture.id).session,
+      {
+        storagePath: await makeTemporaryDirectory(),
+        fetch: fetchExtension,
+        chromiumVersion: "152.0.0.0",
+      },
+    );
+    await service.initialize();
+
+    await expect(
+      service.prepareFromWebStoreUrl(
+        `https://chromewebstore.google.com/detail/${fixture.id}`,
+      ),
+    ).rejects.toThrow(/untrusted origin/i);
+    expect(fetchExtension).toHaveBeenCalledTimes(1);
+    expect(fetchExtension.mock.calls[0]?.[1]).toMatchObject({
+      redirect: "manual",
+    });
+  });
+
+  it("rejects a package response without a trustworthy response URL", async () => {
+    const fixture = createCrxFixture();
+    const service = new ChromeWebStoreExtensionService(
+      createSessionDouble(fixture.id).session,
+      {
+        storagePath: await makeTemporaryDirectory(),
+        fetch: async () => new Response(new Uint8Array(fixture.crx)),
+        chromiumVersion: "152.0.0.0",
+      },
+    );
+    await service.initialize();
+
+    await expect(
+      service.prepareFromWebStoreUrl(
+        `https://chromewebstore.google.com/detail/${fixture.id}`,
+      ),
+    ).rejects.toThrow(/untrusted origin/i);
+  });
+
   it("uses the signed package action icon for toolbar snapshots", async () => {
     const fixture = createCrxFixture({
       manifest: {
@@ -206,7 +404,7 @@ describe("ChromeWebStoreExtensionService", () => {
       createSessionDouble(fixture.id).session,
       {
         storagePath: await makeTemporaryDirectory(),
-        fetch: async () => new Response(new Uint8Array(fixture.crx)),
+        fetch: async () => trustedResponse(new Uint8Array(fixture.crx)),
         chromiumVersion: "152.0.0.0",
       },
     );
@@ -239,7 +437,7 @@ describe("ChromeWebStoreExtensionService", () => {
       createSessionDouble(fixture.id).session,
       {
         storagePath: await makeTemporaryDirectory(),
-        fetch: async () => new Response(new Uint8Array(fixture.crx)),
+        fetch: async () => trustedResponse(new Uint8Array(fixture.crx)),
         chromiumVersion: "152.0.0.0",
       },
     );
@@ -264,12 +462,11 @@ describe("ChromeWebStoreExtensionService", () => {
     });
     const storagePath = await makeTemporaryDirectory();
     const runtime = createSessionDouble(fixture.id);
-    const fetchExtension = vi.fn(
-      async () =>
-        new Response(new Uint8Array(fixture.crx), {
-          status: 200,
-          headers: { "content-length": String(fixture.crx.length) },
-        }),
+    const fetchExtension = vi.fn(async () =>
+      trustedResponse(new Uint8Array(fixture.crx), {
+        status: 200,
+        headers: { "content-length": String(fixture.crx.length) },
+      }),
     );
     const service = new ChromeWebStoreExtensionService(runtime.session, {
       storagePath,
@@ -350,7 +547,7 @@ describe("ChromeWebStoreExtensionService", () => {
         const fixture = requestUrl.includes(`id=${firstFixture.id}`)
           ? firstFixture
           : secondFixture;
-        return new Response(new Uint8Array(fixture.crx));
+        return trustedResponse(new Uint8Array(fixture.crx));
       }),
       chromiumVersion: "152.0.0.0",
     });
@@ -385,7 +582,7 @@ describe("ChromeWebStoreExtensionService", () => {
     );
     const service = new ChromeWebStoreExtensionService(runtime.session, {
       storagePath: await makeTemporaryDirectory(),
-      fetch: async () => new Response(new Uint8Array(fixture.crx)),
+      fetch: async () => trustedResponse(new Uint8Array(fixture.crx)),
       chromiumVersion: "152.0.0.0",
     });
     await service.initialize();
@@ -446,7 +643,7 @@ describe("ChromeWebStoreExtensionService", () => {
       const requestUrl = String(input);
       expect(requestUrl).toContain("clients2.google.com/service/update2/crx");
       expect(decodeURIComponent(requestUrl)).toContain(`id=${fixture.id}`);
-      return new Response(new Uint8Array(fixture.crx), {
+      return trustedResponse(new Uint8Array(fixture.crx), {
         status: 200,
         headers: {
           "content-type": "application/x-chrome-extension",
@@ -710,7 +907,7 @@ describe("ChromeWebStoreExtensionService", () => {
     });
     const service = new ChromeWebStoreExtensionService(runtime.session, {
       storagePath: await makeTemporaryDirectory(),
-      fetch: async () => new Response(new Uint8Array(fixture.crx)),
+      fetch: async () => trustedResponse(new Uint8Array(fixture.crx)),
       chromiumVersion: "152.0.0.0",
       // Leave enough headroom for loaded CI/development machines. The assertion
       // below controls when readiness is emitted; this timeout is not the subject
@@ -751,7 +948,7 @@ describe("ChromeWebStoreExtensionService", () => {
     });
     const service = new ChromeWebStoreExtensionService(runtime.session, {
       storagePath: await makeTemporaryDirectory(),
-      fetch: async () => new Response(new Uint8Array(fixture.crx)),
+      fetch: async () => trustedResponse(new Uint8Array(fixture.crx)),
       chromiumVersion: "152.0.0.0",
       extensionReadyTimeoutMs: 10,
     });
@@ -763,6 +960,7 @@ describe("ChromeWebStoreExtensionService", () => {
       ),
     ).rejects.toThrow(/did not become ready/i);
     await expect(service.listInstalled()).resolves.toEqual([]);
+    expect(runtime.session.extensions.getAllExtensions()).toEqual([]);
   });
 
   it("tracks Electron reload and unload lifecycle events after installation", async () => {
@@ -771,7 +969,7 @@ describe("ChromeWebStoreExtensionService", () => {
     const runtime = createSessionDouble(fixture.id);
     const service = new ChromeWebStoreExtensionService(runtime.session, {
       storagePath: await makeTemporaryDirectory(),
-      fetch: async () => new Response(new Uint8Array(fixture.crx)),
+      fetch: async () => trustedResponse(new Uint8Array(fixture.crx)),
       chromiumVersion: "152.0.0.0",
       onChanged,
     });
@@ -821,7 +1019,7 @@ describe("ChromeWebStoreExtensionService", () => {
     const runtime = createSessionDouble(fixture.id);
     const service = new ChromeWebStoreExtensionService(runtime.session, {
       storagePath,
-      fetch: async () => new Response(new Uint8Array(fixture.crx)),
+      fetch: async () => trustedResponse(new Uint8Array(fixture.crx)),
       chromiumVersion: "152.0.0.0",
     });
     await service.initialize();
@@ -882,7 +1080,7 @@ describe("ChromeWebStoreExtensionService", () => {
         'import "./chromecraft-compat/extension-compat.js";\n' +
         'import "./workers/background.mjs";\n',
     );
-  });
+  }, 15_000);
 
   it.each([
     "http://chromewebstore.google.com/detail/example/abcdefghijklmnopabcdefghijklmnop",
@@ -915,7 +1113,7 @@ describe("ChromeWebStoreExtensionService", () => {
     const runtime = createSessionDouble(requestedId);
     const service = new ChromeWebStoreExtensionService(runtime.session, {
       storagePath,
-      fetch: vi.fn(async () => new Response(new Uint8Array(fixture.crx))),
+      fetch: vi.fn(async () => trustedResponse(new Uint8Array(fixture.crx))),
       chromiumVersion: "152.0.0.0",
     });
     await service.initialize();
@@ -936,7 +1134,7 @@ describe("ChromeWebStoreExtensionService", () => {
     const runtime = createSessionDouble(fixture.id);
     const service = new ChromeWebStoreExtensionService(runtime.session, {
       storagePath,
-      fetch: vi.fn(async () => new Response(new Uint8Array(tampered))),
+      fetch: vi.fn(async () => trustedResponse(new Uint8Array(tampered))),
       chromiumVersion: "152.0.0.0",
     });
     await service.initialize();
@@ -962,7 +1160,7 @@ describe("ChromeWebStoreExtensionService", () => {
     const runtime = createSessionDouble(fixture.id);
     const service = new ChromeWebStoreExtensionService(runtime.session, {
       storagePath,
-      fetch: vi.fn(async () => new Response(new Uint8Array(fixture.crx))),
+      fetch: vi.fn(async () => trustedResponse(new Uint8Array(fixture.crx))),
       chromiumVersion: "152.0.0.0",
     });
     await service.initialize();
@@ -998,7 +1196,7 @@ describe("ChromeWebStoreExtensionService", () => {
     const runtime = createSessionDouble(fixture.id);
     const service = new ChromeWebStoreExtensionService(runtime.session, {
       storagePath: await makeTemporaryDirectory(),
-      fetch: vi.fn(async () => new Response(new Uint8Array(fixture.crx))),
+      fetch: vi.fn(async () => trustedResponse(new Uint8Array(fixture.crx))),
       chromiumVersion: "152.0.0.0",
     });
     await service.initialize();
@@ -1028,7 +1226,7 @@ describe("ChromeWebStoreExtensionService", () => {
     const runtime = createSessionDouble(fixture.id);
     const service = new ChromeWebStoreExtensionService(runtime.session, {
       storagePath: await makeTemporaryDirectory(),
-      fetch: vi.fn(async () => new Response(new Uint8Array(fixture.crx))),
+      fetch: vi.fn(async () => trustedResponse(new Uint8Array(fixture.crx))),
       chromiumVersion: "152.0.0.0",
     });
     await service.initialize();
@@ -1051,7 +1249,7 @@ describe("ChromeWebStoreExtensionService", () => {
     const runtime = createSessionDouble(fixture.id);
     const service = new ChromeWebStoreExtensionService(runtime.session, {
       storagePath,
-      fetch: vi.fn(async () => new Response(new Uint8Array(fixture.crx))),
+      fetch: vi.fn(async () => trustedResponse(new Uint8Array(fixture.crx))),
       chromiumVersion: "152.0.0.0",
     });
     await service.initialize();
@@ -1092,7 +1290,7 @@ describe("ChromeWebStoreExtensionService", () => {
       const runtime = createSessionDouble(fixture.id);
       const service = new ChromeWebStoreExtensionService(runtime.session, {
         storagePath,
-        fetch: vi.fn(async () => new Response(new Uint8Array(fixture.crx))),
+        fetch: vi.fn(async () => trustedResponse(new Uint8Array(fixture.crx))),
         chromiumVersion: "152.0.0.0",
       });
       await service.initialize();

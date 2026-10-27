@@ -1,4 +1,4 @@
-import type { UpdateSnapshot } from "./updates";
+import type { UpdatePreferences, UpdateSnapshot } from "./updates";
 import type {
   OfflinePageEntrySnapshot,
   OfflinePagesSnapshot,
@@ -978,6 +978,11 @@ export interface ChromecraftApi {
   setAddVideosToGallery(enabled: boolean): Promise<void>;
   getUpdateSnapshot(): Promise<UpdateSnapshot>;
   checkForUpdates(): Promise<UpdateSnapshot>;
+  updateAllExtensions(): Promise<UpdateSnapshot>;
+  updateExtension(extensionId: string): Promise<UpdateSnapshot>;
+  setUpdatePreferences(
+    preferences: Partial<UpdatePreferences>,
+  ): Promise<UpdateSnapshot>;
   restartToUpdate(): Promise<void>;
   getAiTools(): Promise<AiToolsSnapshot>;
   refreshAiModels(provider?: AiProviderId): Promise<AiToolsSnapshot>;

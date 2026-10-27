@@ -19,6 +19,7 @@ import {
   WebContentsView,
 } from "electron";
 import electronSquirrelStartup from "electron-squirrel-startup";
+import mediaToolsManifest from "../../resources/media-tools/manifest.json";
 
 import { channels } from "../shared/channels";
 import type {
@@ -100,6 +101,7 @@ import { SearchSuggestionService } from "./search-suggestions";
 import { TabManager } from "./tab-manager";
 import { UblockService } from "./ublock-service";
 import { UpdateManager } from "./update-manager";
+import { UpdateStateStore } from "./update-state-store";
 import {
   YouTubeDownloadService,
   YT_DLP_VERSION,
@@ -391,19 +393,82 @@ function requireScoutAgent(event: IpcMainInvokeEvent): ScoutAgentController {
 
 function prepareForUpdateRestart(): Promise<void> {
   if (updateShutdownPromise) return updateShutdownPromise;
+  const restoreMarker = path.join(
+    app.getPath("userData"),
+    "restore-session-after-update",
+  );
   const agentShutdown = (
     scoutAgentController?.dispose() ?? Promise.resolve()
   ).finally(() => aiToolsController?.dispose());
   updateShutdownPromise = Promise.all([
     agentShutdown,
-    tabManager?.flushSession() ?? Promise.resolve(),
+    tabManager?.flushSession(true) ?? Promise.resolve(),
     downloadManager?.dispose() ?? Promise.resolve(),
     smartDownloadsService?.dispose() ?? Promise.resolve(),
     youtubeDownloadService?.dispose() ?? Promise.resolve(),
-  ]).then(() => {
-    updateRestartPrepared = true;
-  });
+  ])
+    .then(() =>
+      fs.writeFile(
+        restoreMarker,
+        `${JSON.stringify({
+          version: 1,
+          preparedFromVersion: app.getVersion(),
+          createdAt: Date.now(),
+          attempts: 0,
+        })}\n`,
+        { encoding: "utf8", mode: 0o600 },
+      ),
+    )
+    .then(() => {
+      updateRestartPrepared = true;
+    })
+    .catch(async (error) => {
+      await fs.rm(restoreMarker, { force: true }).catch(() => undefined);
+      updateShutdownPromise = null;
+      throw error;
+    });
   return updateShutdownPromise;
+}
+
+async function prepareUpdateSessionRecovery(
+  markerPath: string,
+): Promise<boolean> {
+  const maximumAgeMs = 24 * 60 * 60 * 1_000;
+  const maximumAttempts = 3;
+  try {
+    const raw = await fs.readFile(markerPath, "utf8");
+    if (raw.length > 2_000)
+      throw new Error("Update recovery marker is too large.");
+    const marker = JSON.parse(raw) as Record<string, unknown>;
+    const createdAt = marker.createdAt;
+    const attempts = marker.attempts;
+    if (
+      marker.version !== 1 ||
+      typeof marker.preparedFromVersion !== "string" ||
+      typeof createdAt !== "number" ||
+      !Number.isFinite(createdAt) ||
+      createdAt < Date.now() - maximumAgeMs ||
+      createdAt > Date.now() + 60_000 ||
+      typeof attempts !== "number" ||
+      !Number.isInteger(attempts) ||
+      attempts < 0 ||
+      attempts >= maximumAttempts
+    ) {
+      throw new Error("Update recovery marker is invalid or expired.");
+    }
+    await fs.writeFile(
+      markerPath,
+      `${JSON.stringify({ ...marker, attempts: attempts + 1 })}\n`,
+      { encoding: "utf8", mode: 0o600 },
+    );
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      console.warn("Discarding an unusable update recovery marker.", error);
+      await fs.rm(markerPath, { force: true }).catch(() => undefined);
+    }
+    return false;
+  }
 }
 
 function requireManager(event: IpcMainInvokeEvent): TabManager {
@@ -510,8 +575,18 @@ function sendExtensionsSnapshot(): Promise<void> {
     popupExtensionId: tabManager?.extensionPopupId ?? null,
   };
   const pending = extensionSnapshotSendQueue.then(async () => {
-    if (!shellView || shellView.webContents.isDestroyed()) return;
     const snapshot = await getExtensionsSnapshot();
+    updateManager?.setInstalledExtensions(
+      snapshot.items.map((extension) => ({
+        id: extension.id,
+        name: extension.name,
+        version: extension.version,
+        enabled: extension.enabled,
+        sourceUrl: extension.sourceUrl ?? `unpacked:${extension.id}`,
+        iconDataUrl: extension.iconDataUrl,
+      })),
+    );
+    if (!shellView || shellView.webContents.isDestroyed()) return;
     shellView.webContents.send(channels.extensionsChanged, {
       ...snapshot,
       ...state,
@@ -1458,6 +1533,55 @@ function registerIpc(): void {
     requireTrusted(event);
     return requireUpdateManager().check();
   });
+  ipcMain.handle(channels.updateAllExtensions, async (event) => {
+    requireTrusted(event);
+    return requireUpdateManager().updateExtensions();
+  });
+  ipcMain.handle(
+    channels.updateExtension,
+    async (event, extensionId: unknown) => {
+      requireTrusted(event);
+      return requireUpdateManager().updateExtension(
+        requireString(extensionId, "extensionId", 32),
+      );
+    },
+  );
+  ipcMain.handle(
+    channels.setUpdatePreferences,
+    async (event, value: unknown) => {
+      requireTrusted(event);
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        throw new TypeError("Update preferences must be an object.");
+      }
+      const input = value as Record<string, unknown>;
+      for (const key of Object.keys(input)) {
+        if (
+          ![
+            "automaticChecksEnabled",
+            "automaticExtensionUpdatesEnabled",
+            "notifyWhenReady",
+          ].includes(key) ||
+          typeof input[key] !== "boolean"
+        ) {
+          throw new TypeError("Invalid update preference.");
+        }
+      }
+      return requireUpdateManager().setPreferences({
+        ...(typeof input.automaticChecksEnabled === "boolean"
+          ? { automaticChecksEnabled: input.automaticChecksEnabled }
+          : {}),
+        ...(typeof input.automaticExtensionUpdatesEnabled === "boolean"
+          ? {
+              automaticExtensionUpdatesEnabled:
+                input.automaticExtensionUpdatesEnabled,
+            }
+          : {}),
+        ...(typeof input.notifyWhenReady === "boolean"
+          ? { notifyWhenReady: input.notifyWhenReady }
+          : {}),
+      });
+    },
+  );
   ipcMain.handle(channels.restartToUpdate, async (event) => {
     requireTrusted(event);
     await requireUpdateManager().restart();
@@ -2923,6 +3047,12 @@ async function createMainWindow(): Promise<void> {
   const smokeTheme = argumentValue("chromecraft-smoke-theme");
   if (smokeTheme === "light" || smokeTheme === "dark")
     nativeTheme.themeSource = smokeTheme;
+  const updateRestoreMarker = path.join(
+    app.getPath("userData"),
+    "restore-session-after-update",
+  );
+  const restoreSessionAfterUpdate =
+    await prepareUpdateSessionRecovery(updateRestoreMarker);
   const browserSession = session.fromPartition(profilePartition);
   const controls = new WebsiteControlsService(browserSession, {
     filePath: path.join(app.getPath("userData"), "website-controls.json"),
@@ -3046,15 +3176,39 @@ async function createMainWindow(): Promise<void> {
   }
 
   updateManager?.dispose();
+  const updateStateStore = new UpdateStateStore(
+    path.join(app.getPath("userData"), "update-state.json"),
+  );
+  const updateState = await updateStateStore.load();
+  const installedApplicationVersion = app.getVersion();
+  const reconciledHistory = updateState.history.map((entry) =>
+    entry.result === "ready" && entry.toVersion === installedApplicationVersion
+      ? { ...entry, result: "installed" as const }
+      : entry,
+  );
+  if (
+    reconciledHistory.some(
+      (entry, index) => entry.result !== updateState.history[index]?.result,
+    )
+  ) {
+    updateState.history = reconciledHistory;
+    await updateStateStore.save(updateState);
+  }
+  const installedExtensions = extensionService
+    ? await extensionService.listInstalled()
+    : [];
+  const defaultUpdateFeedUrl = `https://update.electronjs.org/andomatthew1234/Chromecraft/${process.platform}-${process.arch}/${app.getVersion()}`;
   updateManager = new UpdateManager({
     adapter: new ElectronUpdateAdapter({
       isPackaged: app.isPackaged,
       platform: process.platform,
       executablePath: process.execPath,
-      feedUrl: CHROMECRAFT_UPDATE_FEED_URL,
+      feedUrl: CHROMECRAFT_UPDATE_FEED_URL || defaultUpdateFeedUrl,
+      releaseApiUrl:
+        "https://api.github.com/repos/andomatthew1234/Chromecraft/releases/latest",
     }),
     extensions: {
-      checkAndInstallUpdates: (report) =>
+      checkAndInstallUpdates: (report, extensionIds) =>
         runExtensionOperation("updating", null, () => {
           if (!extensionService) {
             throw new Error("The extension service did not initialize.");
@@ -3069,7 +3223,7 @@ async function createMainWindow(): Promise<void> {
                 ? {}
                 : { totalBytes: progress.totalBytes }),
             });
-          });
+          }, extensionIds);
         }),
     },
     installedVersions: [
@@ -3082,10 +3236,28 @@ async function createMainWindow(): Promise<void> {
       { id: "chromium", label: "Chromium", version: process.versions.chrome },
       { id: "node", label: "Node.js", version: process.versions.node },
       { id: "yt-dlp", label: "yt-dlp", version: YT_DLP_VERSION },
+      {
+        id: "deno",
+        label: "Deno",
+        version: mediaToolsManifest.denoVersion,
+      },
     ],
+    installedExtensions,
+    persistentState: updateState,
+    automaticEligible: app.isPackaged && !smokeUserData,
     emit: sendUpdateSnapshot,
+    persist: (state) => updateStateStore.save(state),
     prepareForRestart: prepareForUpdateRestart,
+    notifyUpdateReady: (release) => {
+      if (!Notification.isSupported()) return;
+      new Notification({
+        title: "Chromecraft update ready",
+        body: `Version ${release.version} is ready. Restart from Chromecraft Updates when convenient.`,
+        silent: true,
+      }).show();
+    },
   });
+  updateManager.startAutomaticChecks();
 
   const preferences = new PreferencesStore(
     path.join(app.getPath("userData"), "preferences.json"),
@@ -3515,6 +3687,7 @@ async function createMainWindow(): Promise<void> {
       cancel: (requestId) =>
         aiToolsController?.cancelSmartReaderSpeech(requestId),
     },
+    restoreSessionAfterUpdate,
   );
   tabManager = manager;
   const organiseTabs = new OrganiseTabsTool(manager);
@@ -3558,7 +3731,10 @@ async function createMainWindow(): Promise<void> {
   }
   actionHost.attachTabs(manager);
   registerIpc();
-  manager.initialize();
+  await manager.initialize();
+  if (restoreSessionAfterUpdate) {
+    await fs.rm(updateRestoreMarker, { force: true });
+  }
 
   view.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   view.webContents.on("will-navigate", (event, url) => {

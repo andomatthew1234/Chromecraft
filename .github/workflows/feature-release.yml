@@ -1,0 +1,314 @@
+name: Feature Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact package.json version to publish
+        required: true
+        type: string
+      category:
+        description: Which Update Centre categories contain changes
+        required: true
+        default: chromecraft
+        type: choice
+        options:
+          - chromecraft
+          - dependencies
+          - both
+      ref:
+        description: Exact 40-character commit SHA at the current protected main tip
+        required: true
+        type: string
+      prerelease:
+        description: Publish as a GitHub prerelease
+        required: true
+        default: false
+        type: boolean
+      release_notes:
+        description: Concise user-facing release notes
+        required: false
+        type: string
+  workflow_call:
+    inputs:
+      version:
+        required: true
+        type: string
+      category:
+        required: true
+        type: string
+      ref:
+        required: true
+        type: string
+      prerelease:
+        required: true
+        type: boolean
+      release_notes:
+        required: false
+        type: string
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.version }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: 22.13.0
+  PNPM_VERSION: 11.25.0
+
+jobs:
+  validate:
+    name: Validate release request
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      commit: ${{ steps.release.outputs.commit }}
+      tag: ${{ steps.release.outputs.tag }}
+    steps:
+      - name: Check out exact release source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - name: Validate version, category, commit, and tag
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_REF: ${{ inputs.ref }}
+          REQUESTED_VERSION: ${{ inputs.version }}
+          RELEASE_CATEGORY: ${{ inputs.category }}
+          REQUESTED_PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          package_version="$(node -p "require('./package.json').version")"
+          [[ "$RELEASE_REF" =~ ^[0-9A-Fa-f]{40}$ ]]
+          [[ "$REQUESTED_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]]
+          [[ "$package_version" == "$REQUESTED_VERSION" ]]
+          [[ "$RELEASE_CATEGORY" =~ ^(chromecraft|dependencies|both)$ ]]
+          commit="$(git rev-parse HEAD)"
+          [[ "${commit,,}" == "${RELEASE_REF,,}" ]]
+          git fetch origin main
+          [[ "$commit" == "$(git rev-parse origin/main)" ]]
+          if [[ "$REQUESTED_VERSION" == *-* ]]; then
+            [[ "$REQUESTED_PRERELEASE" == "true" ]]
+          else
+            [[ "$REQUESTED_PRERELEASE" == "false" ]]
+          fi
+          ci_run="$(gh run list \
+            --repo "$GITHUB_REPOSITORY" \
+            --workflow CI \
+            --commit "$commit" \
+            --status success \
+            --limit 20 \
+            --json databaseId,headSha,conclusion \
+            --jq ".[] | select(.headSha == \"$commit\" and .conclusion == \"success\") | .databaseId" \
+            | head -n 1)"
+          if [[ -z "$ci_run" ]]; then
+            echo "No successful CI run exists for exact release commit $commit." >&2
+            exit 1
+          fi
+          tag="v$REQUESTED_VERSION"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "Release tag $tag already exists." >&2
+            exit 1
+          fi
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $tag already exists." >&2
+            exit 1
+          fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  build-windows:
+    name: Build, sign, and verify Windows release
+    needs: validate
+    runs-on: windows-latest
+    timeout-minutes: 120
+    environment:
+      name: chromecraft-release
+    steps:
+      - name: Check out exact release source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Cache verified media tools
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .artifacts/media-tools-cache
+          key: media-tools-win32-x64-${{ hashFiles('resources/media-tools/manifest.json') }}
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Materialize signing certificate
+        shell: pwsh
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_PFX_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:CERTIFICATE_BASE64) -or [string]::IsNullOrEmpty($env:CERTIFICATE_PASSWORD)) {
+            throw "Signed releases require WINDOWS_CERTIFICATE_PFX_BASE64 and WINDOWS_CERTIFICATE_PASSWORD."
+          }
+          $expectedThumbprint = $env:CERTIFICATE_THUMBPRINT -replace "[^0-9A-Fa-f]", ""
+          if ($expectedThumbprint -notmatch "^[0-9A-Fa-f]{40}$") {
+            throw "WINDOWS_CERTIFICATE_THUMBPRINT must be a 40-character certificate thumbprint."
+          }
+          $certificatePath = Join-Path $env:RUNNER_TEMP "chromecraft-release.pfx"
+          [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:CERTIFICATE_BASE64))
+          "WINDOWS_CERTIFICATE_FILE=$certificatePath" >> $env:GITHUB_ENV
+          $passwordDelimiter = "CHROMECRAFT_$([Guid]::NewGuid().ToString('N'))"
+          "WINDOWS_CERTIFICATE_PASSWORD<<$passwordDelimiter" >> $env:GITHUB_ENV
+          $env:CERTIFICATE_PASSWORD >> $env:GITHUB_ENV
+          $passwordDelimiter >> $env:GITHUB_ENV
+          "WINDOWS_CERTIFICATE_THUMBPRINT=$($expectedThumbprint.ToUpperInvariant())" >> $env:GITHUB_ENV
+
+      - name: Configure the production update feed
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          "CHROMECRAFT_UPDATE_FEED_URL=https://update.electronjs.org/andomatthew1234/Chromecraft/win32-x64/$env:RELEASE_VERSION" >> $env:GITHUB_ENV
+
+      - name: Package Windows application
+        run: pnpm package:win
+
+      - name: Build Squirrel and portable artifacts from signed package
+        run: pnpm exec electron-forge make --platform=win32 --arch=x64 --from-package
+
+      - name: Run release test suite
+        run: |
+          pnpm smoke:win
+          pnpm test:extensions:win
+          pnpm test:extension-tabs:win
+          pnpm test:extension-actions:win
+          pnpm test:extension-commands:win
+          pnpm test:ai-assistant-ui
+          pnpm test:scout-organiser-ui
+
+      - name: Collect and verify release artifacts
+        shell: pwsh
+        env:
+          RELEASE_CATEGORY: ${{ inputs.category }}
+          RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_NOTES: ${{ inputs.release_notes }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $artifactDirectory = Join-Path $PWD "release-artifacts"
+          New-Item -ItemType Directory -Force $artifactDirectory | Out-Null
+          $squirrelDirectory = Join-Path $PWD "out/make/squirrel.windows/x64"
+          $zipDirectory = Join-Path $PWD "out/make/zip/win32/x64"
+          Copy-Item (Join-Path $squirrelDirectory "RELEASES") $artifactDirectory
+          Copy-Item (Join-Path $squirrelDirectory "*.nupkg") $artifactDirectory
+          Copy-Item (Join-Path $squirrelDirectory "*Setup.exe") $artifactDirectory
+          Copy-Item (Join-Path $zipDirectory "*.zip") $artifactDirectory
+
+          node scripts/release/generate-release-metadata.mjs `
+            --category $env:RELEASE_CATEGORY `
+            --version $env:RELEASE_VERSION `
+            --commit $env:RELEASE_COMMIT `
+            --output (Join-Path $artifactDirectory "release.json")
+
+          $notes = if ([string]::IsNullOrWhiteSpace($env:RELEASE_NOTES)) {
+            "Chromecraft $env:RELEASE_VERSION ($env:RELEASE_CATEGORY update)."
+          } else {
+            $env:RELEASE_NOTES.Trim()
+          }
+          $metadataMarker = "<!-- chromecraft-update: {`"category`":`"$env:RELEASE_CATEGORY`"} -->"
+          Set-Content -Path (Join-Path $artifactDirectory "release-notes.md") -Value "$notes`n`n$metadataMarker" -Encoding utf8NoBOM
+
+          $setup = @(Get-ChildItem $artifactDirectory -Filter "*Setup.exe" -File)
+          $nupkg = @(Get-ChildItem $artifactDirectory -Filter "*-full.nupkg" -File)
+          if ($setup.Count -ne 1 -or $nupkg.Count -ne 1) {
+            throw "Expected exactly one setup executable and one full nupkg."
+          }
+          & scripts/release/verify-windows-signatures.ps1 `
+            -PackageDirectory (Join-Path $PWD "out/Chromecraft-win32-x64") `
+            -NupkgPath $nupkg[0].FullName `
+            -SetupPath $setup[0].FullName `
+            -ExpectedThumbprint $env:WINDOWS_CERTIFICATE_THUMBPRINT `
+            -ReportPath (Join-Path $artifactDirectory "signature-report.json")
+
+          node scripts/release/finalize-release-artifacts.mjs $artifactDirectory
+          node scripts/release/verify-release-artifacts.mjs $artifactDirectory
+
+      - name: Remove signing certificate
+        if: always()
+        shell: pwsh
+        run: Remove-Item -LiteralPath "$env:RUNNER_TEMP/chromecraft-release.pfx" -Force -ErrorAction SilentlyContinue
+
+      - name: Upload verified release bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: chromecraft-release-${{ inputs.version }}
+          path: release-artifacts/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish immutable GitHub release
+    needs:
+      - validate
+      - build-windows
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: chromecraft-release
+    permissions:
+      contents: write
+    steps:
+      - name: Check out release verifier
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.validate.outputs.commit }}
+
+      - name: Download verified release bundle
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: chromecraft-release-${{ inputs.version }}
+          path: release-artifacts
+
+      - name: Re-verify checksums and signing evidence
+        run: node scripts/release/verify-release-artifacts.mjs release-artifacts
+
+      - name: Create draft, upload once, and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+          args=(
+            "$RELEASE_TAG"
+            release-artifacts/*
+            --repo "$GITHUB_REPOSITORY"
+            --target "$RELEASE_COMMIT"
+            --title "Chromecraft $RELEASE_VERSION"
+            --notes-file release-artifacts/release-notes.md
+            --draft
+          )
+          if [[ "$PRERELEASE" == "true" ]]; then
+            args+=(--prerelease)
+          fi
+          gh release create "${args[@]}"
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false

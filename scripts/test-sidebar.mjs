@@ -201,9 +201,12 @@ try {
   const updatesPageReady = await poll(
     () =>
       cdp.evaluate(`Boolean(
-        document.querySelector('.updates-page') &&
+        document.querySelector('.update-centre') &&
+        document.querySelector('[data-category="extensions"]') &&
+        document.querySelector('[data-category="dependencies"]') &&
+        document.querySelector('[data-category="chromecraft"]') &&
         [...document.querySelectorAll('button')].some(
-          (button) => button.textContent?.includes('Check for updates')
+          (button) => button.textContent?.includes('Update All')
         )
       )`),
     Boolean,
@@ -212,21 +215,21 @@ try {
   const versionsInitiallyHidden = await cdp.evaluate(`
     !document.querySelector('#version-info') &&
     Boolean([...document.querySelectorAll('button')].find(
-      (button) => button.textContent?.includes('Version info')
+      (button) => button.textContent?.includes('Technical details')
     ))
   `);
   if (!versionsInitiallyHidden) {
     throw new Error("Installed versions must stay hidden until requested.");
   }
   await cdp.evaluate(`([...document.querySelectorAll('button')]
-    .find((button) => button.textContent?.includes('Version info')))?.click()`);
+    .find((button) => button.textContent?.includes('Technical details')))?.click()`);
   const versionsRevealed = await poll(
     () => cdp.evaluate("Boolean(document.querySelector('#version-info'))"),
     Boolean,
     "the installed version information",
   );
   await cdp.evaluate(`([...document.querySelectorAll('button')]
-    .find((button) => button.textContent?.includes('Check for updates')))?.click()`);
+    .find((button) => button.textContent?.includes('Update All')))?.click()`);
   const portableUpdateStatus = await poll(
     () =>
       cdp.evaluate(
@@ -324,7 +327,7 @@ try {
       cdp.evaluate(
         "document.querySelector('.sidebar.panel-open')?.getBoundingClientRect().width || 0",
       ),
-    (width) => width >= 280 && width <= 292,
+    (width) => width >= 354 && width <= 366,
     "the Extensions sidebar to reach its open width",
   );
   await cdp.evaluate(

@@ -27,7 +27,7 @@ import type {
   OfflinePageEntrySnapshot,
   OfflinePagesSnapshot,
 } from "../shared/offline-pages";
-import type { UpdateSnapshot } from "../shared/updates";
+import type { UpdatePreferences, UpdateSnapshot } from "../shared/updates";
 import type {
   AiToolApplyResult,
   AiGroupingMode,
@@ -573,6 +573,18 @@ const api: ChromecraftApi = {
     ipcRenderer.invoke(channels.getUpdates) as Promise<UpdateSnapshot>,
   checkForUpdates: () =>
     ipcRenderer.invoke(channels.checkForUpdates) as Promise<UpdateSnapshot>,
+  updateAllExtensions: () =>
+    ipcRenderer.invoke(channels.updateAllExtensions) as Promise<UpdateSnapshot>,
+  updateExtension: (extensionId) =>
+    ipcRenderer.invoke(
+      channels.updateExtension,
+      extensionId,
+    ) as Promise<UpdateSnapshot>,
+  setUpdatePreferences: (preferences) =>
+    ipcRenderer.invoke(
+      channels.setUpdatePreferences,
+      preferences as Partial<UpdatePreferences>,
+    ) as Promise<UpdateSnapshot>,
   restartToUpdate: () =>
     ipcRenderer.invoke(channels.restartToUpdate) as Promise<void>,
   getAiTools: () =>

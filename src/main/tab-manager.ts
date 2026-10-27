@@ -604,6 +604,7 @@ export class TabManager implements BrowserResearchAdapter {
     > = () => new Map(),
     private readonly smartReaderSummary?: SmartReaderSummaryBridge,
     private readonly smartReaderNarration?: SmartReaderNarrationBridge,
+    private readonly forceRestoreSession = false,
   ) {
     this.extensionPopup = extensions
       ? new ExtensionPopupController(window, browserSession, extensions, {
@@ -635,10 +636,11 @@ export class TabManager implements BrowserResearchAdapter {
     this.hyperdrive.setBrowserData(this.browserData.snapshot);
   }
 
-  initialize(): void {
-    const session = this.preferences.snapshot.restoreSession
-      ? this.browserData.loadSession()
-      : null;
+  async initialize(): Promise<void> {
+    const session =
+      this.preferences.snapshot.restoreSession || this.forceRestoreSession
+        ? this.browserData.loadSession()
+        : null;
     if (!session?.tabs.length) {
       this.createTab();
       return;
@@ -671,6 +673,7 @@ export class TabManager implements BrowserResearchAdapter {
     this.hyperdrive.setActiveTab(this.activeTabId);
     const active = this.requireTab(this.activeTabId);
     const activePair = this.splitView.pairForTab(active.id);
+    const navigationTasks: Promise<void>[] = [];
     if (activePair) {
       const peerId =
         activePair.leftTabId === active.id
@@ -678,25 +681,30 @@ export class TabManager implements BrowserResearchAdapter {
           : activePair.leftTabId;
       const peer = this.tabs.get(peerId);
       if (peer && this.isSplitEligibleTab(peer) && !peer.view) {
-        void this.navigateToUrl(
-          peer,
-          peer.url,
-          this.isAllowedInternalUrl(peer.url),
-          false,
+        navigationTasks.push(
+          this.navigateToUrl(
+            peer,
+            peer.url,
+            this.isAllowedInternalUrl(peer.url),
+            false,
+          ),
         );
       }
     }
     if (!active.isNewTab && active.url && !isShellInternalUrl(active.url)) {
-      void this.navigateToUrl(
-        active,
-        active.url,
-        this.isAllowedInternalUrl(active.url),
-        true,
+      navigationTasks.push(
+        this.navigateToUrl(
+          active,
+          active.url,
+          this.isAllowedInternalUrl(active.url),
+          true,
+        ),
       );
     } else {
       this.layoutActiveView();
       this.emitSnapshot();
     }
+    await Promise.all(navigationTasks);
   }
 
   get snapshot(): BrowserSnapshot {
@@ -3457,7 +3465,7 @@ export class TabManager implements BrowserResearchAdapter {
     }
   }
 
-  async flushSession(): Promise<void> {
+  async flushSession(force = false): Promise<void> {
     if (this.sessionTimer) clearTimeout(this.sessionTimer);
     this.sessionTimer = null;
     await Promise.all(
@@ -3465,8 +3473,11 @@ export class TabManager implements BrowserResearchAdapter {
         .filter((group) => group.saved)
         .map((group) => this.syncSavedTabGroup(group)),
     );
-    if (!this.preferences.snapshot.restoreSession || this.order.length === 0)
+    if (!this.preferences.snapshot.restoreSession && !force) return;
+    if (this.order.length === 0) {
+      await this.browserData.clearSession();
       return;
+    }
     const tabs = this.serializableTabs();
     if (tabs.length === 0) {
       await this.browserData.clearSession();

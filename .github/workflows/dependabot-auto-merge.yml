@@ -1,0 +1,137 @@
+name: Dependabot Auto-merge
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: dependabot-auto-merge
+  cancel-in-progress: false
+
+jobs:
+  merge:
+    name: Merge tested non-major dependency update
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.pull_requests[0] != null
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - name: Validate the pull request identity
+        id: pull-request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+          TESTED_BASE_SHA: ${{ github.event.workflow_run.pull_requests[0].base.sha }}
+          TESTED_SHA: ${{ github.event.workflow_run.pull_requests[0].head.sha }}
+        run: |
+          set -euo pipefail
+          readarray -t identity < <(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" \
+            --jq '[.user.login, .user.type, (.user.id|tostring), .head.ref, .head.sha, .base.ref, .base.sha, (.draft|tostring)] | .[]')
+          [[ "${identity[0]}" == "dependabot[bot]" ]]
+          [[ "${identity[1]}" == "Bot" ]]
+          [[ "${identity[2]}" == "49699333" ]]
+          [[ "${identity[3]}" == dependabot/* ]]
+          [[ "${identity[4]}" == "$TESTED_SHA" ]]
+          [[ "${identity[5]}" == "main" ]]
+          [[ "${identity[6]}" == "$TESTED_BASE_SHA" ]]
+          [[ "${identity[7]}" == "false" ]]
+          current_main="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          [[ "$current_main" == "$TESTED_BASE_SHA" ]]
+
+          for attempt in {1..12}; do
+            readarray -t fields < <(gh pr view "$PR_NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+              --json headRefOid,mergeable,mergeStateStatus \
+              --jq '[.headRefOid, .mergeable, .mergeStateStatus] | .[]')
+            if [[ "${fields[1]}" != "UNKNOWN" && "${fields[2]}" != "UNKNOWN" ]]; then
+              break
+            fi
+            sleep 5
+          done
+          [[ "${fields[0]}" == "$TESTED_SHA" ]]
+          [[ "${fields[1]}" == "MERGEABLE" ]]
+          [[ "${fields[2]}" == "CLEAN" ]]
+          echo "number=$PR_NUMBER" >> "$GITHUB_OUTPUT"
+
+      - name: Read Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@21025c705c08248db411dc16f3619e6b5f9ea21a # v2
+        with:
+          github-token: ${{ github.token }}
+          pr: https://github.com/${{ github.repository }}/pull/${{ steps.pull-request.outputs.number }}
+
+      - name: Block major updates
+        env:
+          UPDATE_TYPE: ${{ steps.metadata.outputs.update-type }}
+        run: |
+          set -euo pipefail
+          if [[ "$UPDATE_TYPE" == "version-update:semver-major" ]]; then
+            echo "Major dependency updates require manual compatibility review." >&2
+            exit 1
+          fi
+
+      - name: Merge the exact tested commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.pull-request.outputs.number }}
+          TESTED_BASE_SHA: ${{ github.event.workflow_run.pull_requests[0].base.sha }}
+          TESTED_SHA: ${{ github.event.workflow_run.pull_requests[0].head.sha }}
+        run: |
+          set -euo pipefail
+          readarray -t current < <(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" \
+            --jq '[.head.sha, .base.sha] | .[]')
+          current_main="$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha')"
+          [[ "${current[0]}" == "$TESTED_SHA" ]]
+          [[ "${current[1]}" == "$TESTED_BASE_SHA" ]]
+          [[ "$current_main" == "$TESTED_BASE_SHA" ]]
+          gh pr merge "$PR_NUMBER" \
+            --repo "$GITHUB_REPOSITORY" \
+            --squash \
+            --delete-branch \
+            --match-head-commit "$TESTED_SHA"
+
+      - name: Dispatch dependency maintenance release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.pull-request.outputs.number }}
+        run: |
+          set -euo pipefail
+          for attempt in {1..20}; do
+            merge_sha="$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json mergeCommit --jq '.mergeCommit.oid // empty')"
+            if [[ "$merge_sha" =~ ^[0-9a-f]{40}$ ]]; then
+              gh workflow run dependency-maintenance-release.yml \
+                --repo "$GITHUB_REPOSITORY" \
+                --ref main \
+                -f dependency_commit="$merge_sha" \
+                -f source_pr="$PR_NUMBER"
+              run_id=""
+              for run_attempt in {1..40}; do
+                run_id="$(gh run list \
+                  --repo "$GITHUB_REPOSITORY" \
+                  --workflow 'Dependency Maintenance Release' \
+                  --event workflow_dispatch \
+                  --limit 20 \
+                  --json databaseId,headSha \
+                  --jq ".[] | select(.headSha == \"$merge_sha\") | .databaseId" \
+                  | head -n 1)"
+                [[ -n "$run_id" ]] && break
+                sleep 5
+              done
+              [[ -n "$run_id" ]]
+              gh run watch "$run_id" --repo "$GITHUB_REPOSITORY" --exit-status
+              exit 0
+            fi
+            sleep 3
+          done
+          echo "The merged dependency commit was not available in time." >&2
+          exit 1

@@ -55,17 +55,21 @@ Outputs are written beneath `out/`.
 
 ## Updates
 
-The ChromeCraft menu exposes **Updates and versions**. Installed Windows builds
-use Electron's native Squirrel updater to download and apply a complete packaged
-release—including Electron, Chromium, Node.js, and bundled dependencies—after a
-user-approved restart. Browser data remains in the existing per-user profile.
+The sidebar's **Chromecraft Updates** centre provides one place to check User
+Extensions, Browser Dependencies, and Chromecraft itself. Installed Windows
+builds use Electron's native Squirrel updater to download and apply one complete
+application release after a user-approved restart. Browser data and the open-tab
+session remain in the existing per-user profile.
 
-Release builds must set `CHROMECRAFT_UPDATE_FEED_URL` to the fixed HTTPS directory
-that publishes the matching `RELEASES` file and `.nupkg` artifacts. Portable ZIP
-and development builds report that self-update is unavailable. Linux packages
-are updated through the distribution package manager because Electron does not
-provide a built-in Linux updater. Production Windows releases must also be code
-signed; signing credentials are intentionally not stored in this repository.
+The release workflows configure the fixed HTTPS GitHub release feed. Portable
+ZIP and development builds truthfully report that self-update is unavailable;
+Linux packages continue to update through the distribution package manager.
+Public production releases are fail-closed until the Windows application and
+installer are Authenticode signed. Signing credentials are intentionally stored
+only as GitHub Actions secrets.
+
+See [Update and release automation](docs/UPDATE_RELEASES.md) for the release
+model, required repository settings, signing configuration, and recovery steps.
 
 ## uBlock Origin
 
@@ -81,5 +85,5 @@ See [third-party notices](THIRD_PARTY_NOTICES.md) for the pinned source, license
 
 - Sidebar, Minecraft theme, accounts, profiles, sync, AI, music, and messaging
 - Downloads, bookmarks, history UI, session restore, and site permission prompts
-- Production signing and a hosted release feed
+- A Linux package repository or unattended Linux self-update
 - A Chromium fork or a replacement browser engine

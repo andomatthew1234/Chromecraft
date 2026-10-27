@@ -6139,15 +6139,15 @@ export function ExtensionsPage({
               </span>
               <div>
                 <small>Extension updates</small>
-                <h2>Updated with Chromecraft</h2>
+                <h2>Verified independently</h2>
                 <p>
-                  Extension updates are verified and bundled with browser
-                  updates, keeping the browser and its extensions in step.
+                  Supported Chrome Web Store extensions update independently.
+                  New permissions always require your review.
                 </p>
               </div>
               <span className="extension-update-badge">
                 <Icon name="shield" />
-                Managed by browser updates
+                Managed in Updates
               </span>
             </section>
 
@@ -7835,7 +7835,7 @@ export const HyperdriveMonitor = memo(function HyperdriveMonitor({
   );
 });
 
-function UpdatesPage({
+function LegacyUpdatesPage({
   snapshot,
   close,
 }: {
@@ -8064,6 +8064,584 @@ function UpdatesPage({
       </div>
     </main>
   );
+}
+
+function UpdatesPage({
+  snapshot,
+  close,
+  reviewExtensionUpdate,
+}: {
+  snapshot: UpdateSnapshot;
+  close: () => void;
+  reviewExtensionUpdate: (sourceUrl: string) => void;
+}) {
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [updatingExtensionId, setUpdatingExtensionId] = useState<string | null>(
+    null,
+  );
+  const [versionInfoOpen, setVersionInfoOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const busy =
+    snapshot.status === "checking" || snapshot.status === "downloading";
+  const statusTitle: Record<UpdateSnapshot["status"], string> = {
+    idle: "Ready to check",
+    checking: "Checking every update source",
+    downloading: "Downloading verified updates",
+    ready: "Restart when you're ready",
+    complete: "Updates installed",
+    partial: "Some items need attention",
+    "up-to-date": "Everything is up to date",
+    unavailable: "Application updates unavailable here",
+    error: "Update check failed",
+  };
+  const categoryDefinitions = [
+    {
+      id: "extensions" as const,
+      title: "User Extensions",
+      icon: "extension" as IconName,
+      description:
+        "Third-party tools update independently from the browser application.",
+    },
+    {
+      id: "dependencies" as const,
+      title: "Browser Dependencies",
+      icon: "memory" as IconName,
+      description:
+        "Electron, Chromium, Node.js and packaged prerequisites are delivered as one tested runtime.",
+    },
+    {
+      id: "chromecraft" as const,
+      title: "Chromecraft",
+      icon: "autoAwesome" as IconName,
+      description:
+        "The browser UI, Scout, Hyperdrive and features built by Chromecraft.",
+    },
+  ];
+  const runCheck = async () => {
+    setActionError(null);
+    try {
+      await window.chromecraft.checkForUpdates();
+    } catch {
+      setActionError("Chromecraft could not start the update check.");
+    }
+  };
+  const updateExtension = async (extensionId: string) => {
+    setActionError(null);
+    setUpdatingExtensionId(extensionId);
+    try {
+      await window.chromecraft.updateExtension(extensionId);
+    } catch {
+      setActionError("Chromecraft could not update that extension.");
+    } finally {
+      setUpdatingExtensionId(null);
+    }
+  };
+  const updateAllExtensions = async () => {
+    setActionError(null);
+    try {
+      await window.chromecraft.updateAllExtensions();
+    } catch {
+      setActionError("Chromecraft could not update the installed extensions.");
+    }
+  };
+  const restart = async () => {
+    setActionError(null);
+    try {
+      await window.chromecraft.restartToUpdate();
+    } catch {
+      setActionError("Chromecraft could not restart to apply the update.");
+    }
+  };
+  const setPreference = async (
+    preference: keyof UpdateSnapshot["preferences"],
+    enabled: boolean,
+  ) => {
+    setActionError(null);
+    try {
+      await window.chromecraft.setUpdatePreferences({
+        [preference]: enabled,
+      });
+    } catch {
+      setActionError("Chromecraft could not save that update preference.");
+    }
+  };
+
+  return (
+    <main
+      className="updates-page update-centre"
+      aria-labelledby="updates-title"
+    >
+      <div className="updates-page-content">
+        <header className="updates-page-header update-centre-header">
+          <button
+            type="button"
+            className="updates-back-button"
+            onClick={close}
+            aria-label="Back to browsing"
+            title="Back to browsing"
+          >
+            <Icon name="back" />
+          </button>
+          <span className="update-centre-heading">
+            <small>Chromecraft system</small>
+            <h1 id="updates-title">Chromecraft Updates</h1>
+            <p>
+              Keep Chromecraft, your browser engine and extensions up to date.
+            </p>
+          </span>
+          <button
+            type="button"
+            className="filled-button update-all-button"
+            onClick={() => void runCheck()}
+            disabled={!snapshot.canCheck}
+          >
+            <Icon name={busy ? "reload" : "download"} />
+            {snapshot.status === "checking"
+              ? "Checking…"
+              : snapshot.status === "downloading"
+                ? "Updating…"
+                : "Update All"}
+          </button>
+        </header>
+
+        <section
+          className="update-status-card"
+          data-status={snapshot.status}
+          aria-live="polite"
+          aria-busy={busy}
+        >
+          <span className="update-status-icon" aria-hidden="true">
+            <Icon
+              name={
+                snapshot.status === "error" || snapshot.status === "unavailable"
+                  ? "warning"
+                  : snapshot.status === "ready" ||
+                      snapshot.status === "complete" ||
+                      snapshot.status === "up-to-date"
+                    ? "shield"
+                    : "reload"
+              }
+            />
+          </span>
+          <span className="update-status-copy">
+            <strong>{statusTitle[snapshot.status]}</strong>
+            <small>
+              {snapshot.message ??
+                "One coordinated check covers the browser, engine and supported extensions."}
+            </small>
+          </span>
+          {busy && snapshot.progress && (
+            <span className="update-progress-wrap">
+              <progress
+                className="update-progress-track"
+                max={100}
+                {...(snapshot.progress.percent === null
+                  ? {}
+                  : { value: snapshot.progress.percent })}
+                aria-label={snapshot.progress.label}
+              />
+              <small>
+                {snapshot.progress.percent === null
+                  ? snapshot.progress.label
+                  : `${snapshot.progress.label} · ${Math.round(snapshot.progress.percent)}%`}
+              </small>
+            </span>
+          )}
+          {snapshot.canRestart && (
+            <button
+              type="button"
+              className="filled-button restart-update-button"
+              onClick={() => void restart()}
+            >
+              Restart to install
+            </button>
+          )}
+        </section>
+
+        <div className="update-category-grid">
+          {categoryDefinitions.map((definition) => {
+            const category = snapshot.categories[definition.id];
+            const categoryStatus =
+              category.status === "ready"
+                ? "Ready"
+                : category.status === "up-to-date"
+                  ? "Up to date"
+                  : category.status === "complete"
+                    ? "Updated"
+                    : category.status === "partial"
+                      ? "Needs attention"
+                      : category.status === "checking"
+                        ? "Checking"
+                        : category.status === "unavailable"
+                          ? "Unavailable"
+                          : category.status === "error"
+                            ? "Check failed"
+                            : "Not checked";
+            return (
+              <section
+                key={definition.id}
+                className="update-category-card"
+                data-category={definition.id}
+                data-status={category.status}
+                aria-labelledby={`update-category-${definition.id}`}
+              >
+                <header className="update-category-heading">
+                  <span className="update-category-icon" aria-hidden="true">
+                    <Icon name={definition.icon} />
+                  </span>
+                  <span>
+                    <h2 id={`update-category-${definition.id}`}>
+                      {definition.title}
+                    </h2>
+                    <small>{definition.description}</small>
+                  </span>
+                  <span
+                    className="update-category-status"
+                    data-status={category.status}
+                  >
+                    {categoryStatus}
+                  </span>
+                </header>
+
+                <dl className="update-category-facts">
+                  <div>
+                    <dt>Installed</dt>
+                    <dd>{category.installedVersion ?? "Unknown"}</dd>
+                  </div>
+                  <div>
+                    <dt>Available</dt>
+                    <dd>{category.availableVersion ?? "None"}</dd>
+                  </div>
+                  <div>
+                    <dt>Last checked</dt>
+                    <dd>
+                      {category.lastCheckedAt
+                        ? new Date(category.lastCheckedAt).toLocaleString()
+                        : "Not yet"}
+                    </dd>
+                  </div>
+                </dl>
+
+                {definition.id === "extensions" && (
+                  <>
+                    <div className="update-category-actions">
+                      <button
+                        type="button"
+                        className="tonal-button"
+                        onClick={() => void updateAllExtensions()}
+                        disabled={busy || snapshot.extensions.length === 0}
+                      >
+                        <Icon name="download" />
+                        Update all extensions
+                      </button>
+                    </div>
+                    <div className="update-extension-list" role="list">
+                      {snapshot.extensions.length === 0 ? (
+                        <p className="update-empty-copy">
+                          No user-installed extensions yet. Built-in uBlock
+                          Origin ships with Chromecraft application updates.
+                        </p>
+                      ) : (
+                        snapshot.extensions.map((extension) => (
+                          <article
+                            className="update-extension-row"
+                            key={extension.id}
+                            role="listitem"
+                          >
+                            <span
+                              className="update-extension-icon"
+                              aria-hidden="true"
+                            >
+                              {extension.iconDataUrl ? (
+                                <img src={extension.iconDataUrl} alt="" />
+                              ) : (
+                                <Icon name="extension" />
+                              )}
+                            </span>
+                            <span className="update-extension-copy">
+                              <strong>{extension.name}</strong>
+                              <small>
+                                {extension.installedVersion}
+                                {extension.availableVersion
+                                  ? ` → ${extension.availableVersion}`
+                                  : ""}
+                                {` · ${extension.enabled ? "Enabled" : "Disabled"}`}
+                              </small>
+                              {extension.detail && (
+                                <small>{extension.detail}</small>
+                              )}
+                            </span>
+                            <span
+                              className="update-extension-state"
+                              data-state={extension.state}
+                            >
+                              {extension.state === "manual-required"
+                                ? "Manual"
+                                : extension.state === "approval-required"
+                                  ? "Review access"
+                                  : extension.state === "installed"
+                                    ? "Updated"
+                                    : extension.state === "up-to-date"
+                                      ? "Current"
+                                      : extension.state === "failed"
+                                        ? "Failed"
+                                        : extension.state === "checking"
+                                          ? "Checking"
+                                          : "Ready"}
+                            </span>
+                            {extension.provider === "chrome-web-store" && (
+                              <button
+                                type="button"
+                                className="tonal-button extension-update-button"
+                                onClick={() => {
+                                  if (
+                                    extension.state === "approval-required" &&
+                                    extension.sourceUrl
+                                  ) {
+                                    reviewExtensionUpdate(extension.sourceUrl);
+                                  } else {
+                                    void updateExtension(extension.id);
+                                  }
+                                }}
+                                disabled={busy || updatingExtensionId !== null}
+                              >
+                                {extension.state === "approval-required"
+                                  ? "Review"
+                                  : updatingExtensionId === extension.id
+                                    ? "Updating…"
+                                    : "Check"}
+                              </button>
+                            )}
+                          </article>
+                        ))
+                      )}
+                    </div>
+                  </>
+                )}
+
+                {definition.id === "dependencies" && (
+                  <div className="runtime-version-strip">
+                    {snapshot.installedVersions
+                      .filter((item) => item.id !== "chromecraft")
+                      .map((item) => (
+                        <span key={item.id}>
+                          <small>{item.label}</small>
+                          <strong>{item.version}</strong>
+                        </span>
+                      ))}
+                  </div>
+                )}
+
+                {definition.id !== "extensions" &&
+                  snapshot.applicationRelease &&
+                  (snapshot.applicationRelease.category === "both" ||
+                    snapshot.applicationRelease.category === definition.id) && (
+                    <div className="application-release-detail">
+                      <span>
+                        <small>Release</small>
+                        <strong>{snapshot.applicationRelease.version}</strong>
+                      </span>
+                      {snapshot.applicationRelease.downloadSizeBytes && (
+                        <span>
+                          <small>Download</small>
+                          <strong>
+                            {formatUpdateBytes(
+                              snapshot.applicationRelease.downloadSizeBytes,
+                            )}
+                          </strong>
+                        </span>
+                      )}
+                      {snapshot.applicationRelease.releaseNotes && (
+                        <p>{snapshot.applicationRelease.releaseNotes}</p>
+                      )}
+                    </div>
+                  )}
+
+                {category.detail && (
+                  <p className="update-category-detail">{category.detail}</p>
+                )}
+              </section>
+            );
+          })}
+        </div>
+
+        <section className="update-centre-disclosures">
+          <button
+            type="button"
+            className="tonal-button"
+            aria-expanded={settingsOpen}
+            aria-controls="update-preferences"
+            onClick={() => setSettingsOpen((open) => !open)}
+          >
+            <Icon name="tune" />
+            Update behaviour
+            <Icon name={settingsOpen ? "chevronUp" : "chevronDown"} />
+          </button>
+          <button
+            type="button"
+            className="tonal-button"
+            aria-expanded={versionInfoOpen}
+            aria-controls="version-info"
+            onClick={() => setVersionInfoOpen((open) => !open)}
+          >
+            <Icon name="info" />
+            Technical details
+            <Icon name={versionInfoOpen ? "chevronUp" : "chevronDown"} />
+          </button>
+          <button
+            type="button"
+            className="tonal-button"
+            aria-expanded={historyOpen}
+            aria-controls="update-history"
+            onClick={() => setHistoryOpen((open) => !open)}
+          >
+            <Icon name="history" />
+            Update history
+            <Icon name={historyOpen ? "chevronUp" : "chevronDown"} />
+          </button>
+        </section>
+
+        {settingsOpen && (
+          <section className="update-preferences" id="update-preferences">
+            <label>
+              <span>
+                <strong>Automatic checks</strong>
+                <small>Check at startup and roughly every six hours.</small>
+              </span>
+              <input
+                type="checkbox"
+                role="switch"
+                className="switch-input"
+                checked={snapshot.preferences.automaticChecksEnabled}
+                onChange={(event) =>
+                  void setPreference(
+                    "automaticChecksEnabled",
+                    event.target.checked,
+                  )
+                }
+              />
+            </label>
+            <label>
+              <span>
+                <strong>Automatic extension updates</strong>
+                <small>
+                  Install verified updates that request no additional access.
+                </small>
+              </span>
+              <input
+                type="checkbox"
+                role="switch"
+                className="switch-input"
+                checked={snapshot.preferences.automaticExtensionUpdatesEnabled}
+                onChange={(event) =>
+                  void setPreference(
+                    "automaticExtensionUpdatesEnabled",
+                    event.target.checked,
+                  )
+                }
+              />
+            </label>
+            <label>
+              <span>
+                <strong>Update-ready notifications</strong>
+                <small>Chromecraft never restarts without your approval.</small>
+              </span>
+              <input
+                type="checkbox"
+                role="switch"
+                className="switch-input"
+                checked={snapshot.preferences.notifyWhenReady}
+                onChange={(event) =>
+                  void setPreference("notifyWhenReady", event.target.checked)
+                }
+              />
+            </label>
+          </section>
+        )}
+
+        {versionInfoOpen && (
+          <section
+            className="version-grid"
+            id="version-info"
+            aria-label="Currently installed versions"
+          >
+            {snapshot.installedVersions.map((item) => (
+              <article className="version-card" key={item.id}>
+                <span>{item.label}</span>
+                <strong>{item.version}</strong>
+              </article>
+            ))}
+          </section>
+        )}
+
+        {historyOpen && (
+          <section className="update-history" id="update-history">
+            {snapshot.history.length === 0 ? (
+              <p className="update-empty-copy">
+                No update activity recorded yet.
+              </p>
+            ) : (
+              <ol>
+                {snapshot.history.map((entry) => (
+                  <li key={entry.id}>
+                    <span className="update-history-icon" aria-hidden="true">
+                      <Icon
+                        name={
+                          entry.category === "extensions"
+                            ? "extension"
+                            : entry.category === "dependencies"
+                              ? "memory"
+                              : "autoAwesome"
+                        }
+                      />
+                    </span>
+                    <span>
+                      <strong>{entry.label}</strong>
+                      <small>
+                        {entry.fromVersion}
+                        {entry.toVersion ? ` → ${entry.toVersion}` : ""}
+                        {` · ${new Date(entry.timestamp).toLocaleString()}`}
+                      </small>
+                    </span>
+                    <span
+                      className="update-history-result"
+                      data-result={entry.result}
+                    >
+                      {entry.result === "approval-required"
+                        ? "Needs review"
+                        : entry.result}
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </section>
+        )}
+
+        {actionError && (
+          <p className="update-action-error" role="alert">
+            {actionError}
+          </p>
+        )}
+
+        <p className="updates-footnote">
+          Application releases replace one signed runtime only once, even when
+          they contain both dependency and Chromecraft changes. Profiles,
+          bookmarks, history, settings, extensions and the current session stay
+          in your user-data folder.
+        </p>
+      </div>
+    </main>
+  );
+}
+
+function formatUpdateBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "Unknown";
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+  if (bytes >= 1024 ** 2) return `${Math.round(bytes / 1024 ** 2)} MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${Math.round(bytes)} B`;
 }
 
 function NewTabSurface({
@@ -9387,7 +9965,13 @@ export function App() {
         <NewTabSurface tab={activeTab} snapshot={snapshot} data={data} />
       )}
       {updatesOpen && (
-        <UpdatesPage snapshot={updates} close={() => setUpdatesOpen(false)} />
+        <UpdatesPage
+          snapshot={updates}
+          close={() => setUpdatesOpen(false)}
+          reviewExtensionUpdate={(sourceUrl) =>
+            void reviewExtensionInstall(sourceUrl)
+          }
+        />
       )}
       {aiPanelOpen && (
         <OrganiseTabsPanel

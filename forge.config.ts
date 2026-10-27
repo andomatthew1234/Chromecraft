@@ -10,6 +10,23 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
+const signingCertificateFile = process.env.WINDOWS_CERTIFICATE_FILE?.trim();
+const signingCertificatePassword = process.env.WINDOWS_CERTIFICATE_PASSWORD;
+
+if (Boolean(signingCertificateFile) !== Boolean(signingCertificatePassword)) {
+  throw new Error(
+    "Windows signing requires both WINDOWS_CERTIFICATE_FILE and WINDOWS_CERTIFICATE_PASSWORD.",
+  );
+}
+
+const windowsSigning =
+  signingCertificateFile && signingCertificatePassword
+    ? {
+        certificateFile: signingCertificateFile,
+        certificatePassword: signingCertificatePassword,
+        hash: "sha256" as const,
+      }
+    : undefined;
 
 const config: ForgeConfig = {
   packagerConfig: {
@@ -24,6 +41,7 @@ const config: ForgeConfig = {
       "resources/media-tools",
     ],
     executableName: "chromecraft",
+    ...(windowsSigning ? { windowsSign: windowsSigning } : {}),
   },
   hooks: {
     generateAssets: async (_forgeConfig, platform, arch) => {
@@ -44,6 +62,12 @@ const config: ForgeConfig = {
         setupExe: "ChromecraftSetup.exe",
         setupIcon: path.resolve("resources/icons/chromecraft.ico"),
         noMsi: true,
+        ...(windowsSigning
+          ? {
+              certificateFile: windowsSigning.certificateFile,
+              certificatePassword: windowsSigning.certificatePassword,
+            }
+          : {}),
       },
       ["win32"],
     ),

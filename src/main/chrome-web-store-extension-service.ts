@@ -41,6 +41,7 @@ const LEGACY_COMPATIBILITY_WINDOW_BRIDGE_PATHS = new Set([
   `${LEGACY_COMPATIBILITY_DIRECTORY}/window-bridge.js`,
 ]);
 const DEFAULT_EXTENSION_READY_TIMEOUT_MS = 15_000;
+const MAX_DOWNLOAD_REDIRECTS = 8;
 
 export interface InstalledExtensionSnapshot {
   id: string;
@@ -158,6 +159,11 @@ interface ArchiveEntry {
   directory: boolean;
 }
 
+interface ArchiveDeployment {
+  commit: () => Promise<void>;
+  rollback: () => Promise<void>;
+}
+
 interface ExtensionManifest {
   manifest_version: number;
   name: string;
@@ -207,6 +213,7 @@ export class ChromeWebStoreExtensionService {
   private readonly maximumCrxBytes: number;
   private readonly extensionReadyTimeoutMs: number;
   private readonly runtimes = new Map<string, ExtensionRuntime>();
+  private readonly activatingRuntimes = new Map<string, ExtensionRuntime>();
   private preparedExtension: PreparedExtension | null = null;
   private activePreparation: {
     token: string;
@@ -220,36 +227,47 @@ export class ChromeWebStoreExtensionService {
     _event: Electron.Event,
     extension: Extension,
   ): void => {
-    const runtime = this.runtimes.get(extension.id);
+    const runtime = this.runtimeForLoadedExtension(extension);
     if (!runtime?.stored.enabled) return;
     runtime.extension = extension;
     runtime.snapshot.ready = false;
     runtime.snapshot.error = null;
-    this.options.onChanged?.();
+    if (this.runtimes.get(extension.id) === runtime) {
+      this.options.onChanged?.();
+    }
   };
 
   private readonly onExtensionReady = (
     _event: Electron.Event,
     extension: Extension,
   ): void => {
-    const runtime = this.runtimes.get(extension.id);
+    const runtime = this.runtimeForLoadedExtension(extension);
     if (!runtime?.stored.enabled) return;
     runtime.extension = extension;
     runtime.snapshot.ready = true;
     runtime.snapshot.error = null;
     if (extension.name.trim()) runtime.snapshot.name = extension.name;
-    this.options.onChanged?.();
+    if (this.runtimes.get(extension.id) === runtime) {
+      this.options.onChanged?.();
+    }
   };
 
   private readonly onExtensionUnloaded = (
     _event: Electron.Event,
     extension: Extension,
   ): void => {
-    const runtime = this.runtimes.get(extension.id);
+    const activating = this.activatingRuntimes.get(extension.id);
+    const current = this.runtimes.get(extension.id);
+    const runtime =
+      activating?.extension === extension
+        ? activating
+        : current?.extension === extension
+          ? current
+          : null;
     if (!runtime) return;
     runtime.extension = null;
     runtime.snapshot.ready = false;
-    this.options.onChanged?.();
+    if (current === runtime) this.options.onChanged?.();
   };
 
   constructor(
@@ -308,6 +326,7 @@ export class ChromeWebStoreExtensionService {
 
   async checkAndInstallUpdates(
     onProgress?: (progress: ExtensionUpdateProgress) => void,
+    extensionIds?: readonly string[],
   ): Promise<ExtensionUpdateResult[]> {
     this.requireInitialized();
     if (
@@ -319,9 +338,20 @@ export class ChromeWebStoreExtensionService {
         "Finish or cancel the pending extension review before checking for updates.",
       );
     }
-    const runtimes = [...this.runtimes.values()].sort((left, right) =>
-      left.snapshot.name.localeCompare(right.snapshot.name),
-    );
+    const selectedIds = extensionIds ? new Set(extensionIds) : null;
+    if (selectedIds) {
+      for (const extensionId of selectedIds) {
+        requireExtensionId(extensionId);
+        if (!this.runtimes.has(extensionId)) {
+          throw new Error("That extension is not installed.");
+        }
+      }
+    }
+    const runtimes = [...this.runtimes.values()]
+      .filter((runtime) => !selectedIds || selectedIds.has(runtime.stored.id))
+      .sort((left, right) =>
+        left.snapshot.name.localeCompare(right.snapshot.name),
+      );
     const results: ExtensionUpdateResult[] = [];
 
     for (const [offset, runtime] of runtimes.entries()) {
@@ -335,7 +365,7 @@ export class ChromeWebStoreExtensionService {
           toVersion: null,
           state: "unavailable",
           detail:
-            "Unpacked extensions are updated from their selected source folder.",
+            "Manual update required. Re-import the unpacked extension folder to install a newer version.",
         });
         continue;
       }
@@ -452,7 +482,7 @@ export class ChromeWebStoreExtensionService {
       extensionId,
       manifest.version,
     );
-    await this.writeArchiveAtomically(destination, entries);
+    const deployment = await this.writeArchiveAtomically(destination, entries);
     const stored: StoredExtension = {
       id: extensionId,
       version: manifest.version,
@@ -468,6 +498,7 @@ export class ChromeWebStoreExtensionService {
       await this.loadRuntime(runtime, true);
       this.runtimes.set(extensionId, runtime);
       await this.persistRegistry();
+      await deployment.commit();
       this.options.onChanged?.();
       return cloneSnapshot(runtime.snapshot);
     } catch (error) {
@@ -480,7 +511,7 @@ export class ChromeWebStoreExtensionService {
         }
         runtime.extension = null;
       }
-      await fs.rm(path.dirname(destination), { recursive: true, force: true });
+      await deployment.rollback();
       throw error;
     }
   }
@@ -505,15 +536,9 @@ export class ChromeWebStoreExtensionService {
         stage: "downloading",
         receivedBytes: 0,
       });
-      const response = await this.options.fetch(
+      const response = await this.fetchTrustedPackage(
         buildUpdateUrl(extensionId, this.options.chromiumVersion),
-        {
-          method: "GET",
-          redirect: "follow",
-          credentials: "omit",
-          cache: "no-store",
-          signal: controller.signal,
-        },
+        controller.signal,
       );
       this.assertActivePreparation(token);
       if (!response.ok) {
@@ -615,41 +640,80 @@ export class ChromeWebStoreExtensionService {
 
     try {
       emitInstallProgress(onProgress, { stage: "installing" });
+      const previous = this.runtimes.get(extensionId);
+      if (
+        previous &&
+        !previous.stored.sourceUrl.startsWith("unpacked:") &&
+        compareExtensionVersions(manifest.version, previous.stored.version) < 0
+      ) {
+        throw new Error(
+          `Chrome Web Store extensions cannot be downgraded from ${previous.stored.version} to ${manifest.version}.`,
+        );
+      }
       const destination = this.extensionVersionPath(
         extensionId,
         manifest.version,
       );
-      await this.writeArchiveAtomically(destination, entries);
-
-      const previous = this.runtimes.get(extensionId);
-      if (previous?.extension) {
-        await this.browserSession.extensions.removeExtension(extensionId);
-        previous.extension = null;
-      }
-      const stored: StoredExtension = {
-        id: extensionId,
-        version: manifest.version,
-        enabled: previous?.stored.enabled ?? true,
-        sourceUrl,
-      };
-      const runtime = this.runtimeFromManifest(stored, manifest);
-      runtime.snapshot.iconDataUrl = extensionIconDataUrlFromEntries(
+      const deployment = await this.writeArchiveAtomically(
+        destination,
         entries,
-        manifest,
       );
+
+      let runtime: ExtensionRuntime | null = null;
       try {
+        if (previous?.extension) {
+          await this.browserSession.extensions.removeExtension(extensionId);
+          previous.extension = null;
+        }
+        const stored: StoredExtension = {
+          id: extensionId,
+          version: manifest.version,
+          enabled: previous?.stored.enabled ?? true,
+          sourceUrl,
+        };
+        runtime = this.runtimeFromManifest(stored, manifest);
+        runtime.snapshot.iconDataUrl = extensionIconDataUrlFromEntries(
+          entries,
+          manifest,
+        );
         if (stored.enabled) await this.loadRuntime(runtime, true);
         this.runtimes.set(extensionId, runtime);
         emitInstallProgress(onProgress, { stage: "finishing" });
         await this.persistRegistry();
+        await deployment.commit();
       } catch (error) {
+        const rollbackErrors: unknown[] = [];
+        if (runtime?.extension) {
+          try {
+            await this.browserSession.extensions.removeExtension(extensionId);
+          } catch (removeError) {
+            rollbackErrors.push(removeError);
+          }
+          runtime.extension = null;
+        }
+        try {
+          await deployment.rollback();
+        } catch (deploymentError) {
+          rollbackErrors.push(deploymentError);
+        }
         if (previous) {
           this.runtimes.set(extensionId, previous);
           if (previous.stored.enabled && !previous.extension) {
             await this.loadRuntime(previous, false);
           }
+        } else {
+          this.runtimes.delete(extensionId);
+        }
+        if (rollbackErrors.length > 0) {
+          throw new AggregateError(
+            [error, ...rollbackErrors],
+            "The extension update failed and could not be fully rolled back.",
+          );
         }
         throw error;
+      }
+      if (!runtime) {
+        throw new Error("The extension runtime was not created.");
       }
       const snapshot = cloneSnapshot(runtime.snapshot);
       emitInstallProgress(onProgress, { stage: "installed" });
@@ -790,6 +854,72 @@ export class ChromeWebStoreExtensionService {
     extensions.removeListener("extension-ready", this.onExtensionReady);
     extensions.removeListener("extension-unloaded", this.onExtensionUnloaded);
     this.lifecycleBound = false;
+  }
+
+  private runtimeForLoadedExtension(
+    extension: Extension,
+  ): ExtensionRuntime | null {
+    const candidates = [
+      this.activatingRuntimes.get(extension.id),
+      this.runtimes.get(extension.id),
+    ];
+    for (const runtime of candidates) {
+      if (!runtime) continue;
+      if (runtime.extension === extension) return runtime;
+      const expectedPath = this.extensionVersionPath(
+        runtime.stored.id,
+        runtime.stored.version,
+      );
+      if (path.resolve(extension.path) === path.resolve(expectedPath)) {
+        return runtime;
+      }
+    }
+    return null;
+  }
+
+  private async fetchTrustedPackage(
+    initialUrl: string,
+    signal: AbortSignal,
+  ): Promise<Response> {
+    let requestUrl = initialUrl;
+    for (
+      let redirects = 0;
+      redirects <= MAX_DOWNLOAD_REDIRECTS;
+      redirects += 1
+    ) {
+      if (!isTrustedChromeWebStoreDownloadUrl(requestUrl)) {
+        throw new Error(
+          "The Chrome Web Store redirected the package to an untrusted origin.",
+        );
+      }
+      const response = await this.options.fetch(requestUrl, {
+        method: "GET",
+        redirect: "manual",
+        credentials: "omit",
+        cache: "no-store",
+        signal,
+      });
+      if (!response.url || !isTrustedChromeWebStoreDownloadUrl(response.url)) {
+        await response.body?.cancel().catch(() => undefined);
+        throw new Error(
+          "The Chrome Web Store returned the package from an untrusted origin.",
+        );
+      }
+      if (response.status < 300 || response.status >= 400) return response;
+
+      const location = response.headers.get("location");
+      await response.body?.cancel().catch(() => undefined);
+      if (!location) {
+        throw new Error(
+          "The Chrome Web Store returned a redirect without a destination.",
+        );
+      }
+      if (redirects === MAX_DOWNLOAD_REDIRECTS) {
+        throw new Error("The Chrome Web Store returned too many redirects.");
+      }
+      requestUrl = new URL(location, requestUrl).toString();
+    }
+    throw new Error("The Chrome Web Store returned too many redirects.");
   }
 
   private assertActivePreparation(token: string): void {
@@ -950,6 +1080,11 @@ export class ChromeWebStoreExtensionService {
     runtime: ExtensionRuntime,
     failInstallation: boolean,
   ): Promise<void> {
+    const activating = this.activatingRuntimes.get(runtime.stored.id);
+    if (activating && activating !== runtime) {
+      throw new Error("That extension is already being activated.");
+    }
+    this.activatingRuntimes.set(runtime.stored.id, runtime);
     let readyTimer: ReturnType<typeof setTimeout> | null = null;
     let resolveReady: ((extension: Extension) => void) | null = null;
     const ready = new Promise<Extension>((resolve) => {
@@ -959,11 +1094,13 @@ export class ChromeWebStoreExtensionService {
       if (extension.id === runtime.stored.id) resolveReady?.(extension);
     };
     this.browserSession.extensions.on("extension-ready", onReady);
+    let loadedExtension: Extension | null = null;
     try {
       const extension = await this.browserSession.extensions.loadExtension(
         this.extensionVersionPath(runtime.stored.id, runtime.stored.version),
         { allowFileAccess: false },
       );
+      loadedExtension = extension;
       if (extension.id !== runtime.stored.id) {
         await this.browserSession.extensions.removeExtension(extension.id);
         throw new Error(
@@ -990,6 +1127,15 @@ export class ChromeWebStoreExtensionService {
       runtime.snapshot.ready = true;
       runtime.snapshot.error = null;
     } catch (error) {
+      if (loadedExtension?.id === runtime.stored.id) {
+        try {
+          await this.browserSession.extensions.removeExtension(
+            runtime.stored.id,
+          );
+        } catch {
+          // Preserve the activation error while still attempting cleanup.
+        }
+      }
       runtime.extension = null;
       runtime.snapshot.ready = false;
       runtime.snapshot.error = errorMessage(error);
@@ -997,28 +1143,30 @@ export class ChromeWebStoreExtensionService {
     } finally {
       if (readyTimer) clearTimeout(readyTimer);
       this.browserSession.extensions.removeListener("extension-ready", onReady);
+      if (this.activatingRuntimes.get(runtime.stored.id) === runtime) {
+        this.activatingRuntimes.delete(runtime.stored.id);
+      }
     }
   }
 
   private async writeArchiveAtomically(
     destination: string,
     entries: ArchiveEntry[],
-  ): Promise<void> {
-    try {
-      const existing = await fs.stat(destination);
-      if (existing.isDirectory()) return;
-      throw new Error("The extension destination is not a directory.");
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
+  ): Promise<ArchiveDeployment> {
     const parent = path.dirname(destination);
     await fs.mkdir(parent, { recursive: true });
     const temporary = path.join(
       parent,
       `.${path.basename(destination)}-${randomUUID()}.tmp`,
     );
+    const backup = path.join(
+      parent,
+      `.${path.basename(destination)}-${randomUUID()}.backup`,
+    );
     assertChildPath(this.storagePath, temporary);
+    assertChildPath(this.storagePath, backup);
     await fs.mkdir(temporary, { recursive: false });
+    let hasBackup = false;
     try {
       for (const entry of entries) {
         const target = path.join(temporary, ...entry.name.split("/"));
@@ -1030,11 +1178,54 @@ export class ChromeWebStoreExtensionService {
         await fs.mkdir(path.dirname(target), { recursive: true });
         await fs.writeFile(target, entry.data, { flag: "wx" });
       }
+      try {
+        const existing = await fs.stat(destination);
+        if (!existing.isDirectory()) {
+          throw new Error("The extension destination is not a directory.");
+        }
+        await fs.rename(destination, backup);
+        hasBackup = true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
       await fs.rename(temporary, destination);
     } catch (error) {
       await fs.rm(temporary, { recursive: true, force: true });
+      if (hasBackup) {
+        try {
+          await fs.rename(backup, destination);
+        } catch (restoreError) {
+          throw new AggregateError(
+            [error, restoreError],
+            "The extension package could not be deployed or restored.",
+          );
+        }
+      }
       throw error;
     }
+    let settled = false;
+    return {
+      commit: async () => {
+        if (settled) return;
+        if (hasBackup) {
+          try {
+            await fs.rm(backup, { recursive: true, force: true });
+          } catch (error) {
+            console.warn(
+              "Could not remove the replaced extension package.",
+              error,
+            );
+          }
+        }
+        settled = true;
+      },
+      rollback: async () => {
+        if (settled) return;
+        await fs.rm(destination, { recursive: true, force: true });
+        if (hasBackup) await fs.rename(backup, destination);
+        settled = true;
+      },
+    };
   }
 }
 
@@ -1064,6 +1255,19 @@ function buildUpdateUrl(extensionId: string, chromiumVersion: string): string {
   url.searchParams.set("acceptformat", "crx3");
   url.searchParams.set("x", `id=${extensionId}&installsource=ondemand&uc`);
   return url.toString();
+}
+
+function isTrustedChromeWebStoreDownloadUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== "https:") return false;
+    return (
+      url.hostname === "clients2.google.com" ||
+      url.hostname.endsWith(".googleusercontent.com")
+    );
+  } catch {
+    return false;
+  }
 }
 
 async function readBoundedResponse(

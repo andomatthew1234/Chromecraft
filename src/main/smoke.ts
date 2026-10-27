@@ -603,15 +603,21 @@ export async function runSmokeTest(
       return Boolean(brand);
     })()`);
     await waitForShellPaint(manager);
-    const collapseMenuReady = await manager.evaluateShell<boolean>(`(() => {
-      const menu = document.querySelector('[role="menu"][aria-label="Chromecraft menu"]');
-      const action = [...document.querySelectorAll('[role="menuitem"]')].find(
-        (candidate) => candidate.textContent?.includes('Collapse sidebar')
-      );
-      return Boolean(menu && action);
-    })()`);
-    if (!collapseMenuReady)
-      throw new Error("The Chromecraft menu did not expose Collapse sidebar.");
+    await retryUntil(
+      async () => {
+        const ready = await manager.evaluateShell<boolean>(`(() => {
+        const menu = document.querySelector('[role="menu"][aria-label="Chromecraft menu"]');
+        const action = [...document.querySelectorAll('[role="menuitem"]')].find(
+          (candidate) => candidate.textContent?.includes('Collapse sidebar')
+        );
+        return Boolean(menu && action);
+      })()`);
+        if (!ready) throw new Error("The Chromecraft menu is still rendering.");
+        return ready;
+      },
+      5_000,
+      "the Chromecraft menu actions",
+    );
     const updatesMenuReady = await manager.evaluateShell<boolean>(`(() => {
       const action = [...document.querySelectorAll('[role="menuitem"]')].find(
         (candidate) => candidate.textContent?.includes('Updates and versions')
@@ -635,14 +641,23 @@ export async function runSmokeTest(
       return Boolean(action);
     })()`);
     await waitForShellPaint(manager);
-    const updatesPageReady = await manager.evaluateShell<boolean>(`Boolean(
-      document.querySelector('.updates-page') &&
-      [...document.querySelectorAll('button')].some(
-        (button) => button.textContent?.includes('Check for updates')
-      )
-    )`);
-    if (!updatesPageReady)
-      throw new Error("The Updates and versions page did not open.");
+    await retryUntil(
+      async () => {
+        const ready = await manager.evaluateShell<boolean>(`Boolean(
+        document.querySelector('.update-centre') &&
+        document.querySelector('[data-category="extensions"]') &&
+        document.querySelector('[data-category="dependencies"]') &&
+        document.querySelector('[data-category="chromecraft"]') &&
+        [...document.querySelectorAll('button')].some(
+          (button) => button.textContent?.includes('Update All')
+        )
+      )`);
+        if (!ready) throw new Error("The Update Centre is still rendering.");
+        return ready;
+      },
+      5_000,
+      "the Chromecraft Update Centre",
+    );
     await saveCaptureIfAvailable(
       namedCapturePath(options.shellScreenshotPath, "updates-and-versions"),
       () => manager.captureShell(),
