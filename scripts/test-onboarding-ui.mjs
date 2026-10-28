@@ -211,7 +211,11 @@ const child = spawn(
   { cwd: root, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] },
 );
 child.stdout?.on("data", (chunk) => process.stdout.write(chunk));
-child.stderr?.on("data", (chunk) => process.stderr.write(chunk));
+let childStderr = "";
+child.stderr?.on("data", (chunk) => {
+  childStderr += chunk.toString();
+  process.stderr.write(chunk);
+});
 
 let cdp;
 try {
@@ -371,6 +375,51 @@ try {
     ),
     "Google AI Studio was not opened as a real page target.",
   );
+  const geminiEntry = geminiTarget.find(
+    (entry) =>
+      (entry.url.startsWith("https://aistudio.google.com/apikey") ||
+        entry.url.startsWith("https://accounts.google.com/")) &&
+      entry.webSocketDebuggerUrl,
+  );
+  assert(geminiEntry, "The Gemini setup target was not debuggable.");
+  const geminiCdp = await CdpClient.connect(geminiEntry.webSocketDebuggerUrl);
+  const popupMarker = "chromecraft-onboarding-popup-opener-test";
+  try {
+    await geminiCdp.evaluate(`(() => {
+      const target = new URL(location.href);
+      target.hash = ${JSON.stringify("chromecraft-onboarding-popup-opener-test")};
+      return Boolean(window.open(target.href, ${JSON.stringify("chromecraft-onboarding-popup-opener-test")}));
+    })()`);
+  } finally {
+    geminiCdp.close();
+  }
+  const popupTarget = await poll(
+    async () => {
+      const response = await fetch(`http://127.0.0.1:${port}/json/list`);
+      return response.json();
+    },
+    (targets) =>
+      targets.find(
+        (entry) =>
+          entry.url.includes(popupMarker) && entry.webSocketDebuggerUrl,
+      ),
+    "the Gemini child window",
+  ).then((targets) =>
+    targets.find(
+      (entry) => entry.url.includes(popupMarker) && entry.webSocketDebuggerUrl,
+    ),
+  );
+  const popupCdp = await CdpClient.connect(popupTarget.webSocketDebuggerUrl);
+  try {
+    const hasOpener = await popupCdp.evaluate("window.opener !== null");
+    assert(
+      hasOpener,
+      "The Gemini sign-in child lost window.opener during the onboarding tab handoff.",
+    );
+  } finally {
+    await popupCdp.send("Page.close").catch(() => undefined);
+    popupCdp.close();
+  }
 
   await click(cdp, ".onboarding-gemini-instructions .onboarding-icon-button");
   await assertPage(cdp, "Let's work out AI.");
@@ -432,6 +481,11 @@ try {
   const settingsScreenshot = await screenshot(
     cdp,
     "onboarding-recommended-settings.png",
+  );
+  assert(
+    !childStderr.includes("Invalid webContents") &&
+      !childStderr.includes("Unhandled main-process"),
+    "The Gemini popup caused an unhandled main-process error.",
   );
 
   console.log(

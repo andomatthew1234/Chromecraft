@@ -1524,6 +1524,49 @@ export class TabManager implements BrowserResearchAdapter {
     this.activateTab(tabId);
   }
 
+  private createOnboardingPopupTab(
+    openerTabId: TabId,
+    details: Electron.HandlerDetails,
+    options: BrowserWindowConstructorOptions,
+  ): WebContents {
+    const portal = this.onboardingPortal;
+    if (!portal?.tabIds.has(openerTabId)) {
+      throw new Error("The onboarding popup no longer has a live opener.");
+    }
+    const tabId = randomUUID();
+    const tab = this.makeTab(tabId, "Loading…", details.url, false);
+    tab.isLoading = true;
+    this.tabs.set(tabId, tab);
+    this.order.push(tabId);
+    const popupContents = (
+      options as BrowserWindowConstructorOptions & {
+        webContents?: WebContents;
+      }
+    ).webContents;
+    if (!popupContents || popupContents.isDestroyed()) {
+      throw new Error("Electron did not provide a live onboarding popup.");
+    }
+    const view = this.ensureView(tab, options.webPreferences, popupContents);
+    portal.tabIds.add(tabId);
+    if (details.disposition !== "background-tab") {
+      this.activateTab(tabId);
+      view.webContents.focus();
+    } else {
+      this.layoutActiveView();
+      this.emitSnapshot();
+      this.scheduleSessionSave();
+    }
+    view.webContents.once("destroyed", () => {
+      if (!this.tabs.has(tabId)) return;
+      if (this.onboardingPortal === portal) portal.tabIds.delete(tabId);
+      this.discardedTabIds.add(tabId);
+      this.runNativeTabTopologyAction(() => {
+        if (this.tabs.has(tabId)) this.closeTab(tabId);
+      });
+    });
+    return view.webContents;
+  }
+
   setOnboardingTabBounds(bounds: OnboardingViewBounds): void {
     const normalized = normalizeOnboardingPageBounds(
       bounds,
@@ -3793,22 +3836,29 @@ export class TabManager implements BrowserResearchAdapter {
       this.layoutActiveView();
   }
 
-  private ensureView(tab: TabRecord): WebContentsView {
+  private ensureView(
+    tab: TabRecord,
+    inheritedPreferences: BrowserWindowConstructorOptions["webPreferences"] = {},
+    adoptedWebContents?: WebContents,
+  ): WebContentsView {
     if (tab.view && !tab.view.webContents.isDestroyed()) return tab.view;
-    const view = new WebContentsView({
-      webPreferences: {
-        preload: path.join(__dirname, "page-preload.cjs"),
-        session: this.browserSession,
-        nodeIntegration: false,
-        contextIsolation: true,
-        sandbox: true,
-        webSecurity: true,
-        allowRunningInsecureContent: false,
-        safeDialogs: true,
-        spellcheck: false,
-        backgroundThrottling: true,
-      },
-    });
+    const view = adoptedWebContents
+      ? new WebContentsView({ webContents: adoptedWebContents })
+      : new WebContentsView({
+          webPreferences: {
+            ...inheritedPreferences,
+            preload: path.join(__dirname, "page-preload.cjs"),
+            session: this.browserSession,
+            nodeIntegration: false,
+            contextIsolation: true,
+            sandbox: true,
+            webSecurity: true,
+            allowRunningInsecureContent: false,
+            safeDialogs: true,
+            spellcheck: false,
+            backgroundThrottling: true,
+          },
+        });
     tab.view = view;
     this.window.contentView.addChildView(view);
     view.setBounds(this.currentPageBounds());
@@ -4385,18 +4435,16 @@ export class TabManager implements BrowserResearchAdapter {
         isAllowedWebUrl(details.url) &&
         (this.shouldAllowWebsitePopup?.(contents.getURL()) ?? true)
       ) {
+        if (this.onboardingPortal?.tabIds.has(tab.id)) {
+          return {
+            action: "allow",
+            outlivesOpener: false,
+            createWindow: (options) =>
+              this.createOnboardingPopupTab(tab.id, details, options),
+          };
+        }
         queueMicrotask(() =>
           this.runNativeTabTopologyAction(() => {
-            if (this.onboardingPortal?.tabIds.has(tab.id)) {
-              const popupTabId = this.createTab(details.url, false);
-              this.onboardingPortal.tabIds.add(popupTabId);
-              if (details.disposition !== "background-tab") {
-                this.activateTab(popupTabId);
-              } else {
-                this.layoutActiveView();
-              }
-              return;
-            }
             this.createTab(
               details.url,
               details.disposition !== "background-tab",
