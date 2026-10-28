@@ -9,6 +9,7 @@ import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
+import { wrapWindowsInstaller } from "./scripts/build-windows-installer-bootstrap";
 
 const execFileAsync = promisify(execFile);
 const installerLoadingGif = path.resolve(
@@ -74,6 +75,15 @@ const config: ForgeConfig = {
         platform,
         arch,
       ]);
+    },
+    postMake: async (_forgeConfig, makeResults) => {
+      for (const result of makeResults) {
+        if (result.platform !== "win32") continue;
+        const setupPath = result.artifacts.find(
+          (artifact) => path.basename(artifact) === "ChromecraftSetup.exe",
+        );
+        if (setupPath) await wrapWindowsInstaller(setupPath);
+      }
     },
   },
   makers: [
