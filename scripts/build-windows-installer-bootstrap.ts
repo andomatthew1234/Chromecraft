@@ -9,6 +9,7 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
+import { sign } from "@electron/windows-sign";
 
 const execFileAsync = promisify(execFile);
 
@@ -58,6 +59,18 @@ export async function wrapWindowsInstaller(setupPath: string): Promise<void> {
     await copyFile(bootstrapPath, setupPath);
     await appendFile(setupPath, await readFile(rawSetupPath));
     await appendFile(setupPath, footer);
+
+    const certificateFile = process.env.WINDOWS_CERTIFICATE_FILE?.trim();
+    const certificatePassword = process.env.WINDOWS_CERTIFICATE_PASSWORD;
+    if (certificateFile && certificatePassword) {
+      await sign({
+        files: [setupPath],
+        certificateFile,
+        certificatePassword,
+        description: "Chromecraft Setup",
+        website: "https://andomatthew1234.github.io/Chromecraft/",
+      });
+    }
   } catch (error) {
     await rm(setupPath, { force: true });
     await rename(rawSetupPath, setupPath);

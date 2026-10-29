@@ -3,6 +3,7 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
 const directory = path.resolve(process.argv[2] ?? "release-artifacts");
+const requireLinux = process.argv.includes("--require-linux");
 const sums = await readFile(path.join(directory, "SHA256SUMS"), "utf8");
 const records = sums
   .trim()
@@ -38,6 +39,16 @@ for (const [label, predicate] of [
   const matches = artifactNames.filter(predicate);
   if (matches.length !== 1) {
     throw new Error(`Expected exactly one ${label}; found ${matches.length}.`);
+  }
+}
+if (requireLinux) {
+  const linuxPackages = artifactNames.filter((name) =>
+    /_amd64\.deb$/i.test(name),
+  );
+  if (linuxPackages.length !== 1) {
+    throw new Error(
+      `Expected exactly one Linux amd64 DEB; found ${linuxPackages.length}.`,
+    );
   }
 }
 const actualDigests = new Map();

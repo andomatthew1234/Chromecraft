@@ -23,7 +23,10 @@
       href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,400,0..1,0"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="../download.css?v=20261024-vanilla-beta-010" />
+    <link
+      rel="stylesheet"
+      href="../download.css?v=20261029-vanilla-stable-010"
+    />
   </head>
   <body
     class="platform-page vanilla"
@@ -133,11 +136,17 @@
           <p>Requires macOS Big Sur 11 or later.</p>
           <span class="coming-badge">Coming soon</span>
         </button>
-        <button
+        <a
           class="platform-option"
-          type="button"
+          href="https://github.com/andomatthew1234/Chromecraft/releases/download/v0.1.0/ChromecraftSetup.exe"
           data-platform="Windows"
-          aria-pressed="false"
+          data-download-url="true"
+          data-download-label="Download for Windows 11"
+          data-selection-name="Vanilla for Windows 11"
+          data-selection-copy="The stable Windows 11 installer is ready."
+          data-selection-status="Download installer"
+          data-download-status="Starting the Chromecraft Vanilla 0.1.0 download for Windows 11."
+          aria-label="Download Chromecraft Vanilla 0.1.0 for Windows 11"
         >
           <span class="vanilla-card-trace" aria-hidden="true"></span>
           <span class="vanilla-card-number" aria-hidden="true">02</span>
@@ -147,14 +156,22 @@
             </span>
           </span>
           <h2>Windows</h2>
-          <p>Requires Windows 10 or later.</p>
-          <span class="coming-badge">Coming soon</span>
-        </button>
-        <button
+          <p>Version 0.1.0 · Windows 11 · 64-bit</p>
+          <span class="coming-badge available-badge"
+            ><i aria-hidden="true">download</i>Download installer</span
+          >
+        </a>
+        <a
           class="platform-option"
-          type="button"
+          href="https://github.com/andomatthew1234/Chromecraft/releases/download/v0.1.0/chromecraft_0.1.0_amd64.deb"
           data-platform="Linux"
-          aria-pressed="false"
+          data-download-url="true"
+          data-download-label="Download for Linux"
+          data-selection-name="Vanilla for Linux"
+          data-selection-copy="The stable Debian package is ready."
+          data-selection-status="Download .deb"
+          data-download-status="Starting the Chromecraft Vanilla 0.1.0 Linux download."
+          aria-label="Download Chromecraft Vanilla 0.1.0 for 64-bit Debian Linux"
         >
           <span class="vanilla-card-trace" aria-hidden="true"></span>
           <span class="vanilla-card-number" aria-hidden="true">03</span>
@@ -162,33 +179,9 @@
             ><img src="https://cdn.simpleicons.org/linux/000000" alt="Linux"
           /></span>
           <h2>Linux</h2>
-          <p>Requires a compatible Linux distribution.</p>
-          <span class="coming-badge">Coming soon</span>
-        </button>
-        <a
-          class="platform-option vanilla-beta-option"
-          href="https://github.com/andomatthew1234/Chromecraft/releases/download/vanilla-beta-0.10/Chromecraft-Vanilla-Windows-Beta-0.10.zip"
-          data-platform="Windows Beta 0.10"
-          data-download-url="true"
-          data-download-label="Download beta"
-          data-selection-name="Vanilla for Windows (Beta)"
-          data-selection-copy="Beta build 0.10 is available now."
-          data-selection-status="Download beta"
-          data-download-status="Starting the Chromecraft Vanilla Windows Beta 0.10 download."
-          aria-label="Download Chromecraft Vanilla Windows Beta build 0.10"
-        >
-          <span class="vanilla-card-trace" aria-hidden="true"></span>
-          <span class="vanilla-card-number" aria-hidden="true">04</span>
-          <span class="platform-logo beta-platform-logo" aria-hidden="true">
-            <span class="windows-mark">
-              <span></span><span></span><span></span><span></span>
-            </span>
-            <span class="beta-logo">Beta</span>
-          </span>
-          <h2>Windows Beta</h2>
-          <p>Build 0.10 · Windows 10 or later · 163 MB</p>
+          <p>Version 0.1.0 · Debian/Ubuntu · 64-bit</p>
           <span class="coming-badge available-badge"
-            ><i aria-hidden="true">download</i>Download beta</span
+            ><i aria-hidden="true">download</i>Download .deb</span
           >
         </a>
       </div>
@@ -206,11 +199,11 @@
       </div>
 
       <p class="coming-notice">
-        Vanilla Beta 0.10 is available for Windows. macOS, Linux, and stable
-        Windows builds are coming soon.
+        Chromecraft Vanilla 0.1.0 is available for Windows 11 and 64-bit
+        Debian-based Linux. macOS is coming soon.
       </p>
       <p class="download-status" role="status" aria-live="polite"></p>
     </main>
-    <script src="../download.js?v=20261024-vanilla-beta-010"></script>
+    <script src="../download.js?v=20261029-vanilla-stable-010"></script>
   </body>
 </html>
