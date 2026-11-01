@@ -8,8 +8,9 @@ param(
   [Parameter(Mandatory = $true)]
   [string]$SetupPath,
 
-  [Parameter(Mandatory = $true)]
-  [string]$ExpectedThumbprint,
+  [string]$ExpectedThumbprint = "",
+
+  [switch]$AllowUnsigned,
 
   [Parameter(Mandatory = $true)]
   [string]$ReportPath
@@ -19,7 +20,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $normalizedThumbprint = ($ExpectedThumbprint -replace "[^0-9A-Fa-f]", "").ToUpperInvariant()
-if ($normalizedThumbprint -notmatch "^[0-9A-F]{40}$") {
+if (-not $AllowUnsigned -and $normalizedThumbprint -notmatch "^[0-9A-F]{40}$") {
   throw "ExpectedThumbprint must be a 40-character certificate thumbprint."
 }
 
@@ -58,18 +59,24 @@ function Get-VerifiedSignatureRecord {
   } else {
     $signature.SignerCertificate.Thumbprint.ToUpperInvariant()
   }
-  if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
-    throw "$Name has invalid Authenticode status: $($signature.Status)."
-  }
-  if ($actualThumbprint -ne $normalizedThumbprint) {
-    throw "$Name was not signed by the expected certificate."
+  if ($AllowUnsigned) {
+    if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::NotSigned -or -not [string]::IsNullOrEmpty($actualThumbprint)) {
+      throw "$Name must be consistently unsigned; Authenticode status is $($signature.Status)."
+    }
+  } else {
+    if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
+      throw "$Name has invalid Authenticode status: $($signature.Status)."
+    }
+    if ($actualThumbprint -ne $normalizedThumbprint) {
+      throw "$Name was not signed by the expected certificate."
+    }
   }
 
   return [ordered]@{
     scope      = $Scope
     name       = $Name
     status     = $signature.Status.ToString()
-    subject    = $signature.SignerCertificate.Subject
+    subject    = if ($null -eq $signature.SignerCertificate) { "" } else { $signature.SignerCertificate.Subject }
     thumbprint = $actualThumbprint
     sha256     = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant()
   }
@@ -113,9 +120,10 @@ try {
   }
 
   $report = [ordered]@{
-    schemaVersion              = 2
-    allValid                  = $true
-    expectedThumbprint         = $normalizedThumbprint
+    schemaVersion              = if ($AllowUnsigned) { 3 } else { 2 }
+    signingMode                = if ($AllowUnsigned) { "unsigned" } else { "signed" }
+    allValid                   = -not $AllowUnsigned
+    expectedThumbprint         = if ($AllowUnsigned) { $null } else { $normalizedThumbprint }
     packageFilesMatchedInNupkg = 1
     files                      = $records
   }

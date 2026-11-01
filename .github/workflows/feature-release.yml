@@ -29,6 +29,11 @@ on:
         description: Concise user-facing release notes
         required: false
         type: string
+      allow_unsigned_windows:
+        description: Allow an explicitly unsigned Windows build when signing secrets are unavailable
+        required: true
+        default: false
+        type: boolean
   workflow_call:
     inputs:
       version:
@@ -46,6 +51,10 @@ on:
       release_notes:
         required: false
         type: string
+      allow_unsigned_windows:
+        required: false
+        default: false
+        type: boolean
 permissions:
   contents: read
 
@@ -162,12 +171,18 @@ jobs:
       - name: Materialize signing certificate
         shell: pwsh
         env:
+          ALLOW_UNSIGNED_WINDOWS: ${{ inputs.allow_unsigned_windows }}
           CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_PFX_BASE64 }}
           CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
           CERTIFICATE_THUMBPRINT: ${{ secrets.WINDOWS_CERTIFICATE_THUMBPRINT }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:CERTIFICATE_BASE64) -or [string]::IsNullOrEmpty($env:CERTIFICATE_PASSWORD)) {
-            throw "Signed releases require WINDOWS_CERTIFICATE_PFX_BASE64 and WINDOWS_CERTIFICATE_PASSWORD."
+            if ($env:ALLOW_UNSIGNED_WINDOWS -ne "true") {
+              throw "Signed releases require WINDOWS_CERTIFICATE_PFX_BASE64 and WINDOWS_CERTIFICATE_PASSWORD."
+            }
+            "WINDOWS_RELEASE_SIGNING_MODE=unsigned" >> $env:GITHUB_ENV
+            Write-Warning "Publishing an explicitly authorized unsigned Windows installer."
+            exit 0
           }
           $expectedThumbprint = $env:CERTIFICATE_THUMBPRINT -replace "[^0-9A-Fa-f]", ""
           if ($expectedThumbprint -notmatch "^[0-9A-Fa-f]{40}$") {
@@ -181,6 +196,7 @@ jobs:
           $env:CERTIFICATE_PASSWORD >> $env:GITHUB_ENV
           $passwordDelimiter >> $env:GITHUB_ENV
           "WINDOWS_CERTIFICATE_THUMBPRINT=$($expectedThumbprint.ToUpperInvariant())" >> $env:GITHUB_ENV
+          "WINDOWS_RELEASE_SIGNING_MODE=signed" >> $env:GITHUB_ENV
 
       - name: Configure the production update feed
         shell: pwsh
@@ -242,12 +258,18 @@ jobs:
           if ($setup.Count -ne 1 -or $nupkg.Count -ne 1) {
             throw "Expected exactly one setup executable and one full nupkg."
           }
-          & scripts/release/verify-windows-signatures.ps1 `
-            -PackageDirectory (Join-Path $PWD "out/Chromecraft-win32-x64") `
-            -NupkgPath $nupkg[0].FullName `
-            -SetupPath $setup[0].FullName `
-            -ExpectedThumbprint $env:WINDOWS_CERTIFICATE_THUMBPRINT `
-            -ReportPath (Join-Path $artifactDirectory "signature-report.json")
+          $verificationArguments = @{
+            PackageDirectory = Join-Path $PWD "out/Chromecraft-win32-x64"
+            NupkgPath = $nupkg[0].FullName
+            SetupPath = $setup[0].FullName
+            ReportPath = Join-Path $artifactDirectory "signature-report.json"
+          }
+          if ($env:WINDOWS_RELEASE_SIGNING_MODE -eq "unsigned") {
+            $verificationArguments.AllowUnsigned = $true
+          } else {
+            $verificationArguments.ExpectedThumbprint = $env:WINDOWS_CERTIFICATE_THUMBPRINT
+          }
+          & scripts/release/verify-windows-signatures.ps1 @verificationArguments
 
           node scripts/release/finalize-release-artifacts.mjs $artifactDirectory
           node scripts/release/verify-release-artifacts.mjs $artifactDirectory

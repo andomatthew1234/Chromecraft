@@ -78,17 +78,27 @@ const metadata = JSON.parse(
 const signatures = JSON.parse(
   await readFile(path.join(directory, "signature-report.json"), "utf8"),
 );
+const hasValidSignedHeader =
+  signatures.schemaVersion === 2 &&
+  (signatures.signingMode === undefined ||
+    signatures.signingMode === "signed") &&
+  signatures.allValid === true &&
+  /^[0-9A-F]{40}$/.test(signatures.expectedThumbprint ?? "");
+const hasValidUnsignedHeader =
+  signatures.schemaVersion === 3 &&
+  signatures.signingMode === "unsigned" &&
+  signatures.allValid === false &&
+  signatures.expectedThumbprint === null;
 if (
   metadata.schemaVersion !== 1 ||
   !["chromecraft", "dependencies", "both"].includes(metadata.category) ||
-  signatures.schemaVersion !== 2 ||
-  signatures.allValid !== true ||
-  !/^[0-9A-F]{40}$/.test(signatures.expectedThumbprint ?? "") ||
+  (!hasValidSignedHeader && !hasValidUnsignedHeader) ||
   signatures.packageFilesMatchedInNupkg !== 1 ||
   !Array.isArray(signatures.files)
 ) {
   throw new Error("Release metadata or signature evidence is invalid.");
 }
+const isSigned = hasValidSignedHeader;
 const releaseNotes = await readFile(
   path.join(directory, "release-notes.md"),
   "utf8",
@@ -101,11 +111,13 @@ if (!releaseNotes.includes(expectedCategoryMarker)) {
 }
 for (const item of signatures.files) {
   if (
-    item.status !== "Valid" ||
-    item.thumbprint !== signatures.expectedThumbprint ||
+    (isSigned
+      ? item.status !== "Valid" ||
+        item.thumbprint !== signatures.expectedThumbprint
+      : item.status !== "NotSigned" || item.thumbprint !== "") ||
     !/^[0-9a-f]{64}$/.test(item.sha256 ?? "")
   ) {
-    throw new Error(`Invalid Authenticode evidence for ${item.name}.`);
+    throw new Error(`Invalid Windows signing evidence for ${item.name}.`);
   }
 }
 const requiredSignatures = [
@@ -125,7 +137,7 @@ if (
       ),
   )
 ) {
-  throw new Error("Required release signature evidence is missing.");
+  throw new Error("Required release executable evidence is missing.");
 }
 const packageExecutable = signatures.files.find(
   (item) => item.scope === "package" && item.name === "chromecraft.exe",
