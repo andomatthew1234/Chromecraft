@@ -205,6 +205,19 @@ jobs:
         run: |
           "CHROMECRAFT_UPDATE_FEED_URL=https://update.electronjs.org/andomatthew1234/Chromecraft/win32-x64/$env:RELEASE_VERSION" >> $env:GITHUB_ENV
 
+      - name: Generate release metadata before packaging
+        shell: pwsh
+        env:
+          RELEASE_CATEGORY: ${{ inputs.category }}
+          RELEASE_COMMIT: ${{ needs.validate.outputs.commit }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          node scripts/release/generate-release-metadata.mjs `
+            --category $env:RELEASE_CATEGORY `
+            --version $env:RELEASE_VERSION `
+            --commit $env:RELEASE_COMMIT `
+            --output (Join-Path $env:RUNNER_TEMP "chromecraft-release.json")
+
       - name: Package Windows application
         run: pnpm package:win
 
@@ -230,6 +243,7 @@ jobs:
           RELEASE_NOTES: ${{ inputs.release_notes }}
         run: |
           $ErrorActionPreference = "Stop"
+          $PSNativeCommandUseErrorActionPreference = $true
           $artifactDirectory = Join-Path $PWD "release-artifacts"
           New-Item -ItemType Directory -Force $artifactDirectory | Out-Null
           $squirrelDirectory = Join-Path $PWD "out/make/squirrel.windows/x64"
@@ -239,11 +253,9 @@ jobs:
           Copy-Item (Join-Path $squirrelDirectory "*Setup.exe") $artifactDirectory
           Copy-Item (Join-Path $zipDirectory "*.zip") $artifactDirectory
 
-          node scripts/release/generate-release-metadata.mjs `
-            --category $env:RELEASE_CATEGORY `
-            --version $env:RELEASE_VERSION `
-            --commit $env:RELEASE_COMMIT `
-            --output (Join-Path $artifactDirectory "release.json")
+          Copy-Item `
+            (Join-Path $env:RUNNER_TEMP "chromecraft-release.json") `
+            (Join-Path $artifactDirectory "release.json")
 
           $notes = if ([string]::IsNullOrWhiteSpace($env:RELEASE_NOTES)) {
             "Chromecraft $env:RELEASE_VERSION ($env:RELEASE_CATEGORY update)."
