@@ -1,6 +1,4 @@
-import { execFileSync } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
-import path from "node:path";
 
 const options = parseArguments(process.argv.slice(2));
 const category = requireChoice(options.category, "category", [
@@ -16,6 +14,9 @@ const publishedAt = requireIsoDate(
 const packageJson = JSON.parse(await readFile("package.json", "utf8"));
 const mediaTools = JSON.parse(
   await readFile("resources/media-tools/manifest.json", "utf8"),
+);
+const runtimeManifest = JSON.parse(
+  await readFile("resources/runtime-versions.json", "utf8"),
 );
 const version = requireSemver(packageJson.version, "package version");
 const expectedVersion = options.version
@@ -60,20 +61,7 @@ const metadata = {
 await writeFile(output, `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
 
 function readElectronRuntime() {
-  const executable =
-    process.platform === "win32"
-      ? path.resolve("node_modules/electron/dist/electron.exe")
-      : path.resolve("node_modules/electron/dist/electron");
-  const raw = execFileSync(
-    executable,
-    ["-e", "process.stdout.write(JSON.stringify(process.versions))"],
-    {
-      encoding: "utf8",
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
-      windowsHide: true,
-    },
-  );
-  const versions = JSON.parse(raw);
+  const versions = runtimeManifest;
   for (const key of ["electron", "chrome", "node", "v8"]) {
     requireText(versions[key], `${key} runtime version`);
   }
