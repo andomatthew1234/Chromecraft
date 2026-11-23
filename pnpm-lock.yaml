@@ -12,14 +12,14 @@ importers:
         specifier: 0.6.0
         version: 0.6.0
       dompurify:
-        specifier: 3.4.17
-        version: 3.4.17
+        specifier: 3.4.18
+        version: 3.4.18
       electron-squirrel-startup:
         specifier: 1.0.1
         version: 1.0.1
       material-symbols:
-        specifier: 0.48.0
-        version: 0.48.0
+        specifier: 0.49.0
+        version: 0.49.0
       qrcode:
         specifier: 1.5.4
         version: 1.5.4
@@ -855,8 +855,8 @@ packages:
   dijkstrajs@1.0.3:
     resolution: {integrity: sha512-qiSlmBq9+BCdCA/L46dw8Uy93mloxsPSbwnm5yrKn2vMPiy8KyAskTF6zuV/j5BMsmOGZDPs7KjU+mjb670kfA==}
 
-  dompurify@3.4.17:
-    resolution: {integrity: sha512-B/pSlYVHQ58kqISD/yDjuJ1yfzI34m1gF4lAod2bwSRhiN4K5Cl3H8Af7hqB2PmTL911tdEudnnXn5FnhRoz0w==}
+  dompurify@3.4.18:
+    resolution: {integrity: sha512-ofe3wI/uNm68HInABYFJYqQxRw1EaKAjNdrFVKqjUY+UZurvNd2L/HuQe097s/4RivWiZyP6tT7aoT8atjfhwg==}
 
   electron-installer-common@0.10.4:
     resolution: {integrity: sha512-8gMNPXfAqUE5CfXg8RL0vXpLE9HAaPkgLXVoHE3BMUzogMWenf4LmwQ27BdCUrEhkjrKl+igs2IHJibclR3z3Q==}
@@ -870,6 +870,7 @@ packages:
 
   electron-squirrel-startup@1.0.1:
     resolution: {integrity: sha512-sTfFIHGku+7PsHLJ7v0dRcZNkALrV+YEozINTW8X1nM//e5O3L+rfYuvSW00lmGHnYmUjARZulD8F2V8ISI9RA==}
+    deprecated: This package is archived and deprecated, it will not get any updates.
 
   electron-winstaller@5.4.4:
     resolution: {integrity: sha512-j9ETcBGJaXxAY/b6UBpR7LZfjdU4BAO+yvr4ifqHEdyuc3UNCy91PDGkWKY5UQ4coHNYfnwFggrqD6QPeFGAlg==}
@@ -1215,8 +1216,8 @@ packages:
   markdown-table@3.0.4:
     resolution: {integrity: sha512-wiYz4+JrLyb/DqW2hkFJxP7Vd7JuTDm77fvbM8VfEQdmSMqcImWeeRbHwZjBjIFki/VaMK2BhFi7oUUZeM5bqw==}
 
-  material-symbols@0.48.0:
-    resolution: {integrity: sha512-onKVWr4wcIWRbm+u+vkICQkw68KLqR2NRNhI0eafWvkE1FnHXHsQ8yUuSpkmVeARhbgVB0G/5ItfMSresLsBFw==}
+  material-symbols@0.49.0:
+    resolution: {integrity: sha512-3yFCfEA1+gZPsTJYXWbEmNgxvm0pFpXuVIyUMJzjajMGpZ5vOTPan4p8VO1x0pIAE2fPmf/N9ZZuGiFfTyLF3Q==}
 
   mdast-util-find-and-replace@3.0.4:
     resolution: {integrity: sha512-z4B5c6jrnJ1ltOQemhWYPBSAo6y42Z8Gt2yEgfgNTMcLSU59B8bfj8Z8AnAlJrBGLnqkdAUZ7jdDEqQw3KuipQ==}
@@ -2698,7 +2699,7 @@ snapshots:
 
   dijkstrajs@1.0.3: {}
 
-  dompurify@3.4.17:
+  dompurify@3.4.18:
     optionalDependencies:
       '@types/trusted-types': 2.0.7
 
@@ -3106,7 +3107,7 @@ snapshots:
 
   markdown-table@3.0.4: {}
 
-  material-symbols@0.48.0: {}
+  material-symbols@0.49.0: {}
 
   mdast-util-find-and-replace@3.0.4:
     dependencies:
